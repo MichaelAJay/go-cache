@@ -10,8 +10,8 @@ import (
 // Cache defines the interface for all cache implementations
 type Cache interface {
 	// Basic operations
-	Get(ctx context.Context, key string) (interface{}, bool, error)
-	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
+	Get(ctx context.Context, key string) (any, bool, error)
+	Set(ctx context.Context, key string, value any, ttl time.Duration) error
 	Delete(ctx context.Context, key string) error
 	Clear(ctx context.Context) error
 	Has(ctx context.Context, key string) bool
@@ -19,8 +19,8 @@ type Cache interface {
 	Close() error
 
 	// Bulk operations
-	GetMany(ctx context.Context, keys []string) (map[string]interface{}, error)
-	SetMany(ctx context.Context, items map[string]interface{}, ttl time.Duration) error
+	GetMany(ctx context.Context, keys []string) (map[string]any, error)
+	SetMany(ctx context.Context, items map[string]any, ttl time.Duration) error
 	DeleteMany(ctx context.Context, keys []string) error
 
 	// Metadata operations

@@ -48,7 +48,7 @@ func TestNullCache_BulkOperations(t *testing.T) {
 	c := null.NewNullCache(&cache.CacheOptions{})
 
 	// Test SetMany
-	items := map[string]interface{}{
+	items := map[string]any{
 		"key1": "value1",
 		"key2": "value2",
 	}

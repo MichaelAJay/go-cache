@@ -24,7 +24,7 @@ func NewMetricsMiddleware(metrics cache.CacheMetrics) cache.CacheMiddleware {
 }
 
 // Get retrieves a value from the cache with metrics
-func (c *metricsCache) Get(ctx context.Context, key string) (interface{}, bool, error) {
+func (c *metricsCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	value, exists, err := c.cache.Get(ctx, key)
 	duration := time.Since(start)
@@ -42,7 +42,7 @@ func (c *metricsCache) Get(ctx context.Context, key string) (interface{}, bool, 
 }
 
 // Set stores a value in the cache with metrics
-func (c *metricsCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+func (c *metricsCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
 	err := c.cache.Set(ctx, key, value, ttl)
 	c.metrics.RecordSetLatency(time.Since(start))
@@ -78,7 +78,7 @@ func (c *metricsCache) Close() error {
 }
 
 // GetMany retrieves multiple values from the cache with metrics
-func (c *metricsCache) GetMany(ctx context.Context, keys []string) (map[string]interface{}, error) {
+func (c *metricsCache) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
 	start := time.Now()
 	values, err := c.cache.GetMany(ctx, keys)
 	c.metrics.RecordGetLatency(time.Since(start))
@@ -86,7 +86,7 @@ func (c *metricsCache) GetMany(ctx context.Context, keys []string) (map[string]i
 }
 
 // SetMany stores multiple values in the cache with metrics
-func (c *metricsCache) SetMany(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
+func (c *metricsCache) SetMany(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	start := time.Now()
 	err := c.cache.SetMany(ctx, items, ttl)
 	c.metrics.RecordSetLatency(time.Since(start))

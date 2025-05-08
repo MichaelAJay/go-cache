@@ -31,7 +31,7 @@ func NewNullCache(options *cache.CacheOptions) cache.Cache {
 }
 
 // Get always returns not found
-func (c *nullCache) Get(ctx context.Context, key string) (interface{}, bool, error) {
+func (c *nullCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	defer func() {
 		c.metrics.recordGetLatency(time.Since(start))
@@ -41,7 +41,7 @@ func (c *nullCache) Get(ctx context.Context, key string) (interface{}, bool, err
 }
 
 // Set does nothing
-func (c *nullCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+func (c *nullCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
 		c.metrics.recordSetLatency(time.Since(start))
@@ -79,12 +79,12 @@ func (c *nullCache) Close() error {
 }
 
 // GetMany returns an empty map
-func (c *nullCache) GetMany(ctx context.Context, keys []string) (map[string]interface{}, error) {
-	return make(map[string]interface{}), nil
+func (c *nullCache) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
+	return make(map[string]any), nil
 }
 
 // SetMany does nothing
-func (c *nullCache) SetMany(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
+func (c *nullCache) SetMany(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	return nil
 }
 

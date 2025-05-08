@@ -52,7 +52,7 @@ func main() {
 	}
 
 	// Set multiple values
-	items := map[string]interface{}{
+	items := map[string]any{
 		"key2": "value2",
 		"key3": "value3",
 	}

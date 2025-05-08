@@ -13,11 +13,11 @@ func NewJSONSerializer() *JSONSerializer {
 }
 
 // Serialize converts a value to JSON bytes
-func (s *JSONSerializer) Serialize(value interface{}) ([]byte, error) {
+func (s *JSONSerializer) Serialize(value any) ([]byte, error) {
 	return json.Marshal(value)
 }
 
 // Deserialize converts JSON bytes back to a value
-func (s *JSONSerializer) Deserialize(data []byte, valueType interface{}) error {
+func (s *JSONSerializer) Deserialize(data []byte, valueType any) error {
 	return json.Unmarshal(data, valueType)
 }

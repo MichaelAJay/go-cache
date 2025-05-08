@@ -115,7 +115,7 @@ func TestMemoryCache_BulkOperations(t *testing.T) {
 	c := memory.NewMemoryCache(&cache.CacheOptions{})
 
 	// Test SetMany
-	items := map[string]interface{}{
+	items := map[string]any{
 		"key1": "value1",
 		"key2": "value2",
 	}

@@ -20,7 +20,7 @@ type memoryCache struct {
 
 // cacheEntry represents a single cache entry with metadata
 type cacheEntry struct {
-	value       interface{}
+	value       any
 	createdAt   time.Time
 	expiresAt   time.Time
 	accessCount int64
@@ -58,7 +58,7 @@ func NewMemoryCache(options *cache.CacheOptions) cache.Cache {
 }
 
 // Get retrieves a value from the cache
-func (c *memoryCache) Get(ctx context.Context, key string) (interface{}, bool, error) {
+func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	defer func() {
 		c.metrics.recordGetLatency(time.Since(start))
@@ -93,7 +93,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (interface{}, bool, e
 }
 
 // Set stores a value in the cache
-func (c *memoryCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
 		c.metrics.recordSetLatency(time.Since(start))
@@ -205,8 +205,8 @@ func (c *memoryCache) Close() error {
 }
 
 // GetMany retrieves multiple values from the cache
-func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]interface{}, error) {
-	result := make(map[string]interface{})
+func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
+	result := make(map[string]any)
 	for _, key := range keys {
 		if value, exists, err := c.Get(ctx, key); err == nil && exists {
 			result[key] = value
@@ -216,7 +216,7 @@ func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]in
 }
 
 // SetMany stores multiple values in the cache
-func (c *memoryCache) SetMany(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
+func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	for key, value := range items {
 		if err := c.Set(ctx, key, value, ttl); err != nil {
 			return err
@@ -359,7 +359,7 @@ func (c *memoryCache) GetMetrics() *cache.CacheMetricsSnapshot {
 }
 
 // calculateSize estimates the size of a value in bytes
-func calculateSize(value interface{}) int64 {
+func calculateSize(value any) int64 {
 	switch v := value.(type) {
 	case string:
 		return int64(len(v))
