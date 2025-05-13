@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/serializer"
 	"github.com/MichaelAJay/go-logger"
+	"github.com/MichaelAJay/go-serializer"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -31,7 +31,6 @@ type redisCache struct {
 	options    *cache.CacheOptions
 	serializer serializer.Serializer
 	metrics    *cacheMetrics
-	mu         sync.RWMutex
 }
 
 // cacheMetrics implements a thread-safe metrics collector
@@ -54,15 +53,29 @@ type metadataEntry struct {
 	Tags         []string      `json:"tags"`
 }
 
-// NewRedisCache creates a new Redis cache instance
+// RedisCache exposes the Redis cache implementation
+type RedisCache struct {
+	*redisCache
+}
+
+// NewRedisCache creates a new Redis cache instance with an existing client
 func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cache, error) {
 	// Validate client
 	if client == nil {
 		return nil, fmt.Errorf("redis client is required")
 	}
 
-	// Use JSON serializer by default
-	s := serializer.NewJSONSerializer()
+	// Determine serializer format
+	format := serializer.Msgpack // Default to MessagePack for better performance
+	if options != nil && options.SerializerFormat != "" {
+		format = options.SerializerFormat
+	}
+
+	// Get serializer from default registry
+	s, err := serializer.DefaultRegistry.New(format)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create serializer: %w", err)
+	}
 
 	// Create Redis cache
 	c := &redisCache{
@@ -80,11 +93,25 @@ func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cac
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	return c, nil
+	return &RedisCache{c}, nil
 }
 
-// formatKey creates a properly formatted key with prefix
-func formatKey(key string) string {
+// NewRedisCacheWithConfig creates a new Redis cache instance with its own client
+func NewRedisCacheWithConfig(config *redis.Options, options *cache.CacheOptions) (cache.Cache, error) {
+	// Create Redis client
+	client := redis.NewClient(config)
+
+	// Create cache with the new client
+	return NewRedisCache(client, options)
+}
+
+// Client returns the underlying Redis client
+func (c *RedisCache) Client() *redis.Client {
+	return c.client
+}
+
+// FormatKey creates a properly formatted key with prefix
+func FormatKey(key string) string {
 	return keyPrefix + key
 }
 
@@ -111,7 +138,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 	}
 
 	// Get value from Redis
-	formattedKey := formatKey(key)
+	formattedKey := FormatKey(key)
 	data, err := c.client.Get(ctx, formattedKey).Bytes()
 	if err != nil {
 		if err == redis.Nil {
@@ -123,7 +150,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 
 	// Deserialize value
 	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := c.serializer.Deserialize(data, &value); err != nil {
 		return nil, false, cache.ErrDeserialization
 	}
 
@@ -160,13 +187,13 @@ func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Du
 	}
 
 	// Serialize value
-	data, err := json.Marshal(value)
+	data, err := c.serializer.Serialize(value)
 	if err != nil {
 		return cache.ErrSerialization
 	}
 
 	// Store value in Redis
-	formattedKey := formatKey(key)
+	formattedKey := FormatKey(key)
 	if err := c.client.Set(ctx, formattedKey, data, ttl).Err(); err != nil {
 		return err
 	}
@@ -201,7 +228,7 @@ func (c *redisCache) Delete(ctx context.Context, key string) error {
 	}
 
 	// Remove value from Redis
-	formattedKey := formatKey(key)
+	formattedKey := FormatKey(key)
 	if err := c.client.Del(ctx, formattedKey).Err(); err != nil {
 		return err
 	}
@@ -309,7 +336,7 @@ func (c *redisCache) Has(ctx context.Context, key string) bool {
 	}
 
 	// Check if key exists in Redis
-	formattedKey := formatKey(key)
+	formattedKey := FormatKey(key)
 	exists, err := c.client.Exists(ctx, formattedKey).Result()
 	if err != nil {
 		return false
@@ -372,7 +399,7 @@ func (c *redisCache) GetMany(ctx context.Context, keys []string) (map[string]any
 	// Format keys
 	formattedKeys := make([]string, len(keys))
 	for i, key := range keys {
-		formattedKeys[i] = formatKey(key)
+		formattedKeys[i] = FormatKey(key)
 	}
 
 	// Get values using MGET
@@ -388,7 +415,7 @@ func (c *redisCache) GetMany(ctx context.Context, keys []string) (map[string]any
 			// Deserialize value
 			var value any
 			if data, ok := val.(string); ok {
-				if err := json.Unmarshal([]byte(data), &value); err == nil {
+				if err := c.serializer.Deserialize([]byte(data), &value); err == nil {
 					result[keys[i]] = value
 					// Update metadata in background
 					go c.updateAccessMetadata(context.Background(), keys[i])
@@ -437,13 +464,13 @@ func (c *redisCache) SetMany(ctx context.Context, items map[string]any, ttl time
 	// Add each item to the pipeline
 	for key, value := range items {
 		// Serialize value
-		data, err := json.Marshal(value)
+		data, err := c.serializer.Serialize(value)
 		if err != nil {
 			return cache.ErrSerialization
 		}
 
 		// Add to pipeline
-		formattedKey := formatKey(key)
+		formattedKey := FormatKey(key)
 		pipe.Set(ctx, formattedKey, data, ttl)
 
 		// Store metadata async to not block the main operation
@@ -471,7 +498,7 @@ func (c *redisCache) DeleteMany(ctx context.Context, keys []string) error {
 	formattedKeys := make([]string, len(keys))
 	metaKeys := make([]string, len(keys))
 	for i, key := range keys {
-		formattedKeys[i] = formatKey(key)
+		formattedKeys[i] = FormatKey(key)
 		metaKeys[i] = formatMetadataKey(key)
 	}
 
@@ -527,7 +554,7 @@ func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheE
 	}
 
 	// Get TTL from Redis
-	formattedKey := formatKey(key)
+	formattedKey := FormatKey(key)
 	ttl, err := c.client.TTL(ctx, formattedKey).Result()
 	if err != nil {
 		ttl = meta.TTL // Fallback to stored TTL
@@ -581,7 +608,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 		pipe := c.client.Pipeline()
 
 		for _, key := range existingKeys {
-			formattedKey := formatKey(key)
+			formattedKey := FormatKey(key)
 			pipe.TTL(ctx, formattedKey)
 		}
 
@@ -778,7 +805,7 @@ func (c *redisCache) updateAccessMetadata(ctx context.Context, key string) {
 	}
 
 	// Get remaining TTL of the value
-	formattedKey := formatKey(key)
+	formattedKey := FormatKey(key)
 	ttl, err := c.client.TTL(ctx, formattedKey).Result()
 	if err != nil || ttl < 0 {
 		// Use default TTL if we can't get the TTL

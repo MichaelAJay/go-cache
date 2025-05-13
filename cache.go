@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-logger"
+	"github.com/MichaelAJay/go-serializer"
 )
 
 // Cache defines the interface for all cache implementations
@@ -88,12 +89,13 @@ type CacheProvider interface {
 
 // CacheOptions represents configuration options for cache instances
 type CacheOptions struct {
-	TTL             time.Duration
-	MaxEntries      int
-	MaxSize         int64
-	CleanupInterval time.Duration
-	Logger          logger.Logger
-	RedisOptions    *RedisOptions
+	TTL              time.Duration
+	MaxEntries       int
+	MaxSize          int64
+	CleanupInterval  time.Duration
+	Logger           logger.Logger
+	RedisOptions     *RedisOptions
+	SerializerFormat serializer.Format // Format to use for serialization
 }
 
 // RedisOptions represents configuration options for Redis cache

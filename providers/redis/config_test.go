@@ -19,7 +19,7 @@ func TestLoadRedisOptionsFromEnv(t *testing.T) {
 		options := redis.LoadRedisOptionsFromEnv()
 
 		// Check default values
-		if options.Address != "localhost:6379" {
+		if options.Address != "127.0.0.1:6379" {
 			t.Errorf("Expected default address localhost:6379, got %s", options.Address)
 		}
 		if options.Password != "" {

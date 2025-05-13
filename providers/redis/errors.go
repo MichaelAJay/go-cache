@@ -13,8 +13,8 @@ var (
 	ErrRedisConnectionFailed = errors.New("failed to connect to Redis")
 
 	// ErrRedisCommandFailed is returned when a Redis command fails
-	ErrRedisCommandFailed = errors.New("Redis command failed")
+	ErrRedisCommandFailed = errors.New("redis command failed")
 
 	// ErrRedisScriptFailed is returned when a Redis Lua script fails
-	ErrRedisScriptFailed = errors.New("Redis script execution failed")
+	ErrRedisScriptFailed = errors.New("redis script execution failed")
 )
