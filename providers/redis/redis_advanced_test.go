@@ -145,6 +145,12 @@ func TestWithMessagePackSerializer(t *testing.T) {
 
 // TestWithCustomConfiguration tests loading Redis options from custom configuration
 func TestWithCustomConfiguration(t *testing.T) {
+	// Skip test if Redis is not available
+	client := SkipIfRedisUnavailable(t)
+	if client != nil {
+		client.Close()
+	}
+
 	// Set Redis configuration directly
 	redisAddress := getRedisAddr()
 	redisPassword := ""
@@ -208,6 +214,12 @@ func TestWithCustomConfiguration(t *testing.T) {
 
 // TestTransactions tests Redis cache operations in a transaction-like scenario
 func TestTransactions(t *testing.T) {
+	// Skip test if Redis is not available
+	client := SkipIfRedisUnavailable(t)
+	if client != nil {
+		client.Close()
+	}
+
 	// Setup
 	ctx := context.Background()
 
@@ -229,6 +241,7 @@ func TestTransactions(t *testing.T) {
 		},
 	}
 
+	// Create Redis provider
 	provider := redis.NewProvider()
 	redisCache, err := provider.Create(cacheOptions)
 	if err != nil {
@@ -318,8 +331,14 @@ func TestTransactions(t *testing.T) {
 	redisCache.DeleteMany(ctx, []string{"tx:account1", "tx:account2"})
 }
 
-// TestConcurrentOperations tests the Redis cache with concurrent operations
+// TestConcurrentOperations tests Redis cache operations in a concurrent environment
 func TestConcurrentOperations(t *testing.T) {
+	// Skip test if Redis is not available
+	client := SkipIfRedisUnavailable(t)
+	if client != nil {
+		client.Close()
+	}
+
 	// Setup
 	ctx := context.Background()
 
@@ -402,8 +421,17 @@ func TestConcurrentOperations(t *testing.T) {
 	}
 }
 
-// TestErrorRecovery tests how the Redis cache recovers from errors
+// TestErrorRecovery tests recovery from Redis connection errors
 func TestErrorRecovery(t *testing.T) {
+	// Skip test if Redis is not available
+	client := SkipIfRedisUnavailable(t)
+	if client != nil {
+		client.Close()
+	}
+
+	// Setup
+	ctx := context.Background()
+
 	// Create logger that captures logs
 	logOutput := &mockWriter{}
 	loggerCfg := logger.Config{
@@ -428,8 +456,6 @@ func TestErrorRecovery(t *testing.T) {
 		t.Fatalf("Failed to create Redis cache: %v", err)
 	}
 	defer redisCache.Close()
-
-	ctx := context.Background()
 
 	// Test recovery from serialization error
 	type UnserializableType struct {

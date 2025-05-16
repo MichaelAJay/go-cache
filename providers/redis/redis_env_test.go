@@ -20,6 +20,12 @@ func getLocalRedisAddr() string {
 
 // TestLoadFromEnvironment tests loading Redis options from environment variables
 func TestLoadFromEnvironment(t *testing.T) {
+	// Skip test if Redis is not available
+	client := SkipIfRedisUnavailable(t)
+	if client != nil {
+		client.Close()
+	}
+
 	// Save original environment values
 	origAddr := os.Getenv("REDIS_ADDR")
 	origPassword := os.Getenv("REDIS_PASSWORD")
