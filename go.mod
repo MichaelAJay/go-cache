@@ -4,7 +4,7 @@ go 1.23.3
 
 require (
 	github.com/MichaelAJay/go-logger v0.1.0
-	github.com/MichaelAJay/go-serializer v0.1.1
+	github.com/MichaelAJay/go-serializer v0.2.0
 	github.com/go-redis/redis/v8 v8.11.5
 )
 
