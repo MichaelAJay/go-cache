@@ -14,5 +14,9 @@ func NewProvider() cache.CacheProvider {
 
 // Create creates a new memory cache instance
 func (p *memoryProvider) Create(options *cache.CacheOptions) (cache.Cache, error) {
-	return NewMemoryCache(options), nil
+	if options == nil {
+		options = &cache.CacheOptions{}
+	}
+
+	return NewMemoryCache(options)
 }
