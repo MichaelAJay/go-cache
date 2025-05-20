@@ -62,14 +62,14 @@ func TestWithMessagePackSerializer(t *testing.T) {
 
 	// Test with complex structured data
 	type ComplexStruct struct {
-		ID         int                    `msgpack:"id"`
-		Name       string                 `msgpack:"name"`
-		Created    time.Time              `msgpack:"created"`
-		Tags       []string               `msgpack:"tags"`
-		Properties map[string]interface{} `msgpack:"properties"`
-		Active     bool                   `msgpack:"active"`
-		Count      int64                  `msgpack:"count"`
-		Score      float64                `msgpack:"score"`
+		ID         int            `msgpack:"id"`
+		Name       string         `msgpack:"name"`
+		Created    time.Time      `msgpack:"created"`
+		Tags       []string       `msgpack:"tags"`
+		Properties map[string]any `msgpack:"properties"`
+		Active     bool           `msgpack:"active"`
+		Count      int64          `msgpack:"count"`
+		Score      float64        `msgpack:"score"`
 		Nested     *struct {
 			Value string `msgpack:"value"`
 		} `msgpack:"nested"`
@@ -81,7 +81,7 @@ func TestWithMessagePackSerializer(t *testing.T) {
 		Name:    "Test Item",
 		Created: time.Now(),
 		Tags:    []string{"test", "msgpack", "redis"},
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"priority": 3,
 			"category": "testing",
 			"enabled":  true,
@@ -111,10 +111,10 @@ func TestWithMessagePackSerializer(t *testing.T) {
 		t.Fatal("Complex data not found")
 	}
 
-	// Verify data (type will be map[string]interface{} due to MessagePack deserialization)
-	resultMap, ok := result.(map[string]interface{})
+	// Verify data (type will be map[string]any due to MessagePack deserialization)
+	resultMap, ok := result.(map[string]any)
 	if !ok {
-		t.Fatalf("Expected map[string]interface{}, got %T", result)
+		t.Fatalf("Expected map[string]any, got %T", result)
 	}
 
 	// Verify some fields
@@ -286,7 +286,7 @@ func TestTransactions(t *testing.T) {
 	balance2 += 300
 
 	// Store updated balances
-	items := map[string]interface{}{
+	items := map[string]any{
 		"tx:account1": balance1,
 		"tx:account2": balance2,
 	}
@@ -495,7 +495,7 @@ func (w *mockWriter) String() string {
 }
 
 // Helper function to convert various numeric types to int
-func convertToInt(val interface{}) int {
+func convertToInt(val any) int {
 	switch v := val.(type) {
 	case int:
 		return v

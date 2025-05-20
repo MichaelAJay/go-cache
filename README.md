@@ -67,9 +67,29 @@ The memory cache provider uses an in-memory map to store cache entries. It's sui
 manager.RegisterProvider("memory", memory.NewProvider())
 ```
 
-### Redis Cache (Coming Soon)
+### Redis Cache
 
-The Redis cache provider will use Redis as the backend storage. It's suitable for distributed applications.
+The Redis cache provider uses Redis as the backend storage. It's suitable for distributed applications.
+
+```go
+import "github.com/MichaelAJay/go-cache/providers/redis"
+
+// Register Redis provider
+manager.RegisterProvider("redis", redis.NewProvider())
+
+// Create a Redis cache
+redisCache, err := manager.GetCache("redis",
+    cache.WithTTL(5*time.Minute),
+    cache.WithRedisOptions(&cache.RedisOptions{
+        Address:  "localhost:6379",
+        Password: "",
+        DB:       0,
+        PoolSize: 10,
+    }),
+)
+```
+
+See the [Redis Provider README](providers/redis/README.md) for more details and examples.
 
 ## Configuration Options
 
@@ -103,8 +123,9 @@ cache := middleware.NewMetricsMiddleware(metrics)(cache)
 See the `examples` directory for complete examples:
 
 - `examples/simple`: Basic cache usage
-- `examples/redis`: Redis cache usage (coming soon)
-- `examples/complete`: Complete application example (coming soon)
+- `examples/redis_cache.go`: Basic Redis cache usage
+- `examples/redis_msgpack_example`: Redis with MessagePack serialization
+- `examples/redis_examples`: Advanced Redis examples
 
 ## Contributing
 

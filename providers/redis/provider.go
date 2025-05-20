@@ -7,6 +7,10 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
+// RedisClientFactory is the function used to create a new Redis client.
+// This can be replaced in tests to inject a mock client.
+var RedisClientFactory = redis.NewClient
+
 // redisProvider implements the CacheProvider interface
 type redisProvider struct{}
 
@@ -43,7 +47,8 @@ func (p *redisProvider) Create(options *cache.CacheOptions) (cache.Cache, error)
 		redisOpts.PoolSize = options.RedisOptions.PoolSize
 	}
 
-	client := redis.NewClient(redisOpts)
+	// Use the factory function to create the client
+	client := RedisClientFactory(redisOpts)
 
 	return NewRedisCache(client, options)
 }

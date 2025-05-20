@@ -96,6 +96,7 @@ type CacheOptions struct {
 	Logger           logger.Logger
 	RedisOptions     *RedisOptions
 	SerializerFormat serializer.Format // Format to use for serialization
+	Metrics          CacheMetrics      // Custom metrics implementation
 }
 
 // RedisOptions represents configuration options for Redis cache

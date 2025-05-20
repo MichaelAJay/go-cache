@@ -108,9 +108,9 @@ err = redisCache.Set(ctx, "user:1", user, time.Hour)
 // Retrieve the user
 data, found, err := redisCache.Get(ctx, "user:1")
 if found {
-	// MessagePack deserializes to map[string]interface{} by default
+	// MessagePack deserializes to map[string]any by default
 	// You may need to convert back to your struct if needed
-	userData := data.(map[string]interface{})
+	userData := data.(map[string]any)
 	fmt.Printf("User: %s (%s)\n", userData["name"], userData["email"])
 }
 ```
@@ -121,7 +121,7 @@ The Redis cache provider supports efficient bulk operations:
 
 ```go
 // Store multiple values
-items := map[string]interface{}{
+items := map[string]any{
 	"key1": "value1",
 	"key2": "value2",
 	"key3": "value3",
@@ -156,6 +156,116 @@ options := &cache.CacheOptions{
 
 provider := redis.NewProvider()
 redisCache, err := provider.Create(options)
+```
+
+### Testing with the Redis Provider
+
+When testing applications that use the Redis cache, you can follow these patterns:
+
+```go
+package myapp_test
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    "github.com/MichaelAJay/go-cache"
+    "github.com/MichaelAJay/go-cache/providers/redis"
+)
+
+// setupRedisCache creates a cache for testing, with Redis connection checks
+func setupRedisCache(t *testing.T) (cache.Cache, func()) {
+    t.Helper()
+
+    // Check if Redis is available
+    rClient := goredis.NewClient(&goredis.Options{
+        Addr: "localhost:6379",
+    })
+    ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+    defer cancel()
+
+    if err := rClient.Ping(ctx).Err(); err != nil {
+        t.Skipf("Skipping test: Cannot connect to Redis: %v", err)
+    }
+    rClient.Close()
+
+    // Create a unique test prefix to avoid collisions between tests
+    testID := fmt.Sprintf("test:%s:", time.Now().Format("20060102150405"))
+
+    // Create the cache for this test
+    provider := redis.NewProvider()
+    c, err := provider.Create(&cache.CacheOptions{
+        TTL: time.Minute,
+        RedisOptions: &cache.RedisOptions{
+            Address: "localhost:6379",
+        },
+    })
+    if err != nil {
+        t.Fatalf("Failed to create cache: %v", err)
+    }
+
+    // Return the cache and a cleanup function
+    cleanup := func() {
+        ctx := context.Background()
+        if err := c.Clear(ctx); err != nil {
+            t.Logf("Warning: Failed to clear cache during cleanup: %v", err)
+        }
+        c.Close()
+    }
+
+    return c, cleanup
+}
+
+func TestWithRedisCache(t *testing.T) {
+    // Set up the cache with automatic cleanup
+    cache, cleanup := setupRedisCache(t)
+    defer cleanup()
+
+    // Run the test
+    ctx := context.Background()
+    err := cache.Set(ctx, "test-key", "test-value", time.Minute)
+    if err != nil {
+        t.Fatalf("Failed to set value: %v", err)
+    }
+
+    value, exists, err := cache.Get(ctx, "test-key")
+    if err != nil {
+        t.Fatalf("Failed to get value: %v", err)
+    }
+    if !exists {
+        t.Fatal("Value should exist")
+    }
+    if value != "test-value" {
+        t.Fatalf("Expected 'test-value', got '%v'", value)
+    }
+}
+```
+
+## Examples in Repository
+
+The repository contains several working examples that demonstrate Redis cache usage:
+
+1. **Basic Redis Cache Usage**: 
+   - File: `/examples/redis_cache.go`
+   - Features: Basic operations, environment-based configuration
+
+2. **Redis with MessagePack Serialization**:
+   - Directory: `/examples/redis_msgpack_example/`
+   - Features: Using MessagePack serialization, storing and retrieving custom structures
+
+3. **Advanced Redis Examples**:
+   - Directory: `/examples/redis_examples/`
+   - Features: Pipeline operations and other advanced features
+
+To run an example:
+
+```bash
+# Basic example
+go run examples/redis_cache.go
+
+# MessagePack example
+go run examples/redis_msgpack_example/main.go
 ```
 
 ## MessagePack vs JSON Serialization

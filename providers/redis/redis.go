@@ -105,13 +105,8 @@ func NewRedisCacheWithConfig(config *redis.Options, options *cache.CacheOptions)
 	return NewRedisCache(client, options)
 }
 
-// Client returns the underlying Redis client
-func (c *RedisCache) Client() *redis.Client {
-	return c.client
-}
-
-// FormatKey creates a properly formatted key with prefix
-func FormatKey(key string) string {
+// formatKey creates a properly formatted key with prefix
+func formatKey(key string) string {
 	return keyPrefix + key
 }
 
@@ -138,7 +133,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 	}
 
 	// Get value from Redis
-	formattedKey := FormatKey(key)
+	formattedKey := formatKey(key)
 	data, err := c.client.Get(ctx, formattedKey).Bytes()
 	if err != nil {
 		if err == redis.Nil {
@@ -193,7 +188,7 @@ func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Du
 	}
 
 	// Store value in Redis
-	formattedKey := FormatKey(key)
+	formattedKey := formatKey(key)
 	if err := c.client.Set(ctx, formattedKey, data, ttl).Err(); err != nil {
 		return err
 	}
@@ -228,7 +223,7 @@ func (c *redisCache) Delete(ctx context.Context, key string) error {
 	}
 
 	// Remove value from Redis
-	formattedKey := FormatKey(key)
+	formattedKey := formatKey(key)
 	if err := c.client.Del(ctx, formattedKey).Err(); err != nil {
 		return err
 	}
@@ -336,7 +331,7 @@ func (c *redisCache) Has(ctx context.Context, key string) bool {
 	}
 
 	// Check if key exists in Redis
-	formattedKey := FormatKey(key)
+	formattedKey := formatKey(key)
 	exists, err := c.client.Exists(ctx, formattedKey).Result()
 	if err != nil {
 		return false
@@ -399,7 +394,7 @@ func (c *redisCache) GetMany(ctx context.Context, keys []string) (map[string]any
 	// Format keys
 	formattedKeys := make([]string, len(keys))
 	for i, key := range keys {
-		formattedKeys[i] = FormatKey(key)
+		formattedKeys[i] = formatKey(key)
 	}
 
 	// Get values using MGET
@@ -470,7 +465,7 @@ func (c *redisCache) SetMany(ctx context.Context, items map[string]any, ttl time
 		}
 
 		// Add to pipeline
-		formattedKey := FormatKey(key)
+		formattedKey := formatKey(key)
 		pipe.Set(ctx, formattedKey, data, ttl)
 
 		// Store metadata async to not block the main operation
@@ -498,7 +493,7 @@ func (c *redisCache) DeleteMany(ctx context.Context, keys []string) error {
 	formattedKeys := make([]string, len(keys))
 	metaKeys := make([]string, len(keys))
 	for i, key := range keys {
-		formattedKeys[i] = FormatKey(key)
+		formattedKeys[i] = formatKey(key)
 		metaKeys[i] = formatMetadataKey(key)
 	}
 
@@ -554,7 +549,7 @@ func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheE
 	}
 
 	// Get TTL from Redis
-	formattedKey := FormatKey(key)
+	formattedKey := formatKey(key)
 	ttl, err := c.client.TTL(ctx, formattedKey).Result()
 	if err != nil {
 		ttl = meta.TTL // Fallback to stored TTL
@@ -608,7 +603,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 		pipe := c.client.Pipeline()
 
 		for _, key := range existingKeys {
-			formattedKey := FormatKey(key)
+			formattedKey := formatKey(key)
 			pipe.TTL(ctx, formattedKey)
 		}
 
@@ -805,7 +800,7 @@ func (c *redisCache) updateAccessMetadata(ctx context.Context, key string) {
 	}
 
 	// Get remaining TTL of the value
-	formattedKey := FormatKey(key)
+	formattedKey := formatKey(key)
 	ttl, err := c.client.TTL(ctx, formattedKey).Result()
 	if err != nil || ttl < 0 {
 		// Use default TTL if we can't get the TTL

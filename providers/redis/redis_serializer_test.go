@@ -122,9 +122,9 @@ func TestDifferentSerializers(t *testing.T) {
 			switch s.format {
 			case serializer.JSON:
 				// JSON typically deserializes numeric values to float64
-				resultMap, ok := result.(map[string]interface{})
+				resultMap, ok := result.(map[string]any)
 				if !ok {
-					t.Fatalf("Expected map[string]interface{}, got %T", result)
+					t.Fatalf("Expected map[string]any, got %T", result)
 				}
 
 				// Check a field (age should be float64 with JSON)
@@ -138,9 +138,9 @@ func TestDifferentSerializers(t *testing.T) {
 
 			case serializer.Msgpack:
 				// MessagePack can preserve numeric types better
-				resultMap, ok := result.(map[string]interface{})
+				resultMap, ok := result.(map[string]any)
 				if !ok {
-					t.Fatalf("Expected map[string]interface{}, got %T", result)
+					t.Fatalf("Expected map[string]any, got %T", result)
 				}
 
 				// With MessagePack, age might be int or some numeric type
@@ -182,13 +182,13 @@ func TestSerializerPerformance(t *testing.T) {
 
 	// Create a complex dataset with different data types
 	type ComplexData struct {
-		StringValue string                 `json:"string_value" msgpack:"string_value"`
-		IntValue    int                    `json:"int_value" msgpack:"int_value"`
-		FloatValue  float64                `json:"float_value" msgpack:"float_value"`
-		BoolValue   bool                   `json:"bool_value" msgpack:"bool_value"`
-		TimeValue   time.Time              `json:"time_value" msgpack:"time_value"`
-		SliceValue  []int                  `json:"slice_value" msgpack:"slice_value"`
-		MapValue    map[string]interface{} `json:"map_value" msgpack:"map_value"`
+		StringValue string         `json:"string_value" msgpack:"string_value"`
+		IntValue    int            `json:"int_value" msgpack:"int_value"`
+		FloatValue  float64        `json:"float_value" msgpack:"float_value"`
+		BoolValue   bool           `json:"bool_value" msgpack:"bool_value"`
+		TimeValue   time.Time      `json:"time_value" msgpack:"time_value"`
+		SliceValue  []int          `json:"slice_value" msgpack:"slice_value"`
+		MapValue    map[string]any `json:"map_value" msgpack:"map_value"`
 		NestedValue struct {
 			Name  string `json:"name" msgpack:"name"`
 			Value int    `json:"value" msgpack:"value"`
@@ -203,7 +203,7 @@ func TestSerializerPerformance(t *testing.T) {
 		BoolValue:   true,
 		TimeValue:   time.Now(),
 		SliceValue:  []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
-		MapValue: map[string]interface{}{
+		MapValue: map[string]any{
 			"key1": "value1",
 			"key2": 42,
 			"key3": true,

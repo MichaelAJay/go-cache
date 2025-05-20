@@ -13,7 +13,7 @@ type memoryCache struct {
 	items           map[string]*cacheEntry
 	mu              sync.RWMutex
 	options         *cache.CacheOptions
-	metrics         *cacheMetrics
+	metrics         cache.CacheMetrics
 	cleanupTicker   *time.Ticker
 	cleanupStopChan chan struct{}
 }
@@ -29,22 +29,19 @@ type cacheEntry struct {
 	tags        []string
 }
 
-// cacheMetrics implements the CacheMetrics interface
-type cacheMetrics struct {
-	hits          int64
-	misses        int64
-	getLatency    time.Duration
-	setLatency    time.Duration
-	deleteLatency time.Duration
-	mu            sync.RWMutex
-}
-
 // NewMemoryCache creates a new memory cache instance
 func NewMemoryCache(options *cache.CacheOptions) cache.Cache {
+	var metrics cache.CacheMetrics
+	if options != nil && options.Metrics != nil {
+		metrics = options.Metrics
+	} else {
+		metrics = cache.NewMetrics()
+	}
+
 	c := &memoryCache{
 		items:           make(map[string]*cacheEntry),
 		options:         options,
-		metrics:         &cacheMetrics{},
+		metrics:         metrics,
 		cleanupStopChan: make(chan struct{}),
 	}
 
@@ -61,7 +58,7 @@ func NewMemoryCache(options *cache.CacheOptions) cache.Cache {
 func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordGetLatency(time.Since(start))
+		c.metrics.RecordGetLatency(time.Since(start))
 	}()
 
 	c.mu.RLock()
@@ -69,7 +66,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 	c.mu.RUnlock()
 
 	if !exists {
-		c.metrics.recordMiss()
+		c.metrics.RecordMiss()
 		return nil, false, nil
 	}
 
@@ -78,7 +75,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 		c.mu.Lock()
 		delete(c.items, key)
 		c.mu.Unlock()
-		c.metrics.recordMiss()
+		c.metrics.RecordMiss()
 		return nil, false, nil
 	}
 
@@ -88,7 +85,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 	entry.lastAccess = time.Now()
 	c.mu.Unlock()
 
-	c.metrics.recordHit()
+	c.metrics.RecordHit()
 	return entry.value, true, nil
 }
 
@@ -96,7 +93,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordSetLatency(time.Since(start))
+		c.metrics.RecordSetLatency(time.Since(start))
 	}()
 
 	// Use default TTL if not specified
@@ -138,6 +135,10 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 	}
 
 	c.items[key] = entry
+
+	// Update metrics
+	c.updateSizeMetrics()
+
 	return nil
 }
 
@@ -145,12 +146,16 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 func (c *memoryCache) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordDeleteLatency(time.Since(start))
+		c.metrics.RecordDeleteLatency(time.Since(start))
 	}()
 
 	c.mu.Lock()
 	delete(c.items, key)
 	c.mu.Unlock()
+
+	// Update metrics
+	c.updateSizeMetrics()
+
 	return nil
 }
 
@@ -159,6 +164,10 @@ func (c *memoryCache) Clear(ctx context.Context) error {
 	c.mu.Lock()
 	c.items = make(map[string]*cacheEntry)
 	c.mu.Unlock()
+
+	// Update metrics
+	c.updateSizeMetrics()
+
 	return nil
 }
 
@@ -177,6 +186,10 @@ func (c *memoryCache) Has(ctx context.Context, key string) bool {
 		c.mu.Lock()
 		delete(c.items, key)
 		c.mu.Unlock()
+
+		// Update metrics
+		c.updateSizeMetrics()
+
 		return false
 	}
 
@@ -206,9 +219,15 @@ func (c *memoryCache) Close() error {
 
 // GetMany retrieves multiple values from the cache
 func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
-	result := make(map[string]any)
+	start := time.Now()
+	defer func() {
+		c.metrics.RecordGetLatency(time.Since(start))
+	}()
+
+	result := make(map[string]any, len(keys))
 	for _, key := range keys {
-		if value, exists, err := c.Get(ctx, key); err == nil && exists {
+		value, found, _ := c.Get(ctx, key)
+		if found {
 			result[key] = value
 		}
 	}
@@ -217,6 +236,11 @@ func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]an
 
 // SetMany stores multiple values in the cache
 func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl time.Duration) error {
+	start := time.Now()
+	defer func() {
+		c.metrics.RecordSetLatency(time.Since(start))
+	}()
+
 	for key, value := range items {
 		if err := c.Set(ctx, key, value, ttl); err != nil {
 			return err
@@ -227,11 +251,20 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 
 // DeleteMany removes multiple values from the cache
 func (c *memoryCache) DeleteMany(ctx context.Context, keys []string) error {
+	start := time.Now()
+	defer func() {
+		c.metrics.RecordDeleteLatency(time.Since(start))
+	}()
+
+	c.mu.Lock()
 	for _, key := range keys {
-		if err := c.Delete(ctx, key); err != nil {
-			return err
-		}
+		delete(c.items, key)
 	}
+	c.mu.Unlock()
+
+	// Update metrics
+	c.updateSizeMetrics()
+
 	return nil
 }
 
@@ -250,7 +283,7 @@ func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*cache.Cache
 		CreatedAt:    entry.createdAt,
 		LastAccessed: entry.lastAccess,
 		AccessCount:  entry.accessCount,
-		TTL:          entry.expiresAt.Sub(entry.createdAt),
+		TTL:          c.getTTL(entry),
 		Size:         entry.size,
 		Tags:         entry.tags,
 	}, nil
@@ -258,16 +291,17 @@ func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*cache.Cache
 
 // GetManyMetadata retrieves metadata for multiple cache entries
 func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error) {
-	result := make(map[string]*cache.CacheEntryMetadata)
+	result := make(map[string]*cache.CacheEntryMetadata, len(keys))
 	for _, key := range keys {
-		if metadata, err := c.GetMetadata(ctx, key); err == nil {
+		metadata, err := c.GetMetadata(ctx, key)
+		if err == nil {
 			result[key] = metadata
 		}
 	}
 	return result, nil
 }
 
-// cleanupLoop periodically removes expired entries
+// cleanupLoop runs the cleanup process at regular intervals
 func (c *memoryCache) cleanupLoop() {
 	for {
 		select {
@@ -281,102 +315,66 @@ func (c *memoryCache) cleanupLoop() {
 
 // cleanup removes expired entries from the cache
 func (c *memoryCache) cleanup() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	now := time.Now()
+	c.mu.Lock()
 	for key, entry := range c.items {
 		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
 			delete(c.items, key)
 		}
 	}
+	c.mu.Unlock()
+
+	// Update metrics
+	c.updateSizeMetrics()
 }
 
-// recordHit records a cache hit
-func (m *cacheMetrics) recordHit() {
-	m.mu.Lock()
-	m.hits++
-	m.mu.Unlock()
-}
-
-// recordMiss records a cache miss
-func (m *cacheMetrics) recordMiss() {
-	m.mu.Lock()
-	m.misses++
-	m.mu.Unlock()
-}
-
-// recordGetLatency records the latency of a Get operation
-func (m *cacheMetrics) recordGetLatency(duration time.Duration) {
-	m.mu.Lock()
-	m.getLatency = duration
-	m.mu.Unlock()
-}
-
-// recordSetLatency records the latency of a Set operation
-func (m *cacheMetrics) recordSetLatency(duration time.Duration) {
-	m.mu.Lock()
-	m.setLatency = duration
-	m.mu.Unlock()
-}
-
-// recordDeleteLatency records the latency of a Delete operation
-func (m *cacheMetrics) recordDeleteLatency(duration time.Duration) {
-	m.mu.Lock()
-	m.deleteLatency = duration
-	m.mu.Unlock()
-}
-
-// GetMetrics returns the current metrics snapshot
-func (c *memoryCache) GetMetrics() *cache.CacheMetricsSnapshot {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	c.metrics.mu.RLock()
-	defer c.metrics.mu.RUnlock()
-
-	total := c.metrics.hits + c.metrics.misses
-	hitRatio := 0.0
-	if total > 0 {
-		hitRatio = float64(c.metrics.hits) / float64(total)
-	}
-
+// updateSizeMetrics updates the size and entry count metrics
+func (c *memoryCache) updateSizeMetrics() {
 	var totalSize int64
+	entryCount := int64(len(c.items))
+
 	for _, entry := range c.items {
 		totalSize += entry.size
 	}
 
-	return &cache.CacheMetricsSnapshot{
-		Hits:          c.metrics.hits,
-		Misses:        c.metrics.misses,
-		HitRatio:      hitRatio,
-		GetLatency:    c.metrics.getLatency,
-		SetLatency:    c.metrics.setLatency,
-		DeleteLatency: c.metrics.deleteLatency,
-		CacheSize:     totalSize,
-		EntryCount:    int64(len(c.items)),
+	c.metrics.RecordCacheSize(totalSize)
+	c.metrics.RecordEntryCount(entryCount)
+}
+
+// getTTL calculates the TTL for an entry
+func (c *memoryCache) getTTL(entry *cacheEntry) time.Duration {
+	if entry.expiresAt.IsZero() {
+		return 0
 	}
+
+	now := time.Now()
+	if now.After(entry.expiresAt) {
+		return 0
+	}
+
+	return entry.expiresAt.Sub(now)
+}
+
+// GetMetrics returns the current metrics snapshot
+func (c *memoryCache) GetMetrics() *cache.CacheMetricsSnapshot {
+	return c.metrics.GetMetrics()
 }
 
 // calculateSize estimates the size of a value in bytes
 func calculateSize(value any) int64 {
+	// Simple size estimation - in a real implementation you would use
+	// more accurate size calculation or serialization
 	switch v := value.(type) {
 	case string:
 		return int64(len(v))
 	case []byte:
 		return int64(len(v))
-	case int:
+	case int, int32, float32, bool:
+		return 4
+	case int64, float64:
 		return 8
-	case int64:
-		return 8
-	case float64:
-		return 8
-	case bool:
-		return 1
-	case nil:
-		return 0
 	default:
-		// For complex types, use a rough estimate
+		// Default estimate for other types
 		return 64
 	}
 }

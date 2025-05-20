@@ -65,7 +65,7 @@ func TestMsgPackSerializer(t *testing.T) {
 	testCases := []struct {
 		name  string
 		key   string
-		value interface{}
+		value any
 	}{
 		{
 			name:  "string",
@@ -90,7 +90,7 @@ func TestMsgPackSerializer(t *testing.T) {
 		{
 			name: "map",
 			key:  "msgpack:map",
-			value: map[string]interface{}{
+			value: map[string]any{
 				"name":    "Test User",
 				"age":     30,
 				"active":  true,
@@ -170,11 +170,11 @@ func TestMsgPackSerializer(t *testing.T) {
 					t.Errorf("Expected numeric type, got %T", result)
 				}
 			case "map":
-				if m, ok := result.(map[string]interface{}); !ok {
-					t.Errorf("Expected map[string]interface{}, got %T", result)
+				if m, ok := result.(map[string]any); !ok {
+					t.Errorf("Expected map[string]any, got %T", result)
 				} else {
 					// Check a few fields
-					expectedMap := tc.value.(map[string]interface{})
+					expectedMap := tc.value.(map[string]any)
 					if m["name"] != expectedMap["name"] {
 						t.Errorf("Map field 'name' mismatch: expected '%v', got '%v'",
 							expectedMap["name"], m["name"])
@@ -218,24 +218,24 @@ func TestMessagePackVsJSON(t *testing.T) {
 	log := logger.New(loggerCfg)
 
 	// Create test data - a complex object with various data types
-	testData := map[string]interface{}{
+	testData := map[string]any{
 		"id":        1234,
 		"name":      "Test Object",
 		"timestamp": time.Now(),
 		"active":    true,
 		"score":     98.6,
 		"tags":      []string{"tag1", "tag2", "tag3", "tag4", "tag5"},
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"created_by": "test",
 			"version":    3,
-			"settings": map[string]interface{}{
+			"settings": map[string]any{
 				"visible": true,
 				"color":   "blue",
 				"size":    "large",
-				"options": []interface{}{1, 2, 3, 4, 5},
+				"options": []any{1, 2, 3, 4, 5},
 			},
 		},
-		"items": []map[string]interface{}{
+		"items": []map[string]any{
 			{"id": 1, "value": "first"},
 			{"id": 2, "value": "second"},
 			{"id": 3, "value": "third"},
@@ -320,8 +320,8 @@ func TestMessagePackVsJSON(t *testing.T) {
 	}
 
 	// Check types of some fields
-	jsonMap := jsonResult.(map[string]interface{})
-	msgpackMap := msgpackResult.(map[string]interface{})
+	jsonMap := jsonResult.(map[string]any)
+	msgpackMap := msgpackResult.(map[string]any)
 
 	t.Logf("JSON 'id' type: %T, value: %v", jsonMap["id"], jsonMap["id"])
 	t.Logf("MessagePack 'id' type: %T, value: %v", msgpackMap["id"], msgpackMap["id"])

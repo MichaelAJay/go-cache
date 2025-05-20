@@ -56,7 +56,7 @@ func setupIntegrationCache(t *testing.T) (cache.Cache, func()) {
 
 	// Skip if Redis is not available
 	if !isRedisAvailable() {
-		t.Skip(fmt.Sprintf("Redis server not available at %s", getRedisAddrForIntegration()))
+		t.Skipf("Redis server not available at %s", getRedisAddrForIntegration())
 	}
 
 	client := goredis.NewClient(&goredis.Options{
@@ -150,9 +150,9 @@ func TestRedisIntegration_Complete(t *testing.T) {
 		}
 
 		// The result will be a map due to JSON/MessagePack serialization
-		resultMap, ok := result.(map[string]interface{})
+		resultMap, ok := result.(map[string]any)
 		if !ok {
-			t.Fatalf("Expected map[string]interface{}, got %T", result)
+			t.Fatalf("Expected map[string]any, got %T", result)
 		}
 
 		// Print all keys in the resultMap for debugging
@@ -277,7 +277,7 @@ func TestRedisIntegration_Complete(t *testing.T) {
 }
 
 // Helper function to get map keys for easier debugging
-func getMapKeys(m map[string]interface{}) []string {
+func getMapKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
