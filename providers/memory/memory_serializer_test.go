@@ -75,8 +75,8 @@ func TestMemoryCache_Serializers(t *testing.T) {
 
 			// While we can't check everything due to type conversion during deserialization,
 			// we can verify that key fields were preserved based on the serializer
-			if retrievedMap, ok := retrieved.(map[string]interface{}); ok {
-				// Most serializers like JSON/msgpack convert to map[string]interface{}
+			if retrievedMap, ok := retrieved.(map[string]any); ok {
+				// Most serializers like JSON/msgpack convert to map[string]any
 				if retrievedMap["String"] != testValue.String && retrievedMap["string"] != testValue.String {
 					t.Errorf("String value mismatch with %s serializer", format)
 				}
