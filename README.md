@@ -127,10 +127,6 @@ See the `examples` directory for complete examples:
 - `examples/redis_msgpack_example`: Redis with MessagePack serialization
 - `examples/redis_examples`: Advanced Redis examples
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

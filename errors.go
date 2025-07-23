@@ -11,4 +11,5 @@ var (
 	ErrInvalidKey      = errors.New("cache: invalid key")
 	ErrCacheFull       = errors.New("cache: cache is full")
 	ErrContextCanceled = errors.New("cache: operation canceled")
+	ErrInvalidValue    = errors.New("cache: invalid value type for operation")
 )

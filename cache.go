@@ -30,6 +30,14 @@ type Cache interface {
 
 	// Metrics
 	GetMetrics() *CacheMetricsSnapshot
+
+	// Atomic operations for counters
+	Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
+	Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
+
+	// Conditional operations
+	SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error)
+	SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error)
 }
 
 // CacheEntryMetadata represents metadata for a cache entry

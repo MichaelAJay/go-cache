@@ -714,3 +714,225 @@ func (m *cacheMetrics) recordDeleteLatency(duration time.Duration) {
 	defer m.mu.Unlock()
 	m.deleteLatency = duration
 }
+
+// Increment atomically increments a numeric value in the cache
+func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	// Validate key
+	if key == "" {
+		return 0, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return 0, cache.ErrContextCanceled
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 {
+		ttl = c.options.TTL
+	}
+	if ttl <= 0 {
+		ttl = defaultKeyTTL
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	entry, exists := c.items[key]
+
+	var currentValue int64 = 0
+
+	if exists {
+		// Check if entry has expired
+		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+			// Entry expired, treat as if it doesn't exist
+			delete(c.items, key)
+			exists = false
+		} else {
+			// Deserialize current value
+			var value any
+			if err := c.serializer.Deserialize(entry.value, &value); err != nil {
+				// If can't deserialize as generic, try as int64
+				var intVal int64
+				if err := c.serializer.Deserialize(entry.value, &intVal); err != nil {
+					return 0, cache.ErrDeserialization
+				}
+				currentValue = intVal
+			} else {
+				// Convert value to int64
+				switch v := value.(type) {
+				case int64:
+					currentValue = v
+				case int:
+					currentValue = int64(v)
+				case int32:
+					currentValue = int64(v)
+				case float64:
+					currentValue = int64(v)
+				case float32:
+					currentValue = int64(v)
+				default:
+					return 0, cache.ErrInvalidValue
+				}
+			}
+		}
+	}
+
+	// Calculate new value
+	newValue := currentValue + delta
+
+	// Serialize new value
+	data, err := c.serializer.Serialize(newValue)
+	if err != nil {
+		return 0, cache.ErrSerialization
+	}
+
+	// Create or update entry
+	newEntry := &cacheEntry{
+		value:     data,
+		createdAt: now,
+		size:      int64(len(data)),
+		tags:      []string{},
+	}
+
+	if exists && entry != nil {
+		// Preserve original creation time and access data
+		newEntry.createdAt = entry.createdAt
+		newEntry.accessCount = entry.accessCount
+		newEntry.lastAccess = entry.lastAccess
+	}
+
+	if ttl > 0 {
+		newEntry.expiresAt = now.Add(ttl)
+	}
+
+	c.items[key] = newEntry
+
+	// Update metrics
+	c.updateSizeMetrics()
+
+	return newValue, nil
+}
+
+// Decrement atomically decrements a numeric value in the cache
+func (c *memoryCache) Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	return c.Increment(ctx, key, -delta, ttl)
+}
+
+// SetIfNotExists sets a value only if the key doesn't exist
+func (c *memoryCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	// Validate key
+	if key == "" {
+		return false, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return false, cache.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	entry, exists := c.items[key]
+
+	if exists {
+		// Check if entry has expired
+		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+			// Entry expired, remove it and proceed with set
+			delete(c.items, key)
+		} else {
+			// Key exists and is not expired
+			return false, nil
+		}
+	}
+
+	// Key doesn't exist, set it
+	return true, c.setLocked(key, value, ttl, now)
+}
+
+// SetIfExists sets a value only if the key already exists
+func (c *memoryCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	// Validate key
+	if key == "" {
+		return false, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return false, cache.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	entry, exists := c.items[key]
+
+	if !exists {
+		return false, nil
+	}
+
+	// Check if entry has expired
+	if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+		// Entry expired, remove it
+		delete(c.items, key)
+		return false, nil
+	}
+
+	// Key exists and is not expired, update it
+	return true, c.setLocked(key, value, ttl, now)
+}
+
+// setLocked is a helper method that sets a value while holding the lock
+func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now time.Time) error {
+	// Use default TTL if not specified
+	if ttl == 0 {
+		ttl = c.options.TTL
+	}
+	if ttl <= 0 {
+		ttl = defaultKeyTTL
+	}
+
+	// Serialize value
+	data, err := c.serializer.Serialize(value)
+	if err != nil {
+		return cache.ErrSerialization
+	}
+
+	// Create the cache entry
+	entry := &cacheEntry{
+		value:     data,
+		createdAt: now,
+		size:      int64(len(data)),
+		tags:      []string{},
+	}
+
+	if ttl > 0 {
+		entry.expiresAt = now.Add(ttl)
+	}
+
+	// Check cache limits
+	if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
+		return cache.ErrCacheFull
+	}
+
+	if c.options.MaxSize > 0 {
+		currentSize := int64(0)
+		for _, e := range c.items {
+			currentSize += e.size
+		}
+		if currentSize+entry.size > c.options.MaxSize {
+			return cache.ErrCacheFull
+		}
+	}
+
+	c.items[key] = entry
+
+	// Update metrics
+	c.updateSizeMetrics()
+
+	return nil
+}

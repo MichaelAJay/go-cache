@@ -841,3 +841,149 @@ func (m *cacheMetrics) recordDeleteLatency(duration time.Duration) {
 	defer m.mu.Unlock()
 	m.deleteLatency = duration
 }
+
+// Increment atomically increments a numeric value in Redis
+func (c *redisCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	// Validate key
+	if key == "" {
+		return 0, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return 0, cache.ErrContextCanceled
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 && c.options != nil {
+		ttl = c.options.TTL
+	}
+	if ttl <= 0 {
+		ttl = defaultKeyTTL
+	}
+
+	formattedKey := formatKey(key)
+
+	// Use Redis atomic INCRBY operation
+	result, err := c.client.IncrBy(ctx, formattedKey, delta).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis increment failed: %w", err)
+	}
+
+	// Set TTL on the key if it's newly created or doesn't have one
+	if result == delta {
+		// This is likely a new key (first increment resulted in delta value)
+		// Set TTL on the key
+		c.client.Expire(ctx, formattedKey, ttl)
+		
+		// Store metadata for the new key
+		go c.storeMetadata(ctx, key, 8, ttl) // int64 is 8 bytes
+	}
+
+	return result, nil
+}
+
+// Decrement atomically decrements a numeric value in Redis
+func (c *redisCache) Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	return c.Increment(ctx, key, -delta, ttl)
+}
+
+// SetIfNotExists sets a value only if the key doesn't exist (Redis SETNX)
+func (c *redisCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	// Validate key
+	if key == "" {
+		return false, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return false, cache.ErrContextCanceled
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 && c.options != nil {
+		ttl = c.options.TTL
+	}
+	if ttl <= 0 {
+		ttl = defaultKeyTTL
+	}
+
+	// Serialize value
+	data, err := c.serializer.Serialize(value)
+	if err != nil {
+		return false, cache.ErrSerialization
+	}
+
+	formattedKey := formatKey(key)
+
+	// Use Redis SET NX command (set if not exists)
+	success, err := c.client.SetNX(ctx, formattedKey, data, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis setnx failed: %w", err)
+	}
+
+	// If successful, store metadata
+	if success {
+		go c.storeMetadata(ctx, key, len(data), ttl)
+	}
+
+	return success, nil
+}
+
+// SetIfExists sets a value only if the key already exists (Redis SET XX)
+func (c *redisCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	// Validate key
+	if key == "" {
+		return false, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return false, cache.ErrContextCanceled
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 && c.options != nil {
+		ttl = c.options.TTL
+	}
+	if ttl <= 0 {
+		ttl = defaultKeyTTL
+	}
+
+	// Serialize value
+	data, err := c.serializer.Serialize(value)
+	if err != nil {
+		return false, cache.ErrSerialization
+	}
+
+	formattedKey := formatKey(key)
+
+	// Use Redis SET XX command with a Lua script for atomic operation
+	// This is more reliable than EXISTS + SET because it's atomic
+	luaScript := `
+		if redis.call("EXISTS", KEYS[1]) == 1 then
+			redis.call("SET", KEYS[1], ARGV[1])
+			if ARGV[2] ~= "0" then
+				redis.call("EXPIRE", KEYS[1], ARGV[2])
+			end
+			return 1
+		else
+			return 0
+		end
+	`
+
+	ttlSeconds := int64(ttl.Seconds())
+	result, err := c.client.Eval(ctx, luaScript, []string{formattedKey}, data, ttlSeconds).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis set if exists failed: %w", err)
+	}
+
+	success := result.(int64) == 1
+
+	// If successful, update metadata
+	if success {
+		go c.storeMetadata(ctx, key, len(data), ttl)
+	}
+
+	return success, nil
+}
