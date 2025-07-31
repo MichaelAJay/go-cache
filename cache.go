@@ -4,8 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/MichaelAJay/go-logger"
-	"github.com/MichaelAJay/go-serializer"
+	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 // Cache defines the interface for all cache implementations
@@ -91,54 +90,13 @@ const (
 	CleanupManual  CleanupReason = "manual"
 )
 
-// SecurityConfig defines security settings for cache operations
-type SecurityConfig struct {
-	EnableTimingProtection bool          // Enable consistent response times
-	MinProcessingTime      time.Duration // Minimum time for operations (for timing protection)
-	SecureCleanup          bool          // Enable secure memory wiping during cleanup
-}
-
-// CacheHooks defines lifecycle hooks for cache operations
-type CacheHooks struct {
-	PreGet    func(ctx context.Context, key string) error
-	PostGet   func(ctx context.Context, key string, value any, found bool, err error)
-	PreSet    func(ctx context.Context, key string, value any, ttl time.Duration) error
-	PostSet   func(ctx context.Context, key string, value any, ttl time.Duration, err error)
-	PreDelete func(ctx context.Context, key string) error
-	PostDelete func(ctx context.Context, key string, existed bool, err error)
-	OnCleanup func(ctx context.Context, key string, reason CleanupReason)
-}
-
-// CleanupConfig defines enhanced cleanup configuration
-type CleanupConfig struct {
-	Interval           time.Duration                                        // Cleanup interval
-	BatchSize          int                                                  // Maximum number of entries to clean per batch
-	MaxCleanupTime     time.Duration                                        // Maximum time to spend on cleanup per cycle
-	CustomCleanupFunc  func(key string, entry *CacheEntryMetadata) bool    // Custom cleanup logic
-}
-
-// MetricsConfig defines enhanced metrics configuration
-type MetricsConfig struct {
-	EnableDetailedMetrics   bool   // Enable detailed operation metrics
-	EnableSecurityMetrics   bool   // Enable security-related metrics
-	EnableLatencyHistograms bool   // Enable latency percentile tracking
-	MetricsPrefix           string // Prefix for metric names
-}
 
 // CacheMiddleware defines a function type for cache middleware
 type CacheMiddleware func(next Cache) Cache
 
 // CacheMetrics defines the interface for cache metrics
-type CacheMetrics interface {
-	RecordHit()
-	RecordMiss()
-	RecordGetLatency(duration time.Duration)
-	RecordSetLatency(duration time.Duration)
-	RecordDeleteLatency(duration time.Duration)
-	RecordCacheSize(size int64)
-	RecordEntryCount(count int64)
-	GetMetrics() *CacheMetricsSnapshot
-}
+// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.CacheMetrics instead
+type CacheMetrics = metrics.CacheMetrics
 
 // EnhancedCacheMetrics extends CacheMetrics with additional functionality
 type EnhancedCacheMetrics interface {
@@ -165,16 +123,8 @@ type EnhancedCacheMetrics interface {
 }
 
 // CacheMetricsSnapshot represents a snapshot of cache metrics
-type CacheMetricsSnapshot struct {
-	Hits          int64
-	Misses        int64
-	HitRatio      float64
-	GetLatency    time.Duration
-	SetLatency    time.Duration
-	DeleteLatency time.Duration
-	CacheSize     int64
-	EntryCount    int64
-}
+// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.CacheMetricsSnapshot instead
+type CacheMetricsSnapshot = metrics.CacheMetricsSnapshot
 
 // CacheProvider defines the interface for cache providers
 type CacheProvider interface {
@@ -182,30 +132,21 @@ type CacheProvider interface {
 	Create(options *CacheOptions) (Cache, error)
 }
 
-// CacheOptions represents configuration options for cache instances
-type CacheOptions struct {
-	TTL              time.Duration
-	MaxEntries       int
-	MaxSize          int64
-	CleanupInterval  time.Duration
-	Logger           logger.Logger
-	RedisOptions     *RedisOptions
-	SerializerFormat serializer.Format // Format to use for serialization
-	Metrics          CacheMetrics      // Custom metrics implementation
 
-	// Enhanced configuration options
-	Security        *SecurityConfig           // Security configuration
-	Hooks           *CacheHooks               // Lifecycle hooks
-	Indexes         map[string]string         // indexName -> keyPattern for secondary indexes
-	CleanupConfig   *CleanupConfig            // Enhanced cleanup configuration
-	MetricsConfig   *MetricsConfig            // Enhanced metrics configuration
-	EnhancedMetrics EnhancedCacheMetrics      // Enhanced metrics implementation
-}
+// Re-exported functions for backward compatibility
 
-// RedisOptions represents configuration options for Redis cache
-type RedisOptions struct {
-	Address  string
-	Password string
-	DB       int
-	PoolSize int
-}
+// NewMetrics creates a new metrics instance
+// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.NewMetrics instead
+var NewMetrics = metrics.NewMetrics
+
+// NewPrometheusMetrics creates a new metrics instance using Prometheus
+// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.NewPrometheusMetrics instead
+var NewPrometheusMetrics = metrics.NewPrometheusMetrics
+
+// StartPrometheusServer starts a HTTP server to expose metrics
+// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.StartPrometheusServer instead
+var StartPrometheusServer = metrics.StartPrometheusServer
+
+// PrometheusExposer is an interface for types that can expose a Prometheus HTTP handler
+// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.PrometheusExposer instead
+type PrometheusExposer = metrics.PrometheusExposer

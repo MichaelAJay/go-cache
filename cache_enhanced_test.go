@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/providers/memory"
+	"github.com/MichaelAJay/go-cache/internal/providers/memory"
 )
 
 func TestSecondaryIndexing(t *testing.T) {
