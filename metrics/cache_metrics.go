@@ -4,49 +4,49 @@ import (
 	"sync"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-metrics/operational"
 )
 
 // CacheMetrics provides comprehensive cache metrics using go-metrics
 type CacheMetrics interface {
 	// Core cache operations
-	RecordHit(provider string, tags gometrics.Tags)
-	RecordMiss(provider string, tags gometrics.Tags)
-	RecordOperation(provider, operation, status string, duration time.Duration, tags gometrics.Tags)
-	RecordError(provider, operation, errorType, errorCategory string, tags gometrics.Tags)
+	RecordHit(provider string, tags metric.Tags)
+	RecordMiss(provider string, tags metric.Tags)
+	RecordOperation(provider, operation, status string, duration time.Duration, tags metric.Tags)
+	RecordError(provider, operation, errorType, errorCategory string, tags metric.Tags)
 	
 	// Cache state metrics
-	RecordCacheSize(provider string, size int64, tags gometrics.Tags)
-	RecordEntryCount(provider string, count int64, tags gometrics.Tags)
+	RecordCacheSize(provider string, size int64, tags metric.Tags)
+	RecordEntryCount(provider string, count int64, tags metric.Tags)
 	
 	// Advanced operations
-	RecordBatchOperation(provider, operation string, batchSize int, duration time.Duration, tags gometrics.Tags)
-	RecordIndexOperation(provider, operation, indexName string, duration time.Duration, tags gometrics.Tags)
+	RecordBatchOperation(provider, operation string, batchSize int, duration time.Duration, tags metric.Tags)
+	RecordIndexOperation(provider, operation, indexName string, duration time.Duration, tags metric.Tags)
 	
 	// Security and reliability
-	RecordSecurityEvent(provider, eventType, severity string, tags gometrics.Tags)
-	RecordTimingProtection(provider, operation string, actualTime, adjustedTime time.Duration, tags gometrics.Tags)
+	RecordSecurityEvent(provider, eventType, severity string, tags metric.Tags)
+	RecordTimingProtection(provider, operation string, actualTime, adjustedTime time.Duration, tags metric.Tags)
 	
 	// Registry access for advanced use cases
-	Registry() gometrics.Registry
+	Registry() metric.Registry
 	
 }
 
 
 // cacheMetrics implements CacheMetrics using go-metrics
 type cacheMetrics struct {
-	registry       gometrics.Registry
+	registry       metric.Registry
 	operational    operational.OperationalMetrics
 	
 	// Cached metric instances for performance
-	hitCounters       map[string]gometrics.Counter
-	missCounters      map[string]gometrics.Counter
-	operationTimers   map[string]gometrics.Timer
-	operationCounters map[string]gometrics.Counter
-	sizeGauges        map[string]gometrics.Gauge
-	entryGauges       map[string]gometrics.Gauge
-	securityCounters  map[string]gometrics.Counter
+	hitCounters       map[string]metric.Counter
+	missCounters      map[string]metric.Counter
+	operationTimers   map[string]metric.Timer
+	operationCounters map[string]metric.Counter
+	sizeGauges        map[string]metric.Gauge
+	entryGauges       map[string]metric.Gauge
+	securityCounters  map[string]metric.Counter
 	
 	// Mutex for thread-safe metric caching
 	mu sync.RWMutex
@@ -54,43 +54,43 @@ type cacheMetrics struct {
 }
 
 // NewCacheMetrics creates a new CacheMetrics instance
-func NewCacheMetrics(registry gometrics.Registry) CacheMetrics {
+func NewCacheMetrics(registry metric.Registry) CacheMetrics {
 	if registry == nil {
-		registry = gometrics.NewRegistry()
+		registry = metric.NewDefaultRegistry()
 	}
 	
 	return &cacheMetrics{
 		registry:          registry,
 		operational:       operational.New(registry),
-		hitCounters:       make(map[string]gometrics.Counter),
-		missCounters:      make(map[string]gometrics.Counter),
-		operationTimers:   make(map[string]gometrics.Timer),
-		operationCounters: make(map[string]gometrics.Counter),
-		sizeGauges:        make(map[string]gometrics.Gauge),
-		entryGauges:       make(map[string]gometrics.Gauge),
-		securityCounters:  make(map[string]gometrics.Counter),
+		hitCounters:       make(map[string]metric.Counter),
+		missCounters:      make(map[string]metric.Counter),
+		operationTimers:   make(map[string]metric.Timer),
+		operationCounters: make(map[string]metric.Counter),
+		sizeGauges:        make(map[string]metric.Gauge),
+		entryGauges:       make(map[string]metric.Gauge),
+		securityCounters:  make(map[string]metric.Counter),
 	}
 }
 
 // NewNoopCacheMetrics creates a cache metrics instance that discards all metrics
 func NewNoopCacheMetrics() CacheMetrics {
-	return NewCacheMetrics(gometrics.NewNoop())
+	return NewCacheMetrics(metric.NewNoop())
 }
 
 // RecordHit records a cache hit
-func (c *cacheMetrics) RecordHit(provider string, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordHit(provider string, tags metric.Tags) {
 	counter := c.getOrCreateHitCounter(provider, tags)
 	counter.Inc()
 }
 
 // RecordMiss records a cache miss
-func (c *cacheMetrics) RecordMiss(provider string, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordMiss(provider string, tags metric.Tags) {
 	counter := c.getOrCreateMissCounter(provider, tags)
 	counter.Inc()
 }
 
 // RecordOperation records a cache operation with timing
-func (c *cacheMetrics) RecordOperation(provider, operation, status string, duration time.Duration, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordOperation(provider, operation, status string, duration time.Duration, tags metric.Tags) {
 	// Record with operational metrics
 	c.operational.RecordOperation(operation, status, duration)
 	
@@ -103,13 +103,13 @@ func (c *cacheMetrics) RecordOperation(provider, operation, status string, durat
 }
 
 // RecordError records an error during cache operations
-func (c *cacheMetrics) RecordError(provider, operation, errorType, errorCategory string, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordError(provider, operation, errorType, errorCategory string, tags metric.Tags) {
 	// Record with operational metrics
 	c.operational.RecordError(operation, errorType, errorCategory)
 	
 	// Record with detailed provider metrics
 	if tags == nil {
-		tags = make(gometrics.Tags)
+		tags = make(metric.Tags)
 	}
 	tags["provider"] = provider
 	tags["error_type"] = errorType
@@ -121,21 +121,21 @@ func (c *cacheMetrics) RecordError(provider, operation, errorType, errorCategory
 }
 
 // RecordCacheSize records the current cache size
-func (c *cacheMetrics) RecordCacheSize(provider string, size int64, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordCacheSize(provider string, size int64, tags metric.Tags) {
 	gauge := c.getOrCreateSizeGauge(provider, tags)
 	gauge.Set(float64(size))
 }
 
 // RecordEntryCount records the current number of entries
-func (c *cacheMetrics) RecordEntryCount(provider string, count int64, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordEntryCount(provider string, count int64, tags metric.Tags) {
 	gauge := c.getOrCreateEntryGauge(provider, tags)
 	gauge.Set(float64(count))
 }
 
 // RecordBatchOperation records metrics for batch operations
-func (c *cacheMetrics) RecordBatchOperation(provider, operation string, batchSize int, duration time.Duration, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordBatchOperation(provider, operation string, batchSize int, duration time.Duration, tags metric.Tags) {
 	if tags == nil {
-		tags = make(gometrics.Tags)
+		tags = make(metric.Tags)
 	}
 	tags["provider"] = provider
 	tags["batch_size"] = string(rune(batchSize))
@@ -148,9 +148,9 @@ func (c *cacheMetrics) RecordBatchOperation(provider, operation string, batchSiz
 }
 
 // RecordIndexOperation records metrics for index operations
-func (c *cacheMetrics) RecordIndexOperation(provider, operation, indexName string, duration time.Duration, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordIndexOperation(provider, operation, indexName string, duration time.Duration, tags metric.Tags) {
 	if tags == nil {
-		tags = make(gometrics.Tags)
+		tags = make(metric.Tags)
 	}
 	tags["provider"] = provider
 	tags["index_name"] = indexName
@@ -163,9 +163,9 @@ func (c *cacheMetrics) RecordIndexOperation(provider, operation, indexName strin
 }
 
 // RecordSecurityEvent records security-related events
-func (c *cacheMetrics) RecordSecurityEvent(provider, eventType, severity string, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordSecurityEvent(provider, eventType, severity string, tags metric.Tags) {
 	if tags == nil {
-		tags = make(gometrics.Tags)
+		tags = make(metric.Tags)
 	}
 	tags["provider"] = provider
 	tags["event_type"] = eventType
@@ -177,9 +177,9 @@ func (c *cacheMetrics) RecordSecurityEvent(provider, eventType, severity string,
 }
 
 // RecordTimingProtection records timing attack protection adjustments
-func (c *cacheMetrics) RecordTimingProtection(provider, operation string, actualTime, adjustedTime time.Duration, tags gometrics.Tags) {
+func (c *cacheMetrics) RecordTimingProtection(provider, operation string, actualTime, adjustedTime time.Duration, tags metric.Tags) {
 	if tags == nil {
-		tags = make(gometrics.Tags)
+		tags = make(metric.Tags)
 	}
 	tags["provider"] = provider
 	tags["operation"] = operation
@@ -190,7 +190,7 @@ func (c *cacheMetrics) RecordTimingProtection(provider, operation string, actual
 	counter.Inc()
 	
 	// Record actual vs adjusted time difference
-	adjustmentTags := make(gometrics.Tags)
+	adjustmentTags := make(metric.Tags)
 	for k, v := range tags {
 		adjustmentTags[k] = v
 	}
@@ -201,7 +201,7 @@ func (c *cacheMetrics) RecordTimingProtection(provider, operation string, actual
 }
 
 // Registry returns the underlying metrics registry
-func (c *cacheMetrics) Registry() gometrics.Registry {
+func (c *cacheMetrics) Registry() metric.Registry {
 	return c.registry
 }
 
@@ -219,7 +219,7 @@ func (c *cacheMetrics) cacheKey(parts ...string) string {
 	return key
 }
 
-func (c *cacheMetrics) getOrCreateHitCounter(provider string, tags gometrics.Tags) gometrics.Counter {
+func (c *cacheMetrics) getOrCreateHitCounter(provider string, tags metric.Tags) metric.Counter {
 	key := c.cacheKey("hit", provider)
 	
 	c.mu.RLock()
@@ -236,8 +236,8 @@ func (c *cacheMetrics) getOrCreateHitCounter(provider string, tags gometrics.Tag
 		return counter.With(tags)
 	}
 	
-	baseTags := gometrics.Tags{"provider": provider}
-	counter := c.registry.Counter(gometrics.Options{
+	baseTags := metric.Tags{"provider": provider}
+	counter := c.registry.Counter(metric.Options{
 		Name:        "cache_hits_total",
 		Description: "Total number of cache hits",
 		Unit:        "count",
@@ -248,7 +248,7 @@ func (c *cacheMetrics) getOrCreateHitCounter(provider string, tags gometrics.Tag
 	return counter.With(tags)
 }
 
-func (c *cacheMetrics) getOrCreateMissCounter(provider string, tags gometrics.Tags) gometrics.Counter {
+func (c *cacheMetrics) getOrCreateMissCounter(provider string, tags metric.Tags) metric.Counter {
 	key := c.cacheKey("miss", provider)
 	
 	c.mu.RLock()
@@ -265,8 +265,8 @@ func (c *cacheMetrics) getOrCreateMissCounter(provider string, tags gometrics.Ta
 		return counter.With(tags)
 	}
 	
-	baseTags := gometrics.Tags{"provider": provider}
-	counter := c.registry.Counter(gometrics.Options{
+	baseTags := metric.Tags{"provider": provider}
+	counter := c.registry.Counter(metric.Options{
 		Name:        "cache_misses_total",
 		Description: "Total number of cache misses",
 		Unit:        "count",
@@ -277,7 +277,7 @@ func (c *cacheMetrics) getOrCreateMissCounter(provider string, tags gometrics.Ta
 	return counter.With(tags)
 }
 
-func (c *cacheMetrics) getOrCreateOperationTimer(provider, operation string, tags gometrics.Tags) gometrics.Timer {
+func (c *cacheMetrics) getOrCreateOperationTimer(provider, operation string, tags metric.Tags) metric.Timer {
 	key := c.cacheKey("timer", provider, operation)
 	
 	c.mu.RLock()
@@ -294,8 +294,8 @@ func (c *cacheMetrics) getOrCreateOperationTimer(provider, operation string, tag
 		return timer.With(tags)
 	}
 	
-	baseTags := gometrics.Tags{"provider": provider, "operation": operation}
-	timer := c.registry.Timer(gometrics.Options{
+	baseTags := metric.Tags{"provider": provider, "operation": operation}
+	timer := c.registry.Timer(metric.Options{
 		Name:        "cache_operation_duration",
 		Description: "Duration of cache operations",
 		Unit:        "nanoseconds",
@@ -306,7 +306,7 @@ func (c *cacheMetrics) getOrCreateOperationTimer(provider, operation string, tag
 	return timer.With(tags)
 }
 
-func (c *cacheMetrics) getOrCreateOperationCounter(provider, operation, status string, tags gometrics.Tags) gometrics.Counter {
+func (c *cacheMetrics) getOrCreateOperationCounter(provider, operation, status string, tags metric.Tags) metric.Counter {
 	key := c.cacheKey("counter", provider, operation, status)
 	
 	c.mu.RLock()
@@ -323,8 +323,8 @@ func (c *cacheMetrics) getOrCreateOperationCounter(provider, operation, status s
 		return counter.With(tags)
 	}
 	
-	baseTags := gometrics.Tags{"provider": provider, "operation": operation, "status": status}
-	counter := c.registry.Counter(gometrics.Options{
+	baseTags := metric.Tags{"provider": provider, "operation": operation, "status": status}
+	counter := c.registry.Counter(metric.Options{
 		Name:        "cache_operations_total",
 		Description: "Total number of cache operations",
 		Unit:        "count",
@@ -335,7 +335,7 @@ func (c *cacheMetrics) getOrCreateOperationCounter(provider, operation, status s
 	return counter.With(tags)
 }
 
-func (c *cacheMetrics) getOrCreateSizeGauge(provider string, tags gometrics.Tags) gometrics.Gauge {
+func (c *cacheMetrics) getOrCreateSizeGauge(provider string, tags metric.Tags) metric.Gauge {
 	key := c.cacheKey("size", provider)
 	
 	c.mu.RLock()
@@ -352,8 +352,8 @@ func (c *cacheMetrics) getOrCreateSizeGauge(provider string, tags gometrics.Tags
 		return gauge.With(tags)
 	}
 	
-	baseTags := gometrics.Tags{"provider": provider}
-	gauge := c.registry.Gauge(gometrics.Options{
+	baseTags := metric.Tags{"provider": provider}
+	gauge := c.registry.Gauge(metric.Options{
 		Name:        "cache_size_bytes",
 		Description: "Current cache size in bytes",
 		Unit:        "bytes",
@@ -364,7 +364,7 @@ func (c *cacheMetrics) getOrCreateSizeGauge(provider string, tags gometrics.Tags
 	return gauge.With(tags)
 }
 
-func (c *cacheMetrics) getOrCreateEntryGauge(provider string, tags gometrics.Tags) gometrics.Gauge {
+func (c *cacheMetrics) getOrCreateEntryGauge(provider string, tags metric.Tags) metric.Gauge {
 	key := c.cacheKey("entries", provider)
 	
 	c.mu.RLock()
@@ -381,8 +381,8 @@ func (c *cacheMetrics) getOrCreateEntryGauge(provider string, tags gometrics.Tag
 		return gauge.With(tags)
 	}
 	
-	baseTags := gometrics.Tags{"provider": provider}
-	gauge := c.registry.Gauge(gometrics.Options{
+	baseTags := metric.Tags{"provider": provider}
+	gauge := c.registry.Gauge(metric.Options{
 		Name:        "cache_entries_total",
 		Description: "Current number of cache entries",
 		Unit:        "count",
@@ -393,7 +393,7 @@ func (c *cacheMetrics) getOrCreateEntryGauge(provider string, tags gometrics.Tag
 	return gauge.With(tags)
 }
 
-func (c *cacheMetrics) getOrCreateSecurityCounter(key string, tags gometrics.Tags) gometrics.Counter {
+func (c *cacheMetrics) getOrCreateSecurityCounter(key string, tags metric.Tags) metric.Counter {
 	c.mu.RLock()
 	if counter, exists := c.securityCounters[key]; exists {
 		c.mu.RUnlock()
@@ -408,7 +408,7 @@ func (c *cacheMetrics) getOrCreateSecurityCounter(key string, tags gometrics.Tag
 		return counter.With(tags)
 	}
 	
-	counter := c.registry.Counter(gometrics.Options{
+	counter := c.registry.Counter(metric.Options{
 		Name:        "cache_security_events_total",
 		Description: "Total number of cache security events",
 		Unit:        "count",

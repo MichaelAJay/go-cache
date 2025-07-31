@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-metrics/metric/prometheus"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/providers/memory"
@@ -20,7 +20,7 @@ func main() {
 	fmt.Println("=== Go-Cache Comprehensive Metrics Example ===")
 	
 	// Create go-metrics registry
-	registry := gometrics.NewRegistry()
+	registry := metric.NewDefaultRegistry()
 	
 	// Create Prometheus reporter with custom labels
 	reporter := prometheus.NewReporter(
@@ -42,7 +42,7 @@ func main() {
 		// Advanced go-metrics integration
 		GoMetricsRegistry: registry,
 		MetricsEnabled:    true,
-		GlobalMetricsTags: gometrics.Tags{
+		GlobalMetricsTags: metric.Tags{
 			"provider":      "memory",
 			"node_id":       "cache-node-primary",
 			"datacenter":    "us-east-1",

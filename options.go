@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
 	"github.com/MichaelAJay/go-cache/metrics"
@@ -57,7 +57,7 @@ func WithMaxSize(maxSize int64) CacheOption {
 
 
 // WithGoMetricsRegistry sets the go-metrics registry for comprehensive metrics
-func WithGoMetricsRegistry(registry gometrics.Registry) CacheOption {
+func WithGoMetricsRegistry(registry metric.Registry) CacheOption {
 	return func(o *CacheOptions) {
 		o.GoMetricsRegistry = registry
 		o.EnhancedMetrics = metrics.NewEnhancedCacheMetrics(registry, o.GlobalMetricsTags)
@@ -69,14 +69,14 @@ func WithMetricsEnabled(enabled bool) CacheOption {
 	return func(o *CacheOptions) {
 		o.MetricsEnabled = enabled
 		if !enabled {
-			o.GoMetricsRegistry = gometrics.NewNoop()
+			o.GoMetricsRegistry = metric.NewNoop()
 			o.EnhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
 		}
 	}
 }
 
 // WithGlobalMetricsTags sets global tags that will be applied to all metrics
-func WithGlobalMetricsTags(tags gometrics.Tags) CacheOption {
+func WithGlobalMetricsTags(tags metric.Tags) CacheOption {
 	return func(o *CacheOptions) {
 		o.GlobalMetricsTags = tags
 	}
@@ -120,10 +120,10 @@ func WithMetricsConfig(config *MetricsConfig) CacheOption {
 // Advanced metrics configuration helpers
 
 // WithPrometheusMetrics configures the cache to use Prometheus metrics
-func WithPrometheusMetrics(registry gometrics.Registry, tags gometrics.Tags) CacheOption {
+func WithPrometheusMetrics(registry metric.Registry, tags metric.Tags) CacheOption {
 	return func(o *CacheOptions) {
 		if registry == nil {
-			registry = gometrics.NewRegistry()
+			registry = metric.NewDefaultRegistry()
 		}
 		o.GoMetricsRegistry = registry
 		o.GlobalMetricsTags = tags
@@ -132,10 +132,10 @@ func WithPrometheusMetrics(registry gometrics.Registry, tags gometrics.Tags) Cac
 }
 
 // WithOpenTelemetryMetrics configures the cache to use OpenTelemetry metrics
-func WithOpenTelemetryMetrics(registry gometrics.Registry, tags gometrics.Tags) CacheOption {
+func WithOpenTelemetryMetrics(registry metric.Registry, tags metric.Tags) CacheOption {
 	return func(o *CacheOptions) {
 		if registry == nil {
-			registry = gometrics.NewRegistry()
+			registry = metric.NewDefaultRegistry()
 		}
 		o.GoMetricsRegistry = registry
 		o.GlobalMetricsTags = tags
@@ -147,7 +147,7 @@ func WithOpenTelemetryMetrics(registry gometrics.Registry, tags gometrics.Tags) 
 func WithServiceTags(serviceName, version, environment string) CacheOption {
 	return func(o *CacheOptions) {
 		if o.GlobalMetricsTags == nil {
-			o.GlobalMetricsTags = make(gometrics.Tags)
+			o.GlobalMetricsTags = make(metric.Tags)
 		}
 		o.GlobalMetricsTags["service"] = serviceName
 		o.GlobalMetricsTags["version"] = version
@@ -225,9 +225,9 @@ type CacheOptions struct {
 	SerializerFormat serializer.Format // Format to use for serialization
 	
 	// go-metrics integration
-	GoMetricsRegistry  gometrics.Registry   // go-metrics registry for comprehensive metrics
+	GoMetricsRegistry  metric.Registry      // go-metrics registry for comprehensive metrics
 	MetricsEnabled     bool                 // Enable/disable metrics collection
-	GlobalMetricsTags  gometrics.Tags       // Global tags applied to all metrics
+	GlobalMetricsTags  metric.Tags          // Global tags applied to all metrics
 	EnhancedMetrics    EnhancedCacheMetrics // Enhanced metrics implementation using go-metrics
 
 	// Enhanced configuration options

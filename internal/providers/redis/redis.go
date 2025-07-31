@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-logger"
@@ -102,7 +102,7 @@ func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cac
 			enhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
 		} else {
 			// Create default registry
-			registry := gometrics.NewRegistry()
+			registry := metric.NewDefaultRegistry()
 			enhancedMetrics = metrics.NewEnhancedCacheMetrics(registry, options.GlobalMetricsTags)
 		}
 	}
@@ -847,8 +847,8 @@ func (c *redisCache) recordDeleteLatency(duration time.Duration) {
 }
 
 // Helper function to get base tags for metrics
-func (c *redisCache) getBaseTags() gometrics.Tags {
-	tags := make(gometrics.Tags)
+func (c *redisCache) getBaseTags() metric.Tags {
+	tags := make(metric.Tags)
 	if c.options.GlobalMetricsTags != nil {
 		for k, v := range c.options.GlobalMetricsTags {
 			tags[k] = v

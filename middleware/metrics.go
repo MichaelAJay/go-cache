@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-cache"
 )
 
@@ -14,12 +14,12 @@ type enhancedMetricsCache struct {
 	cache           cache.Cache
 	enhancedMetrics cache.EnhancedCacheMetrics
 	providerName    string
-	tags            gometrics.Tags
+	tags            metric.Tags
 }
 
 // NewEnhancedMetricsMiddleware creates a new enhanced metrics middleware
 // This middleware adds an additional layer of metrics on top of the provider's built-in metrics
-func NewEnhancedMetricsMiddleware(enhancedMetrics cache.EnhancedCacheMetrics, providerName string, tags gometrics.Tags) cache.CacheMiddleware {
+func NewEnhancedMetricsMiddleware(enhancedMetrics cache.EnhancedCacheMetrics, providerName string, tags metric.Tags) cache.CacheMiddleware {
 	return func(next cache.Cache) cache.Cache {
 		return &enhancedMetricsCache{
 			cache:           next,

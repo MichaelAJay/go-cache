@@ -4,13 +4,13 @@
 package metrics
 
 import (
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 )
 
 // Factory functions for creating metrics instances
 
 // NewComprehensiveCacheMetrics creates a new comprehensive cache metrics instance
-func NewComprehensiveCacheMetrics(registry gometrics.Registry) CacheMetrics {
+func NewComprehensiveCacheMetrics(registry metric.Registry) CacheMetrics {
 	return NewCacheMetrics(registry)
 }
 
@@ -24,25 +24,25 @@ func NewDiscardingCacheMetrics() CacheMetrics {
 // Convenience functions for common use cases
 
 // NewMemoryProviderMetrics creates metrics specifically for the memory provider
-func NewMemoryProviderMetrics(registry gometrics.Registry) CacheMetrics {
+func NewMemoryProviderMetrics(registry metric.Registry) CacheMetrics {
 	if registry == nil {
-		registry = gometrics.NewRegistry()
+		registry = metric.NewDefaultRegistry()
 	}
 	return NewCacheMetrics(registry)
 }
 
 // NewRedisProviderMetrics creates metrics specifically for the Redis provider
-func NewRedisProviderMetrics(registry gometrics.Registry) CacheMetrics {
+func NewRedisProviderMetrics(registry metric.Registry) CacheMetrics {
 	if registry == nil {
-		registry = gometrics.NewRegistry()
+		registry = metric.NewDefaultRegistry()
 	}
 	return NewCacheMetrics(registry)
 }
 
 // NewProviderMetrics creates metrics for a specific provider type
-func NewProviderMetrics(provider string, registry gometrics.Registry) CacheMetrics {
+func NewProviderMetrics(provider string, registry metric.Registry) CacheMetrics {
 	if registry == nil {
-		registry = gometrics.NewRegistry()
+		registry = metric.NewDefaultRegistry()
 	}
 	return NewCacheMetrics(registry)
 }
@@ -50,23 +50,23 @@ func NewProviderMetrics(provider string, registry gometrics.Registry) CacheMetri
 // Helper functions for working with metrics tags
 
 // ProviderTags creates standard tags for a cache provider
-func ProviderTags(provider string) gometrics.Tags {
-	return gometrics.Tags{
+func ProviderTags(provider string) metric.Tags {
+	return metric.Tags{
 		"provider": provider,
 	}
 }
 
 // OperationTags creates standard tags for a cache operation
-func OperationTags(provider, operation string) gometrics.Tags {
-	return gometrics.Tags{
+func OperationTags(provider, operation string) metric.Tags {
+	return metric.Tags{
 		"provider":  provider,
 		"operation": operation,
 	}
 }
 
 // ErrorTags creates standard tags for error tracking
-func ErrorTags(provider, operation, errorType, errorCategory string) gometrics.Tags {
-	return gometrics.Tags{
+func ErrorTags(provider, operation, errorType, errorCategory string) metric.Tags {
+	return metric.Tags{
 		"provider":       provider,
 		"operation":      operation,
 		"error_type":     errorType,
@@ -75,8 +75,8 @@ func ErrorTags(provider, operation, errorType, errorCategory string) gometrics.T
 }
 
 // SecurityTags creates standard tags for security events
-func SecurityTags(provider, eventType, severity string) gometrics.Tags {
-	return gometrics.Tags{
+func SecurityTags(provider, eventType, severity string) metric.Tags {
+	return metric.Tags{
 		"provider":   provider,
 		"event_type": eventType,
 		"severity":   severity,

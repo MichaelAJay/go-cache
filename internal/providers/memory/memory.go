@@ -9,7 +9,7 @@ import (
 
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/metrics"
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
 )
 
@@ -101,7 +101,7 @@ func NewMemoryCache(options *cache.CacheOptions) (cache.Cache, error) {
 			enhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
 		} else {
 			// Create default registry
-			registry := gometrics.NewRegistry()
+			registry := metric.NewDefaultRegistry()
 			enhancedMetrics = metrics.NewEnhancedCacheMetrics(registry, options.GlobalMetricsTags)
 		}
 	}
@@ -873,8 +873,8 @@ func (c *memoryCache) recordDeleteLatency(duration time.Duration) {
 }
 
 // Helper function to get base tags for metrics
-func (c *memoryCache) getBaseTags() gometrics.Tags {
-	tags := make(gometrics.Tags)
+func (c *memoryCache) getBaseTags() metric.Tags {
+	tags := make(metric.Tags)
 	if c.options.GlobalMetricsTags != nil {
 		for k, v := range c.options.GlobalMetricsTags {
 			tags[k] = v

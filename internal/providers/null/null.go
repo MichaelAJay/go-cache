@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/metrics"
 )
@@ -247,7 +247,7 @@ func (c *nullCache) recordDeleteLatency(duration time.Duration) {
 }
 
 // Helper function to get base tags for metrics
-func (c *nullCache) getBaseTags() gometrics.Tags {
+func (c *nullCache) getBaseTags() metric.Tags {
 	// Null cache typically doesn't need tags, but we'll provide empty ones
-	return make(gometrics.Tags)
+	return make(metric.Tags)
 }

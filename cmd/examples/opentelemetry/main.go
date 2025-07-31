@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-metrics/metric/otel"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/providers/memory"
@@ -17,7 +17,7 @@ import (
 
 func main() {
 	// Create go-metrics registry
-	registry := gometrics.NewRegistry()
+	registry := metric.NewDefaultRegistry()
 	
 	// Create OpenTelemetry reporter
 	reporter, err := otel.NewReporter(
@@ -45,7 +45,7 @@ func main() {
 		// New go-metrics integration
 		GoMetricsRegistry: registry,
 		MetricsEnabled:    true,
-		GlobalMetricsTags: gometrics.Tags{
+		GlobalMetricsTags: metric.Tags{
 			"provider":    "memory",
 			"environment": "development",
 			"node":        "cache-node-1",
