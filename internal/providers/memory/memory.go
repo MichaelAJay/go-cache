@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	gometrics "github.com/MichaelAJay/go-metrics"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/metrics"
+	gometrics "github.com/MichaelAJay/go-metrics"
 	"github.com/MichaelAJay/go-serializer"
 )
 
@@ -20,16 +20,16 @@ const (
 
 // memoryCache implements the Cache interface using an in-memory map
 type memoryCache struct {
-	items           map[string]*cacheEntry
-	mu              sync.RWMutex
-	options         *cache.CacheOptions
-	serializer      serializer.Serializer
-	
+	items      map[string]*cacheEntry
+	mu         sync.RWMutex
+	options    *cache.CacheOptions
+	serializer serializer.Serializer
+
 	// Metrics - support both old and new systems
-	legacyMetrics   *cacheMetrics                // Legacy metrics for backward compatibility
-	enhancedMetrics cache.EnhancedCacheMetrics   // New go-metrics based system
-	providerName    string                       // Provider name for metrics tagging
-	
+	legacyMetrics   *cacheMetrics              // Legacy metrics for backward compatibility
+	enhancedMetrics cache.EnhancedCacheMetrics // New go-metrics based system
+	providerName    string                     // Provider name for metrics tagging
+
 	cleanupTicker   *time.Ticker
 	cleanupStopChan chan struct{}
 
@@ -75,7 +75,7 @@ func NewMemoryCache(options *cache.CacheOptions) (cache.Cache, error) {
 	}
 
 	// Determine serializer format
-	format := serializer.Msgpack // Default to MessagePack for better performance
+	format := serializer.Binary // Default to Gob for native Go performance in memory cache
 	if options.SerializerFormat != "" {
 		format = options.SerializerFormat
 	}
@@ -88,7 +88,7 @@ func NewMemoryCache(options *cache.CacheOptions) (cache.Cache, error) {
 
 	// Initialize metrics systems
 	legacyMetrics := &cacheMetrics{}
-	
+
 	// Determine which metrics system to use
 	var enhancedMetrics cache.EnhancedCacheMetrics
 	if options.EnhancedMetrics != nil {
@@ -151,7 +151,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 				actualTime := elapsed
 				adjustedTime := c.securityConfig.MinProcessingTime
 				time.Sleep(adjustedTime - actualTime)
-				
+
 				// Record timing protection metrics
 				tags := c.getBaseTags()
 				c.enhancedMetrics.RecordTimingProtection(c.providerName, "get", actualTime, adjustedTime, tags)
@@ -265,7 +265,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 				actualTime := elapsed
 				adjustedTime := c.securityConfig.MinProcessingTime
 				time.Sleep(adjustedTime - actualTime)
-				
+
 				// Record timing protection metrics
 				tags := c.getBaseTags()
 				c.enhancedMetrics.RecordTimingProtection(c.providerName, "get", actualTime, adjustedTime, tags)
@@ -487,7 +487,7 @@ func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]an
 	defer func() {
 		duration := time.Since(start)
 		c.recordGetLatency(duration)
-		
+
 		// Record batch operation metrics
 		tags := c.getBaseTags()
 		c.enhancedMetrics.RecordBatchOperation(c.providerName, "get", len(keys), duration, tags)
@@ -551,7 +551,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 	defer func() {
 		duration := time.Since(start)
 		c.recordSetLatency(duration)
-		
+
 		// Record batch operation metrics
 		tags := c.getBaseTags()
 		c.enhancedMetrics.RecordBatchOperation(c.providerName, "set", len(items), duration, tags)
@@ -647,7 +647,7 @@ func (c *memoryCache) DeleteMany(ctx context.Context, keys []string) error {
 	defer func() {
 		duration := time.Since(start)
 		c.recordDeleteLatency(duration)
-		
+
 		// Record batch operation metrics
 		tags := c.getBaseTags()
 		c.enhancedMetrics.RecordBatchOperation(c.providerName, "delete", len(keys), duration, tags)
@@ -752,7 +752,6 @@ func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[s
 	return result, nil
 }
 
-
 // cleanupLoop runs the cleanup process at regular intervals
 func (c *memoryCache) cleanupLoop() {
 	for {
@@ -777,14 +776,14 @@ func (c *memoryCache) cleanup() {
 			expiredKeys = append(expiredKeys, key)
 		}
 	}
-	
+
 	// Remove expired entries and their index references
 	for _, key := range expiredKeys {
 		delete(c.items, key)
 		c.removeFromAllIndexes(key)
 	}
 	c.mu.Unlock()
-	
+
 	duration := time.Since(start)
 	itemCount := len(expiredKeys)
 
@@ -810,7 +809,7 @@ func (c *memoryCache) updateSizeMetrics() {
 	c.legacyMetrics.cacheSize = totalSize
 	c.legacyMetrics.entryCount = entryCount
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Update enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordCacheSize(c.providerName, totalSize, tags)
@@ -823,7 +822,7 @@ func (c *memoryCache) recordHit() {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.hits++
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordHit(c.providerName, tags)
@@ -834,7 +833,7 @@ func (c *memoryCache) recordMiss() {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.misses++
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordMiss(c.providerName, tags)
@@ -845,7 +844,7 @@ func (c *memoryCache) recordGetLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.getLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "get", "completed", duration, tags)
@@ -856,7 +855,7 @@ func (c *memoryCache) recordSetLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.setLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "set", "completed", duration, tags)
@@ -867,7 +866,7 @@ func (c *memoryCache) recordDeleteLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.deleteLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "delete", "completed", duration, tags)
@@ -1129,7 +1128,7 @@ func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern
 			if c.indexes[indexName][indexKey] == nil {
 				c.indexes[indexName][indexKey] = make([]string, 0)
 			}
-			
+
 			// Check if key is already in the index
 			found := false
 			for _, existingKey := range c.indexes[indexName][indexKey] {
@@ -1138,7 +1137,7 @@ func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern
 					break
 				}
 			}
-			
+
 			if !found {
 				c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
 			}
@@ -1167,7 +1166,7 @@ func (c *memoryCache) RemoveIndex(ctx context.Context, indexName string, keyPatt
 					newKeys = append(newKeys, key)
 				}
 			}
-			
+
 			if len(newKeys) == 0 {
 				delete(indexMap, indexKey)
 			} else {
@@ -1188,7 +1187,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 		tags := c.getBaseTags()
 		c.enhancedMetrics.RecordIndexOperation(c.providerName, "get", indexName, duration, tags)
 	}()
-	
+
 	// Check for context cancellation
 	if ctx.Err() != nil {
 		return nil, cache.ErrContextCanceled
@@ -1202,7 +1201,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 			// Filter out expired keys
 			validKeys := make([]string, 0, len(keys))
 			now := time.Now()
-			
+
 			for _, key := range keys {
 				if entry, exists := c.items[key]; exists {
 					if entry.expiresAt.IsZero() || now.Before(entry.expiresAt) {
@@ -1210,7 +1209,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 					}
 				}
 			}
-			
+
 			return validKeys, nil
 		}
 	}
@@ -1407,7 +1406,7 @@ func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater cach
 
 	// Apply the updater
 	newValue, shouldUpdate := updater(currentValue)
-	
+
 	if shouldUpdate {
 		// Update the entry
 		err := c.setLocked(key, newValue, ttl, time.Now())

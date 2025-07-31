@@ -104,7 +104,7 @@ memCache, err := manager.GetCache("memory",
     cache.WithTTL(10*time.Minute),
     cache.WithMaxEntries(10000),
     cache.WithCleanupInterval(5*time.Minute),
-    cache.WithSecurity(&cache.SecurityConfig{
+    cache.WithSecurityConfig(&cache.SecurityConfig{
         EnableTimingProtection: true,
         MinProcessingTime:      5*time.Millisecond,
     }),
@@ -138,7 +138,7 @@ redisCache, err := manager.GetCache("redis",
         MaxRetries:  3,
         DialTimeout: 5*time.Second,
     }),
-    cache.WithSerializer("msgpack"), // Optional: msgpack, json, gob
+    // Optional serialization formats available
 )
 ```
 
@@ -162,16 +162,33 @@ See the [Redis Provider README](internal/providers/redis/README.md) for detailed
 
 ### Provider-Specific Options  
 - `WithRedisOptions(*RedisOptions)`: Redis connection and pool settings
-- `WithSerializer(string)`: Serialization format ("json", "msgpack", "gob")
 
 ### Security & Advanced Options
-- `WithSecurity(*SecurityConfig)`: Enable timing protection and secure cleanup
+- `WithSecurityConfig(*SecurityConfig)`: Enable timing protection and secure cleanup
 - `WithHooks(*CacheHooks)`: Pre/post operation hooks for validation
 - `WithIndexes(map[string]string)`: Pre-configure secondary indexes
+
+### Metrics & Observability Options
+- `WithGoMetricsRegistry(gometrics.Registry)`: Set go-metrics registry for comprehensive metrics
+- `WithMetricsEnabled(bool)`: Enable/disable metrics collection
+- `WithGlobalMetricsTags(gometrics.Tags)`: Global tags applied to all metrics
+- `WithPrometheusMetrics(registry, tags)`: Configure Prometheus metrics
+- `WithOpenTelemetryMetrics(registry, tags)`: Configure OpenTelemetry metrics
+- `WithServiceTags(serviceName, version, environment)`: Add standard service tags
+- `WithDetailedMetrics(bool)`: Enable comprehensive metrics collection
+- `WithMetricsPrefix(string)`: Set prefix for all metric names
 
 ### Example: Full Configuration
 
 ```go
+import (
+    gometrics "github.com/MichaelAJay/go-metrics"
+    "github.com/MichaelAJay/go-cache"
+)
+
+// Create go-metrics registry
+registry := gometrics.NewRegistry()
+
 cache, err := manager.GetCache("sessions",
     // Core settings
     cache.WithTTL(24*time.Hour),
@@ -179,7 +196,7 @@ cache, err := manager.GetCache("sessions",
     cache.WithCleanupInterval(10*time.Minute),
     
     // Security
-    cache.WithSecurity(&cache.SecurityConfig{
+    cache.WithSecurityConfig(&cache.SecurityConfig{
         EnableTimingProtection: true,
         MinProcessingTime:      5*time.Millisecond,
         SecureCleanup:         true,
@@ -191,8 +208,16 @@ cache, err := manager.GetCache("sessions",
         "admin_sessions":   "admin:*",
     }),
     
-    // Observability
-    cache.WithMetrics(metrics.NewPrometheusMetrics("app_cache")),
+    // Comprehensive metrics configuration
+    cache.WithGoMetricsRegistry(registry),
+    cache.WithGlobalMetricsTags(gometrics.Tags{
+        "service":     "app_cache",
+        "version":     "1.0.0",
+        "environment": "production",
+        "node_id":     "cache-node-1",
+    }),
+    cache.WithDetailedMetrics(true),
+    cache.WithMetricsPrefix("myapp_"),
     cache.WithLogger(logger),
 )
 ```
@@ -245,16 +270,18 @@ Chain middleware for enhanced functionality:
 
 ```go
 import (
+    gometrics "github.com/MichaelAJay/go-metrics"
     "github.com/MichaelAJay/go-cache/middleware"
-    "github.com/MichaelAJay/go-cache/metrics"
 )
 
 // Create base cache
 baseCache, _ := manager.GetCache("redis", options...)
 
 // Add metrics middleware
-metricsCollector := metrics.NewPrometheusMetrics("myapp_cache")
-cacheWithMetrics := middleware.NewMetricsMiddleware(metricsCollector)(baseCache)
+registry := gometrics.NewRegistry()
+cacheWithMetrics := middleware.NewMetricsMiddleware(registry, gometrics.Tags{
+    "service": "myapp_cache",
+})(baseCache)
 
 // Add logging middleware
 finalCache := middleware.NewLoggingMiddleware(logger)(cacheWithMetrics)
@@ -265,10 +292,12 @@ finalCache := middleware.NewLoggingMiddleware(logger)(cacheWithMetrics)
 See the `cmd/examples/` directory for complete examples:
 
 - **`simple/`**: Basic cache operations and setup
-- **`redis_cache.go`**: Redis provider configuration and usage
+- **`redis/`**: Redis provider configuration and usage examples
 - **`redis_msgpack_example/`**: Redis with MessagePack serialization
 - **`redis_examples/`**: Advanced Redis features (pipelines, Lua scripts)
-- **`prometheus/`**: Metrics collection with Prometheus integration
+- **`prometheus/`**: Metrics collection with Prometheus integration using go-metrics
+- **`comprehensive_metrics/`**: Advanced metrics collection examples
+- **`opentelemetry/`**: OpenTelemetry integration examples
 
 ### Example: Session Management with Secondary Indexing
 
