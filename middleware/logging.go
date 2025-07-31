@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-logger"
 )
 
@@ -202,7 +203,7 @@ func (c *loggingCache) GetManyMetadata(ctx context.Context, keys []string) (map[
 }
 
 // GetMetrics returns the current metrics snapshot
-func (c *loggingCache) GetMetrics() *cache.CacheMetricsSnapshot {
+func (c *loggingCache) GetMetrics() *metrics.CacheMetricsSnapshot {
 	return c.cache.GetMetrics()
 }
 

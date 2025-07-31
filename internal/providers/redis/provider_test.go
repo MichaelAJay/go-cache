@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
 	goredis "github.com/go-redis/redis/v8"
@@ -183,7 +184,7 @@ func TestProvider_Create(t *testing.T) {
 	defer c.Close()
 
 	// Test with custom metrics
-	metrics := cache.NewMetrics()
+	cacheMetrics := metrics.NewMetrics()
 	optionsWithMetrics := &cache.CacheOptions{
 		TTL: time.Minute,
 		RedisOptions: &cache.RedisOptions{
@@ -192,7 +193,7 @@ func TestProvider_Create(t *testing.T) {
 			DB:       0,
 			PoolSize: 10,
 		},
-		Metrics: metrics,
+		Metrics: cacheMetrics,
 	}
 
 	c, err = provider.Create(optionsWithMetrics)

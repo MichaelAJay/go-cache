@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-serializer"
 )
 
@@ -697,7 +698,7 @@ func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[s
 }
 
 // GetMetrics returns a snapshot of the metrics
-func (c *memoryCache) GetMetrics() *cache.CacheMetricsSnapshot {
+func (c *memoryCache) GetMetrics() *metrics.CacheMetricsSnapshot {
 	c.metrics.mu.RLock()
 	defer c.metrics.mu.RUnlock()
 
@@ -707,7 +708,7 @@ func (c *memoryCache) GetMetrics() *cache.CacheMetricsSnapshot {
 		hitRate = float64(c.metrics.hits) / float64(totalOps)
 	}
 
-	return &cache.CacheMetricsSnapshot{
+	return &metrics.CacheMetricsSnapshot{
 		Hits:          c.metrics.hits,
 		Misses:        c.metrics.misses,
 		HitRatio:      hitRate,

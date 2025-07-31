@@ -5,16 +5,17 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 // metricsCache wraps a Cache with metrics capabilities
 type metricsCache struct {
 	cache   cache.Cache
-	metrics cache.CacheMetrics
+	metrics metrics.CacheMetrics
 }
 
 // NewMetricsMiddleware creates a new metrics middleware
-func NewMetricsMiddleware(metrics cache.CacheMetrics) cache.CacheMiddleware {
+func NewMetricsMiddleware(metrics metrics.CacheMetrics) cache.CacheMiddleware {
 	return func(next cache.Cache) cache.Cache {
 		return &metricsCache{
 			cache:   next,
@@ -118,7 +119,7 @@ func (c *metricsCache) GetManyMetadata(ctx context.Context, keys []string) (map[
 }
 
 // GetMetrics returns the current metrics snapshot
-func (c *metricsCache) GetMetrics() *cache.CacheMetricsSnapshot {
+func (c *metricsCache) GetMetrics() *metrics.CacheMetricsSnapshot {
 	return c.cache.GetMetrics()
 }
 

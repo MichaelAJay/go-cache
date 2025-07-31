@@ -11,11 +11,12 @@ import (
 
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/providers/memory"
+	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 func main() {
 	// Create Prometheus metrics
-	metrics, err := cache.NewPrometheusMetrics("example-app", "example")
+	prometheusMetrics, err := metrics.NewPrometheusMetrics("example-app", "example")
 	if err != nil {
 		fmt.Printf("Error creating metrics: %v\n", err)
 		os.Exit(1)
@@ -28,7 +29,7 @@ func main() {
 		MaxEntries:      1000,
 		MaxSize:         1024 * 1024 * 10, // 10MB
 		CleanupInterval: time.Minute,
-		Metrics:         metrics, // Use our Prometheus metrics
+		Metrics:         prometheusMetrics, // Use our Prometheus metrics
 	})
 	if err != nil {
 		fmt.Printf("Error creating cache: %v\n", err)
@@ -37,7 +38,7 @@ func main() {
 	defer c.Close()
 
 	// Start Prometheus server
-	server, err := cache.StartPrometheusServer(metrics, ":9090")
+	server, err := metrics.StartPrometheusServer(prometheusMetrics, ":9090")
 	if err != nil {
 		fmt.Printf("Error starting Prometheus server: %v\n", err)
 		os.Exit(1)

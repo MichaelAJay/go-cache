@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 // nullCache implements the Cache interface but does nothing
@@ -139,7 +140,7 @@ func (m *cacheMetrics) recordDeleteLatency(duration time.Duration) {
 }
 
 // GetMetrics returns the current metrics snapshot
-func (m *cacheMetrics) GetMetrics() *cache.CacheMetricsSnapshot {
+func (m *cacheMetrics) GetMetrics() *metrics.CacheMetricsSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -149,7 +150,7 @@ func (m *cacheMetrics) GetMetrics() *cache.CacheMetricsSnapshot {
 		hitRatio = float64(m.hits) / float64(total)
 	}
 
-	return &cache.CacheMetricsSnapshot{
+	return &metrics.CacheMetricsSnapshot{
 		Hits:          m.hits,
 		Misses:        m.misses,
 		HitRatio:      hitRatio,
@@ -162,7 +163,7 @@ func (m *cacheMetrics) GetMetrics() *cache.CacheMetricsSnapshot {
 }
 
 // GetMetrics returns the current metrics snapshot
-func (c *nullCache) GetMetrics() *cache.CacheMetricsSnapshot {
+func (c *nullCache) GetMetrics() *metrics.CacheMetricsSnapshot {
 	return c.metrics.GetMetrics()
 }
 

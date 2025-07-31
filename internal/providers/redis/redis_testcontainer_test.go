@@ -226,7 +226,8 @@ func TestRedis8EnhancedFeatures(t *testing.T) {
 		}
 
 		// Add to index for user1 (first two sessions)
-		err = redis.Cache.AddIndex(ctx, "sessions_by_user", "session:*", "user1")
+		// The keys include the testPrefix, so we need to match that too
+		err = redis.Cache.AddIndex(ctx, "sessions_by_user", testPrefix+"session:*", "user1")
 		if err != nil {
 			t.Fatalf("AddIndex for user1 failed: %v", err)
 		}

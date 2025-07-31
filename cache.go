@@ -28,7 +28,7 @@ type Cache interface {
 	GetManyMetadata(ctx context.Context, keys []string) (map[string]*CacheEntryMetadata, error)
 
 	// Metrics
-	GetMetrics() *CacheMetricsSnapshot
+	GetMetrics() *metrics.CacheMetricsSnapshot
 
 	// Atomic operations for counters
 	Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
@@ -94,13 +94,10 @@ const (
 // CacheMiddleware defines a function type for cache middleware
 type CacheMiddleware func(next Cache) Cache
 
-// CacheMetrics defines the interface for cache metrics
-// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.CacheMetrics instead
-type CacheMetrics = metrics.CacheMetrics
 
 // EnhancedCacheMetrics extends CacheMetrics with additional functionality
 type EnhancedCacheMetrics interface {
-	CacheMetrics // Inherit existing interface
+	metrics.CacheMetrics // Inherit from metrics package
 
 	// Operation-specific metrics
 	RecordOperation(operation string, status string, duration time.Duration)
@@ -122,9 +119,6 @@ type EnhancedCacheMetrics interface {
 	GetErrorRates() map[string]float64                                        // operation -> error rate
 }
 
-// CacheMetricsSnapshot represents a snapshot of cache metrics
-// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.CacheMetricsSnapshot instead
-type CacheMetricsSnapshot = metrics.CacheMetricsSnapshot
 
 // CacheProvider defines the interface for cache providers
 type CacheProvider interface {
@@ -133,20 +127,3 @@ type CacheProvider interface {
 }
 
 
-// Re-exported functions for backward compatibility
-
-// NewMetrics creates a new metrics instance
-// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.NewMetrics instead
-var NewMetrics = metrics.NewMetrics
-
-// NewPrometheusMetrics creates a new metrics instance using Prometheus
-// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.NewPrometheusMetrics instead
-var NewPrometheusMetrics = metrics.NewPrometheusMetrics
-
-// StartPrometheusServer starts a HTTP server to expose metrics
-// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.StartPrometheusServer instead
-var StartPrometheusServer = metrics.StartPrometheusServer
-
-// PrometheusExposer is an interface for types that can expose a Prometheus HTTP handler
-// Deprecated: Use github.com/MichaelAJay/go-cache/metrics.PrometheusExposer instead
-type PrometheusExposer = metrics.PrometheusExposer

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
 	"github.com/go-redis/redis/v8"
@@ -676,7 +678,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 }
 
 // GetMetrics returns a snapshot of the metrics
-func (c *redisCache) GetMetrics() *cache.CacheMetricsSnapshot {
+func (c *redisCache) GetMetrics() *metrics.CacheMetricsSnapshot {
 	c.metrics.mu.RLock()
 	defer c.metrics.mu.RUnlock()
 
@@ -719,7 +721,7 @@ func (c *redisCache) GetMetrics() *cache.CacheMetricsSnapshot {
 		}
 	}
 
-	return &cache.CacheMetricsSnapshot{
+	return &metrics.CacheMetricsSnapshot{
 		Hits:          c.metrics.hits,
 		Misses:        c.metrics.misses,
 		HitRatio:      hitRate,
@@ -989,10 +991,62 @@ func (c *redisCache) SetIfExists(ctx context.Context, key string, value any, ttl
 	return success, nil
 }
 
-// AddIndex adds a secondary index for the given key pattern - STUB IMPLEMENTATION
+// AddIndex adds a secondary index for the given key pattern
 func (c *redisCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
-	// TODO: Implement Redis-based secondary indexing
-	return fmt.Errorf("AddIndex not yet implemented for Redis provider")
+	// Validate parameters
+	if indexName == "" || keyPattern == "" || indexKey == "" {
+		return cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return cache.ErrContextCanceled
+	}
+
+	// Get all existing cache keys and filter by pattern
+	allKeys := c.GetKeys(ctx)
+	var matchingKeys []string
+	
+	// Use filepath.Match to match keys against pattern (same as memory provider)
+	for _, key := range allKeys {
+		matched, err := filepath.Match(keyPattern, key)
+		if err != nil {
+			// If filepath.Match fails, fall back to simple string matching
+			if strings.Contains(key, strings.ReplaceAll(keyPattern, "*", "")) {
+				matchingKeys = append(matchingKeys, key)
+			}
+		} else if matched {
+			matchingKeys = append(matchingKeys, key)
+		}
+	}
+
+	// Create index set key
+	indexSetKey := fmt.Sprintf("cache:index:%s:%s", indexName, indexKey)
+
+	// Add all matching keys to the Redis set for this index
+	if len(matchingKeys) > 0 {
+		// Use pipeline for better performance
+		pipe := c.client.Pipeline()
+
+		for _, key := range matchingKeys {
+			// Add the key to the index set
+			pipe.SAdd(ctx, indexSetKey, key)
+		}
+
+		// Set a reasonable TTL on the index set (default to cache TTL)
+		ttl := c.options.TTL
+		if ttl <= 0 {
+			ttl = defaultKeyTTL
+		}
+		pipe.Expire(ctx, indexSetKey, ttl)
+
+		_, err := pipe.Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // RemoveIndex removes a secondary index entry - STUB IMPLEMENTATION
@@ -1001,10 +1055,43 @@ func (c *redisCache) RemoveIndex(ctx context.Context, indexName string, keyPatte
 	return fmt.Errorf("RemoveIndex not yet implemented for Redis provider")
 }
 
-// GetByIndex retrieves all keys associated with an index key - STUB IMPLEMENTATION
+// GetByIndex retrieves all keys associated with an index key
 func (c *redisCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
-	// TODO: Implement Redis-based index querying
-	return []string{}, fmt.Errorf("GetByIndex not yet implemented for Redis provider")
+	// Validate parameters
+	if indexName == "" || indexKey == "" {
+		return []string{}, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return []string{}, cache.ErrContextCanceled
+	}
+
+	// Create index set key
+	indexSetKey := fmt.Sprintf("cache:index:%s:%s", indexName, indexKey)
+
+	// Get all members from the Redis set
+	keys, err := c.client.SMembers(ctx, indexSetKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			// Index doesn't exist, return empty slice
+			return []string{}, nil
+		}
+		return []string{}, fmt.Errorf("failed to get index members: %w", err)
+	}
+
+	// Filter out keys that no longer exist in the cache
+	existingKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if c.Has(ctx, key) {
+			existingKeys = append(existingKeys, key)
+		} else {
+			// Key no longer exists, remove it from the index in background
+			go c.client.SRem(context.Background(), indexSetKey, key)
+		}
+	}
+
+	return existingKeys, nil
 }
 
 // DeleteByIndex deletes all keys associated with an index key - STUB IMPLEMENTATION
@@ -1013,16 +1100,76 @@ func (c *redisCache) DeleteByIndex(ctx context.Context, indexName string, indexK
 	return fmt.Errorf("DeleteByIndex not yet implemented for Redis provider")
 }
 
-// GetKeysByPattern returns all keys matching the given pattern - STUB IMPLEMENTATION
+// GetKeysByPattern returns all keys matching the given pattern
 func (c *redisCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
-	// TODO: Implement Redis SCAN with pattern matching
-	return []string{}, fmt.Errorf("GetKeysByPattern not yet implemented for Redis provider")
+	// Validate pattern
+	if pattern == "" {
+		return []string{}, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return []string{}, cache.ErrContextCanceled
+	}
+
+	// Add cache prefix to pattern for Redis scan
+	searchPattern := keyPrefix + pattern
+
+	// Use SCAN to find all keys matching the pattern
+	var cursor uint64
+	var err error
+	var keys []string
+
+	for {
+		var scanKeys []string
+		scanKeys, cursor, err = c.client.Scan(ctx, cursor, searchPattern, 100).Result()
+		if err != nil {
+			return []string{}, fmt.Errorf("redis scan failed: %w", err)
+		}
+
+		// Remove prefix from keys
+		for _, fullKey := range scanKeys {
+			key := strings.TrimPrefix(fullKey, keyPrefix)
+			keys = append(keys, key)
+		}
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return keys, nil
 }
 
-// DeleteByPattern deletes all keys matching the given pattern - STUB IMPLEMENTATION
+// DeleteByPattern deletes all keys matching the given pattern
 func (c *redisCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
-	// TODO: Implement Redis pattern-based bulk deletion
-	return 0, fmt.Errorf("DeleteByPattern not yet implemented for Redis provider")
+	// Validate pattern
+	if pattern == "" {
+		return 0, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return 0, cache.ErrContextCanceled
+	}
+
+	// Get all keys matching the pattern
+	keys, err := c.GetKeysByPattern(ctx, pattern)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get keys by pattern: %w", err)
+	}
+
+	if len(keys) == 0 {
+		return 0, nil
+	}
+
+	// Delete all matching keys
+	err = c.DeleteMany(ctx, keys)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete keys: %w", err)
+	}
+
+	return len(keys), nil
 }
 
 // UpdateMetadata updates metadata for a cache entry - STUB IMPLEMENTATION

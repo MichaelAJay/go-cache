@@ -6,6 +6,7 @@ import (
 
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
+	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 // CacheOption defines a function type for configuring cache options
@@ -98,7 +99,7 @@ type CacheOptions struct {
 	Logger           logger.Logger
 	RedisOptions     *RedisOptions
 	SerializerFormat serializer.Format // Format to use for serialization
-	Metrics          CacheMetrics      // Custom metrics implementation
+	Metrics          metrics.CacheMetrics // Custom metrics implementation
 
 	// Enhanced configuration options
 	Security        *SecurityConfig           // Security configuration

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 type MockCache struct {
@@ -24,7 +25,7 @@ type MockCache struct {
 	OnDeleteManyCallback      func(ctx context.Context, keys []string) error
 	OnGetMetadataCallback     func(ctx context.Context, key string) (*cache.CacheEntryMetadata, error)
 	OnGetManyMetadataCallback func(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error)
-	OnGetMetricsCallback      func() *cache.CacheMetricsSnapshot
+	OnGetMetricsCallback      func() *metrics.CacheMetricsSnapshot
 	mu                        sync.RWMutex
 }
 
@@ -235,7 +236,7 @@ func (m *MockCache) GetManyMetadata(ctx context.Context, keys []string) (map[str
 }
 
 // GetMetrics implements cache.Cache.
-func (m *MockCache) GetMetrics() *cache.CacheMetricsSnapshot {
+func (m *MockCache) GetMetrics() *metrics.CacheMetricsSnapshot {
 	if m.OnGetMetricsCallback != nil {
 		return m.OnGetMetricsCallback()
 	}
@@ -248,7 +249,7 @@ func (m *MockCache) GetMetrics() *cache.CacheMetricsSnapshot {
 		totalAccessCount += metadata.AccessCount
 	}
 
-	return &cache.CacheMetricsSnapshot{
+	return &metrics.CacheMetricsSnapshot{
 		Hits:          totalAccessCount,
 		Misses:        0,
 		HitRatio:      1.0,
