@@ -7,10 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/redis"
-	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	goredis "github.com/go-redis/redis/v8"
+	"github.com/testcontainers/testcontainers-go"
+	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-serializer"
@@ -21,14 +20,14 @@ const DefaultRedisVersion = "redis:8.0"
 
 // SupportedRedisVersions lists all Redis versions we test against
 var SupportedRedisVersions = []string{
-	"redis:7.2",     // Last stable 7.x for compatibility
-	"redis:8.0",     // Current stable (default)
+	"redis:7.2", // Last stable 7.x for compatibility
+	"redis:8.0", // Current stable (default)
 	// "redis:8.2-rc", // Future compatibility (uncomment when stable)
 }
 
 // RedisTestContainer wraps testcontainer Redis instance with cache utilities
 type RedisTestContainer struct {
-	Container *redis.RedisContainer
+	Container *tcredis.RedisContainer
 	Client    *goredis.Client
 	Cache     cache.Cache
 	t         *testing.T
@@ -37,13 +36,13 @@ type RedisTestContainer struct {
 
 // RedisContainerConfig holds configuration for Redis test container
 type RedisContainerConfig struct {
-	RedisVersion    string
-	CacheOptions    *cache.CacheOptions
-	ContainerOpts   []testcontainers.ContainerCustomizer
-	EnableTLS       bool
-	LogLevel        tcredis.LogLevel
-	ConfigFile      string
-	SnapshotConfig  *SnapshotConfig
+	RedisVersion   string
+	CacheOptions   *cache.CacheOptions
+	ContainerOpts  []testcontainers.ContainerCustomizer
+	EnableTLS      bool
+	LogLevel       tcredis.LogLevel
+	ConfigFile     string
+	SnapshotConfig *SnapshotConfig
 }
 
 // SnapshotConfig configures Redis snapshotting
@@ -140,7 +139,7 @@ func NewRedisTestContainer(t *testing.T, opts ...RedisContainerOption) (*RedisTe
 
 	// Add snapshotting if configured
 	if config.SnapshotConfig != nil {
-		containerOpts = append(containerOpts, 
+		containerOpts = append(containerOpts,
 			tcredis.WithSnapshotting(config.SnapshotConfig.Seconds, config.SnapshotConfig.Changes))
 	}
 
@@ -252,7 +251,7 @@ func CreateUniqueTestID(prefix string) string {
 // Helper functions
 
 // terminateContainer safely terminates a Redis container
-func terminateContainer(container *redis.RedisContainer, t *testing.T) {
+func terminateContainer(container *tcredis.RedisContainer, t *testing.T) {
 	if container != nil {
 		if err := testcontainers.TerminateContainer(container); err != nil {
 			t.Logf("Warning: failed to terminate Redis container: %v", err)
@@ -267,11 +266,11 @@ func testConnection(ctx context.Context, client *goredis.Client, maxRetries int)
 		ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
 		err := client.Ping(ctxTimeout).Err()
 		cancel()
-		
+
 		if err == nil {
 			return nil
 		}
-		
+
 		lastErr = err
 		if i < maxRetries-1 {
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)

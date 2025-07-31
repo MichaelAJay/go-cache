@@ -649,6 +649,18 @@ func TestRedisCache_MaxSize(t *testing.T) {
 
 // TestRedisCache_NewWithConfig tests creating a cache with a new client configuration
 func TestRedisCache_NewWithConfig(t *testing.T) {
+	// Check if Redis is available first
+	client := goredis.NewClient(&goredis.Options{
+		Addr: getRedisAddr(),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Skipf("Skipping test: Cannot connect to Redis at %s: %v", getRedisAddr(), err)
+	}
+	client.Close()
+
 	// Test with valid config
 	config := &goredis.Options{
 		Addr: getRedisAddr(),
@@ -664,7 +676,7 @@ func TestRedisCache_NewWithConfig(t *testing.T) {
 	defer c.Close()
 
 	// Test basic operations to ensure it works
-	ctx := context.Background()
+	ctx = context.Background()
 	err = c.Set(ctx, "test_key", "test_value", time.Hour)
 	if err != nil {
 		t.Errorf("Set failed: %v", err)
