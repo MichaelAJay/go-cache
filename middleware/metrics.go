@@ -121,3 +121,99 @@ func (c *metricsCache) GetManyMetadata(ctx context.Context, keys []string) (map[
 func (c *metricsCache) GetMetrics() *cache.CacheMetricsSnapshot {
 	return c.cache.GetMetrics()
 }
+
+// Increment atomically increments a numeric value with metrics
+func (c *metricsCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	start := time.Now()
+	result, err := c.cache.Increment(ctx, key, delta, ttl)
+	c.metrics.RecordSetLatency(time.Since(start))
+	return result, err
+}
+
+// Decrement atomically decrements a numeric value with metrics
+func (c *metricsCache) Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	start := time.Now()
+	result, err := c.cache.Decrement(ctx, key, delta, ttl)
+	c.metrics.RecordSetLatency(time.Since(start))
+	return result, err
+}
+
+// SetIfNotExists sets a value only if the key doesn't exist with metrics
+func (c *metricsCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	start := time.Now()
+	success, err := c.cache.SetIfNotExists(ctx, key, value, ttl)
+	c.metrics.RecordSetLatency(time.Since(start))
+	return success, err
+}
+
+// SetIfExists sets a value only if the key already exists with metrics
+func (c *metricsCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	start := time.Now()
+	success, err := c.cache.SetIfExists(ctx, key, value, ttl)
+	c.metrics.RecordSetLatency(time.Since(start))
+	return success, err
+}
+
+// AddIndex adds a secondary index with metrics
+func (c *metricsCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	start := time.Now()
+	err := c.cache.AddIndex(ctx, indexName, keyPattern, indexKey)
+	c.metrics.RecordSetLatency(time.Since(start))
+	return err
+}
+
+// RemoveIndex removes a secondary index with metrics
+func (c *metricsCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	start := time.Now()
+	err := c.cache.RemoveIndex(ctx, indexName, keyPattern, indexKey)
+	c.metrics.RecordDeleteLatency(time.Since(start))
+	return err
+}
+
+// GetByIndex retrieves keys by index with metrics
+func (c *metricsCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
+	start := time.Now()
+	keys, err := c.cache.GetByIndex(ctx, indexName, indexKey)
+	c.metrics.RecordGetLatency(time.Since(start))
+	return keys, err
+}
+
+// DeleteByIndex deletes keys by index with metrics
+func (c *metricsCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
+	start := time.Now()
+	err := c.cache.DeleteByIndex(ctx, indexName, indexKey)
+	c.metrics.RecordDeleteLatency(time.Since(start))
+	return err
+}
+
+// GetKeysByPattern retrieves keys by pattern with metrics
+func (c *metricsCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
+	start := time.Now()
+	keys, err := c.cache.GetKeysByPattern(ctx, pattern)
+	c.metrics.RecordGetLatency(time.Since(start))
+	return keys, err
+}
+
+// DeleteByPattern deletes keys by pattern with metrics
+func (c *metricsCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
+	start := time.Now()
+	count, err := c.cache.DeleteByPattern(ctx, pattern)
+	c.metrics.RecordDeleteLatency(time.Since(start))
+	return count, err
+}
+
+// UpdateMetadata updates cache entry metadata with metrics
+func (c *metricsCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+	start := time.Now()
+	err := c.cache.UpdateMetadata(ctx, key, updater)
+	c.metrics.RecordSetLatency(time.Since(start))
+	return err
+}
+
+// GetAndUpdate atomically gets and updates a cache entry with metrics
+func (c *metricsCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+	start := time.Now()
+	value, err := c.cache.GetAndUpdate(ctx, key, updater, ttl)
+	c.metrics.RecordGetLatency(time.Since(start))
+	return value, err
+}

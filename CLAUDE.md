@@ -23,21 +23,21 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 │ (Factory Pattern)   │     │   (Unified API)     │
 └─────────────────────┘     └─────────────────────┘
          │                           │
-         │                  ┌────────┴────────┐
-         │                  ▼                 ▼
-         │          ┌──────────────┐  ┌──────────────┐
-         │          │   Memory     │  │    Redis     │
-         │          │  Provider    │  │  Provider    │
-         │          └──────────────┘  └──────────────┘
-         │                  │                 │
-    ┌────┴────┐            │                 │
-    ▼         ▼            │                 │
-┌────────┐ ┌────────┐     │                 │
-│Metrics │ │ Hooks  │     │                 │
-│System  │ │ System │     │                 │
-└────────┘ └────────┘     │                 │
-    │         │            │                 │
-    └─────────┴────────────┴─────────────────┘
+         │                  ┌────────┴────────┐─────────────────────┐
+         │                  ▼                 ▼                     ▼
+         │          ┌──────────────┐  ┌──────────────┐        ┌──────────────┐
+         │          │   Memory     │  │    Redis     │        │ Additional   │
+         │          │  Provider    │  │  Provider    │        │  Providers   │
+         │          └──────────────┘  └──────────────┘        └──────────────┘
+         │                  │                 │                 │
+    ┌────┴────┐             │                 │                 │
+    ▼         ▼             │                 │                 │
+┌────────┐ ┌────────┐       │                 │                 │
+│Metrics │ │ Hooks  │       │                 │                 │
+│System  │ │ System │       │                 │                 │
+└────────┘ └────────┘       │                 │                 │
+    │         │             │                 │                 │
+    └─────────┴─────────────┴─────────────────┘─────────────────┘
               │
     ┌─────────▼─────────┐
     │   Serialization   │
@@ -53,6 +53,7 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 4. **Security Conscious**: Built-in protections against timing attacks and data leakage
 5. **Performance Optimized**: Minimal overhead, efficient memory usage, fast operations
 6. **Extensible**: Easy to add new providers, serializers, or features
+7. **Airtight Cleanup**: Cache is pruned regularly
 
 ## Development Guidelines
 
@@ -67,6 +68,7 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 ### Provider Implementation Requirements
 
 **All providers must implement:**
+
 - Complete `Cache` interface
 - Thread-safe operations
 - Proper error handling and propagation
@@ -76,12 +78,14 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 - Memory cleanup (no leaks)
 
 **Provider-Specific Features:**
+
 - **Memory Provider**: Fast local caching, automatic cleanup, secondary indexing
 - **Redis Provider**: Distributed caching, cluster support, persistence, Lua scripts
 
 ### Testing Patterns
 
 **Unit Tests:**
+
 - Provider-specific functionality
 - Interface compliance
 - Error conditions
@@ -89,12 +93,14 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 - Concurrency scenarios
 
 **Integration Tests:**
+
 - Cross-provider compatibility
 - Real-world usage patterns
 - Performance characteristics
 - Memory leak detection
 
 **Benchmark Tests:**
+
 - Operation throughput
 - Memory usage
 - Latency percentiles
@@ -110,12 +116,12 @@ type Cache interface {
     Get(ctx context.Context, key string) (any, bool, error)
     Set(ctx context.Context, key string, value any, ttl time.Duration) error
     Delete(ctx context.Context, key string) error
-    
+
     // Advanced operations
     GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error)
     AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
     UpdateMetadata(ctx context.Context, key string, updater MetadataUpdater) error
-    
+
     // Lifecycle
     Close() error
 }
@@ -129,11 +135,11 @@ type EnhancedCacheMetrics interface {
     RecordHit()
     RecordMiss()
     RecordOperation(operation string, status string, duration time.Duration)
-    
+
     // Security metrics
     RecordSecurityEvent(eventType string, severity string, metadata map[string]any)
     RecordTimingProtection(operation string, actualTime, adjustedTime time.Duration)
-    
+
     // Performance metrics
     GetOperationLatencyPercentiles(operation string) map[string]time.Duration
 }
@@ -149,13 +155,13 @@ type CacheOptions struct {
     TTL              time.Duration
     MaxEntries       int
     CleanupInterval  time.Duration
-    
+
     // Security configuration
     Security *SecurityConfig
-    
+
     // Provider-specific
     RedisOptions *RedisOptions
-    
+
     // Advanced features
     Indexes map[string]string // indexName -> keyPattern
     Hooks   *CacheHooks
@@ -179,7 +185,7 @@ type SecurityConfig struct {
 
 ```go
 // Initialize cache
-cache, err := manager.GetCache("sessions", 
+cache, err := manager.GetCache("sessions",
     WithProvider("memory"),
     WithTTL(24*time.Hour),
     WithCleanupInterval(5*time.Minute),
@@ -229,7 +235,7 @@ cache, err := manager.GetCache("secure_sessions",
 The go-cache module serves as the storage abstraction for go-auth's session management:
 
 - **Session Storage**: Primary key-value storage for session objects
-- **User Indexing**: Secondary indexes for "all sessions for user X" queries  
+- **User Indexing**: Secondary indexes for "all sessions for user X" queries
 - **TTL Management**: Automatic session expiration handling
 - **Security**: Timing attack protection for session validation
 - **Observability**: Detailed metrics for session operations
@@ -246,13 +252,13 @@ type UnifiedSessionManager struct {
 
 func (s *UnifiedSessionManager) Create(ctx context.Context, authResult *AuthResult, metadata map[string]any) (*Session, error) {
     session := &Session{...}
-    
+
     // Store session with automatic TTL
     err := s.cache.Set(ctx, s.sessionKey(session.ID), session, s.defaultTTL)
-    
+
     // Add to user index for bulk operations
     err = s.cache.AddIndex(ctx, "sessions_by_user", "session:*", s.userIndexKey(session.SubjectID))
-    
+
     return session, err
 }
 ```
@@ -285,8 +291,9 @@ func (s *UnifiedSessionManager) Create(ctx context.Context, authResult *AuthResu
 ### Timing Attack Protection
 
 All cache operations should have consistent response times regardless of:
+
 - Key existence
-- Value size  
+- Value size
 - Cache hit/miss status
 - Error conditions
 
@@ -295,6 +302,7 @@ Implementation uses configurable minimum processing times and dummy operations.
 ### Secure Cleanup
 
 Sensitive data (sessions, tokens, etc.) must be securely wiped from memory:
+
 - Zero memory before deallocation
 - Clear index references
 - Audit cleanup operations
@@ -302,6 +310,7 @@ Sensitive data (sessions, tokens, etc.) must be securely wiped from memory:
 ### Access Control Integration
 
 Support for pre/post operation hooks enables:
+
 - Permission validation
 - Audit logging
 - Rate limiting
@@ -311,7 +320,7 @@ Support for pre/post operation hooks enables:
 
 ### Unit Testing Requirements
 
-- **Provider Compliance**: All providers pass identical interface tests  
+- **Provider Compliance**: All providers pass identical interface tests
 - **Concurrency Safety**: Tests under high-concurrency loads
 - **Error Handling**: All error paths properly tested
 - **Memory Safety**: No memory leaks under sustained operation

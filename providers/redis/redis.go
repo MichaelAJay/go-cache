@@ -987,3 +987,51 @@ func (c *redisCache) SetIfExists(ctx context.Context, key string, value any, ttl
 
 	return success, nil
 }
+
+// AddIndex adds a secondary index for the given key pattern - STUB IMPLEMENTATION
+func (c *redisCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	// TODO: Implement Redis-based secondary indexing
+	return fmt.Errorf("AddIndex not yet implemented for Redis provider")
+}
+
+// RemoveIndex removes a secondary index entry - STUB IMPLEMENTATION
+func (c *redisCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	// TODO: Implement Redis-based secondary index removal
+	return fmt.Errorf("RemoveIndex not yet implemented for Redis provider")
+}
+
+// GetByIndex retrieves all keys associated with an index key - STUB IMPLEMENTATION
+func (c *redisCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
+	// TODO: Implement Redis-based index querying
+	return []string{}, fmt.Errorf("GetByIndex not yet implemented for Redis provider")
+}
+
+// DeleteByIndex deletes all keys associated with an index key - STUB IMPLEMENTATION
+func (c *redisCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
+	// TODO: Implement Redis-based bulk deletion by index
+	return fmt.Errorf("DeleteByIndex not yet implemented for Redis provider")
+}
+
+// GetKeysByPattern returns all keys matching the given pattern - STUB IMPLEMENTATION
+func (c *redisCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
+	// TODO: Implement Redis SCAN with pattern matching
+	return []string{}, fmt.Errorf("GetKeysByPattern not yet implemented for Redis provider")
+}
+
+// DeleteByPattern deletes all keys matching the given pattern - STUB IMPLEMENTATION
+func (c *redisCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
+	// TODO: Implement Redis pattern-based bulk deletion
+	return 0, fmt.Errorf("DeleteByPattern not yet implemented for Redis provider")
+}
+
+// UpdateMetadata updates metadata for a cache entry - STUB IMPLEMENTATION
+func (c *redisCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+	// TODO: Implement Redis-based metadata updates
+	return fmt.Errorf("UpdateMetadata not yet implemented for Redis provider")
+}
+
+// GetAndUpdate atomically gets and updates a cache entry - STUB IMPLEMENTATION
+func (c *redisCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+	// TODO: Implement Redis-based atomic get-and-update using Lua scripts
+	return nil, fmt.Errorf("GetAndUpdate not yet implemented for Redis provider")
+}

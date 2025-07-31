@@ -165,3 +165,63 @@ func (m *cacheMetrics) GetMetrics() *cache.CacheMetricsSnapshot {
 func (c *nullCache) GetMetrics() *cache.CacheMetricsSnapshot {
 	return c.metrics.GetMetrics()
 }
+
+// Increment does nothing and returns 0
+func (c *nullCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	return 0, nil
+}
+
+// Decrement does nothing and returns 0
+func (c *nullCache) Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	return 0, nil
+}
+
+// SetIfNotExists does nothing and returns false
+func (c *nullCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	return false, nil
+}
+
+// SetIfExists does nothing and returns false
+func (c *nullCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	return false, nil
+}
+
+// AddIndex does nothing
+func (c *nullCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	return nil
+}
+
+// RemoveIndex does nothing
+func (c *nullCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	return nil
+}
+
+// GetByIndex returns an empty slice
+func (c *nullCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
+	return []string{}, nil
+}
+
+// DeleteByIndex does nothing
+func (c *nullCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
+	return nil
+}
+
+// GetKeysByPattern returns an empty slice
+func (c *nullCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
+	return []string{}, nil
+}
+
+// DeleteByPattern does nothing and returns 0
+func (c *nullCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
+	return 0, nil
+}
+
+// UpdateMetadata does nothing
+func (c *nullCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+	return cache.ErrKeyNotFound
+}
+
+// GetAndUpdate returns nil
+func (c *nullCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+	return nil, cache.ErrKeyNotFound
+}

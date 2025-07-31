@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +25,12 @@ type memoryCache struct {
 	metrics         *cacheMetrics
 	cleanupTicker   *time.Ticker
 	cleanupStopChan chan struct{}
+
+	// Enhanced features
+	indexes        map[string]map[string][]string // indexName -> indexKey -> []primaryKeys
+	indexPatterns  map[string]string              // indexName -> keyPattern
+	hooks          *cache.CacheHooks
+	securityConfig *cache.SecurityConfig
 }
 
 // cacheMetrics implements a thread-safe metrics collector
@@ -77,6 +85,20 @@ func NewMemoryCache(options *cache.CacheOptions) (cache.Cache, error) {
 		serializer:      s,
 		metrics:         &cacheMetrics{},
 		cleanupStopChan: make(chan struct{}),
+
+		// Initialize enhanced features
+		indexes:        make(map[string]map[string][]string),
+		indexPatterns:  make(map[string]string),
+		hooks:          options.Hooks,
+		securityConfig: options.Security,
+	}
+
+	// Initialize pre-configured indexes
+	if options.Indexes != nil {
+		for indexName, keyPattern := range options.Indexes {
+			c.indexPatterns[indexName] = keyPattern
+			c.indexes[indexName] = make(map[string][]string)
+		}
 	}
 
 	// Start cleanup goroutine if cleanup interval is set
@@ -93,6 +115,13 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	defer func() {
 		c.metrics.recordGetLatency(time.Since(start))
+		// Apply timing protection if enabled
+		if c.securityConfig != nil && c.securityConfig.EnableTimingProtection {
+			elapsed := time.Since(start)
+			if elapsed < c.securityConfig.MinProcessingTime {
+				time.Sleep(c.securityConfig.MinProcessingTime - elapsed)
+			}
+		}
 	}()
 
 	// Validate key
@@ -105,12 +134,23 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 		return nil, false, cache.ErrContextCanceled
 	}
 
+	// Call PreGet hook
+	if c.hooks != nil && c.hooks.PreGet != nil {
+		if err := c.hooks.PreGet(ctx, key); err != nil {
+			return nil, false, err
+		}
+	}
+
 	c.mu.RLock()
 	entry, exists := c.items[key]
 	c.mu.RUnlock()
 
 	if !exists {
 		c.metrics.recordMiss()
+		// Call PostGet hook for miss
+		if c.hooks != nil && c.hooks.PostGet != nil {
+			c.hooks.PostGet(ctx, key, nil, false, nil)
+		}
 		return nil, false, nil
 	}
 
@@ -120,6 +160,10 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 		delete(c.items, key)
 		c.mu.Unlock()
 		c.metrics.recordMiss()
+		// Call PostGet hook for expired entry
+		if c.hooks != nil && c.hooks.PostGet != nil {
+			c.hooks.PostGet(ctx, key, nil, false, nil)
+		}
 		return nil, false, nil
 	}
 
@@ -166,24 +210,50 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 	c.mu.Unlock()
 
 	c.metrics.recordHit()
+	// Call PostGet hook for successful get
+	if c.hooks != nil && c.hooks.PostGet != nil {
+		c.hooks.PostGet(ctx, key, value, true, nil)
+	}
 	return value, true, nil
 }
 
 // Set stores a value in the cache
 func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
+	var err error
 	defer func() {
 		c.metrics.recordSetLatency(time.Since(start))
+		// Apply timing protection if enabled
+		if c.securityConfig != nil && c.securityConfig.EnableTimingProtection {
+			elapsed := time.Since(start)
+			if elapsed < c.securityConfig.MinProcessingTime {
+				time.Sleep(c.securityConfig.MinProcessingTime - elapsed)
+			}
+		}
+		// Call PostSet hook
+		if c.hooks != nil && c.hooks.PostSet != nil {
+			c.hooks.PostSet(ctx, key, value, ttl, err)
+		}
 	}()
 
 	// Validate key
 	if key == "" {
-		return cache.ErrInvalidKey
+		err = cache.ErrInvalidKey
+		return err
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		err = cache.ErrContextCanceled
+		return err
+	}
+
+	// Call PreSet hook
+	if c.hooks != nil && c.hooks.PreSet != nil {
+		if hookErr := c.hooks.PreSet(ctx, key, value, ttl); hookErr != nil {
+			err = hookErr
+			return err
+		}
 	}
 
 	// Use default TTL if not specified
@@ -234,6 +304,9 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 
 	c.items[key] = entry
 
+	// Add to appropriate indexes
+	c.addToIndexes(key)
+
 	// Update metrics
 	c.updateSizeMetrics()
 
@@ -259,6 +332,7 @@ func (c *memoryCache) Delete(ctx context.Context, key string) error {
 
 	c.mu.Lock()
 	delete(c.items, key)
+	c.removeFromAllIndexes(key)
 	c.mu.Unlock()
 
 	// Update metrics
@@ -276,6 +350,10 @@ func (c *memoryCache) Clear(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.items = make(map[string]*cacheEntry)
+	// Clear all indexes
+	for indexName := range c.indexes {
+		c.indexes[indexName] = make(map[string][]string)
+	}
 	c.mu.Unlock()
 
 	// Update metrics
@@ -658,10 +736,17 @@ func (c *memoryCache) cleanup() {
 	now := time.Now()
 
 	c.mu.Lock()
+	expiredKeys := make([]string, 0)
 	for key, entry := range c.items {
 		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
-			delete(c.items, key)
+			expiredKeys = append(expiredKeys, key)
 		}
+	}
+	
+	// Remove expired entries and their index references
+	for _, key := range expiredKeys {
+		delete(c.items, key)
+		c.removeFromAllIndexes(key)
 	}
 	c.mu.Unlock()
 
@@ -935,4 +1020,352 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 	c.updateSizeMetrics()
 
 	return nil
+}
+
+// AddIndex adds a secondary index mapping
+func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return cache.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Register the index pattern if not already registered
+	if _, exists := c.indexPatterns[indexName]; !exists {
+		c.indexPatterns[indexName] = keyPattern
+		c.indexes[indexName] = make(map[string][]string)
+	}
+
+	// Find all existing keys that match the pattern and should be indexed under this indexKey
+	for key := range c.items {
+		if c.matchesPattern(key, keyPattern) {
+			// Add to index
+			if c.indexes[indexName][indexKey] == nil {
+				c.indexes[indexName][indexKey] = make([]string, 0)
+			}
+			
+			// Check if key is already in the index
+			found := false
+			for _, existingKey := range c.indexes[indexName][indexKey] {
+				if existingKey == key {
+					found = true
+					break
+				}
+			}
+			
+			if !found {
+				c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
+			}
+		}
+	}
+
+	return nil
+}
+
+// RemoveIndex removes a secondary index mapping
+func (c *memoryCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return cache.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if indexMap, exists := c.indexes[indexName]; exists {
+		if keys, exists := indexMap[indexKey]; exists {
+			// Remove all keys that match the pattern
+			newKeys := make([]string, 0)
+			for _, key := range keys {
+				if !c.matchesPattern(key, keyPattern) {
+					newKeys = append(newKeys, key)
+				}
+			}
+			
+			if len(newKeys) == 0 {
+				delete(indexMap, indexKey)
+			} else {
+				indexMap[indexKey] = newKeys
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetByIndex retrieves all keys associated with an index key
+func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return nil, cache.ErrContextCanceled
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if indexMap, exists := c.indexes[indexName]; exists {
+		if keys, exists := indexMap[indexKey]; exists {
+			// Filter out expired keys
+			validKeys := make([]string, 0, len(keys))
+			now := time.Now()
+			
+			for _, key := range keys {
+				if entry, exists := c.items[key]; exists {
+					if entry.expiresAt.IsZero() || now.Before(entry.expiresAt) {
+						validKeys = append(validKeys, key)
+					}
+				}
+			}
+			
+			return validKeys, nil
+		}
+	}
+
+	return []string{}, nil
+}
+
+// DeleteByIndex deletes all entries associated with an index key
+func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return cache.ErrContextCanceled
+	}
+
+	// Get the keys first
+	keys, err := c.GetByIndex(ctx, indexName, indexKey)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Delete each key and remove from all indexes
+	for _, key := range keys {
+		delete(c.items, key)
+		c.removeFromAllIndexes(key)
+	}
+
+	// Update metrics
+	c.updateSizeMetrics()
+
+	return nil
+}
+
+// GetKeysByPattern retrieves all keys matching a pattern
+func (c *memoryCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return nil, cache.ErrContextCanceled
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	matchingKeys := make([]string, 0)
+	now := time.Now()
+
+	for key, entry := range c.items {
+		// Skip expired entries
+		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+			continue
+		}
+
+		if c.matchesPattern(key, pattern) {
+			matchingKeys = append(matchingKeys, key)
+		}
+	}
+
+	return matchingKeys, nil
+}
+
+// DeleteByPattern deletes all entries matching a pattern
+func (c *memoryCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return 0, cache.ErrContextCanceled
+	}
+
+	// Get matching keys first
+	keys, err := c.GetKeysByPattern(ctx, pattern)
+	if err != nil {
+		return 0, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Delete each key and remove from indexes
+	deletedCount := 0
+	for _, key := range keys {
+		if _, exists := c.items[key]; exists {
+			delete(c.items, key)
+			c.removeFromAllIndexes(key)
+			deletedCount++
+		}
+	}
+
+	// Update metrics
+	c.updateSizeMetrics()
+
+	return deletedCount, nil
+}
+
+// UpdateMetadata updates the metadata of a cache entry
+func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+	// Validate key
+	if key == "" {
+		return cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return cache.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, exists := c.items[key]
+	if !exists {
+		return cache.ErrKeyNotFound
+	}
+
+	// Check if entry has expired
+	now := time.Now()
+	if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+		delete(c.items, key)
+		c.removeFromAllIndexes(key)
+		return cache.ErrKeyNotFound
+	}
+
+	// Create current metadata
+	var ttl time.Duration
+	if !entry.expiresAt.IsZero() && now.Before(entry.expiresAt) {
+		ttl = entry.expiresAt.Sub(now)
+	}
+
+	currentMetadata := &cache.CacheEntryMetadata{
+		Key:          key,
+		CreatedAt:    entry.createdAt,
+		LastAccessed: entry.lastAccess,
+		AccessCount:  entry.accessCount,
+		TTL:          ttl,
+		Size:         entry.size,
+		Tags:         entry.tags,
+	}
+
+	// Apply the updater
+	newMetadata := updater(currentMetadata)
+	if newMetadata == nil {
+		return nil // No update needed
+	}
+
+	// Update the entry
+	entry.lastAccess = newMetadata.LastAccessed
+	entry.accessCount = newMetadata.AccessCount
+	entry.tags = newMetadata.Tags
+
+	// Update TTL if changed
+	if newMetadata.TTL != ttl {
+		if newMetadata.TTL > 0 {
+			entry.expiresAt = now.Add(newMetadata.TTL)
+		} else {
+			entry.expiresAt = time.Time{}
+		}
+	}
+
+	return nil
+}
+
+// GetAndUpdate atomically gets and updates a cache entry
+func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+	// Validate key
+	if key == "" {
+		return nil, cache.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return nil, cache.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, exists := c.items[key]
+	var currentValue any
+
+	if exists {
+		// Check if entry has expired
+		now := time.Now()
+		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+			delete(c.items, key)
+			c.removeFromAllIndexes(key)
+			exists = false
+		} else {
+			// Deserialize current value
+			if err := c.serializer.Deserialize(entry.value, &currentValue); err != nil {
+				return nil, cache.ErrDeserialization
+			}
+		}
+	}
+
+	// Apply the updater
+	newValue, shouldUpdate := updater(currentValue)
+	
+	if shouldUpdate {
+		// Update the entry
+		err := c.setLocked(key, newValue, ttl, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return newValue, nil
+	}
+
+	return currentValue, nil
+}
+
+// Helper methods
+
+// matchesPattern checks if a key matches a glob pattern
+func (c *memoryCache) matchesPattern(key, pattern string) bool {
+	matched, err := filepath.Match(pattern, key)
+	if err != nil {
+		// If filepath.Match fails, fall back to simple string matching
+		return strings.Contains(key, strings.ReplaceAll(pattern, "*", ""))
+	}
+	return matched
+}
+
+// removeFromAllIndexes removes a key from all indexes
+func (c *memoryCache) removeFromAllIndexes(key string) {
+	for indexName, indexMap := range c.indexes {
+		pattern := c.indexPatterns[indexName]
+		if c.matchesPattern(key, pattern) {
+			for indexKey, keys := range indexMap {
+				newKeys := make([]string, 0, len(keys))
+				for _, k := range keys {
+					if k != key {
+						newKeys = append(newKeys, k)
+					}
+				}
+				if len(newKeys) == 0 {
+					delete(indexMap, indexKey)
+				} else {
+					indexMap[indexKey] = newKeys
+				}
+			}
+		}
+	}
+}
+
+// addToIndexes adds a key to appropriate indexes when setting entries
+func (c *memoryCache) addToIndexes(key string) {
+	// This method is called when a key is added to the cache
+	// The actual indexing happens when AddIndex is called explicitly
+	// This is a placeholder for automatic indexing logic that would
+	// need to be implemented based on specific requirements
 }

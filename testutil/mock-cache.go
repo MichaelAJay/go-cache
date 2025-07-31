@@ -398,4 +398,52 @@ func (m *MockCache) SetIfExists(ctx context.Context, key string, value any, ttl 
 	return true, nil
 }
 
+// AddIndex adds a secondary index - STUB IMPLEMENTATION for testing
+func (m *MockCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	// TODO: Implement mock secondary indexing for testing
+	return fmt.Errorf("AddIndex not yet implemented in mock cache")
+}
+
+// RemoveIndex removes a secondary index - STUB IMPLEMENTATION for testing
+func (m *MockCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	// TODO: Implement mock secondary index removal for testing
+	return fmt.Errorf("RemoveIndex not yet implemented in mock cache")
+}
+
+// GetByIndex retrieves keys by index - STUB IMPLEMENTATION for testing
+func (m *MockCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
+	// TODO: Implement mock index querying for testing
+	return []string{}, fmt.Errorf("GetByIndex not yet implemented in mock cache")
+}
+
+// DeleteByIndex deletes keys by index - STUB IMPLEMENTATION for testing
+func (m *MockCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
+	// TODO: Implement mock bulk deletion by index for testing
+	return fmt.Errorf("DeleteByIndex not yet implemented in mock cache")
+}
+
+// GetKeysByPattern returns keys matching pattern - STUB IMPLEMENTATION for testing
+func (m *MockCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
+	// TODO: Implement mock pattern matching for testing
+	return []string{}, fmt.Errorf("GetKeysByPattern not yet implemented in mock cache")
+}
+
+// DeleteByPattern deletes keys matching pattern - STUB IMPLEMENTATION for testing
+func (m *MockCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
+	// TODO: Implement mock pattern-based bulk deletion for testing
+	return 0, fmt.Errorf("DeleteByPattern not yet implemented in mock cache")
+}
+
+// UpdateMetadata updates cache entry metadata - STUB IMPLEMENTATION for testing
+func (m *MockCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+	// TODO: Implement mock metadata updates for testing
+	return fmt.Errorf("UpdateMetadata not yet implemented in mock cache")
+}
+
+// GetAndUpdate atomically gets and updates a cache entry - STUB IMPLEMENTATION for testing
+func (m *MockCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+	// TODO: Implement mock atomic get-and-update for testing
+	return nil, fmt.Errorf("GetAndUpdate not yet implemented in mock cache")
+}
+
 var _ cache.Cache = (*MockCache)(nil)
