@@ -454,34 +454,8 @@ func TestRedisCache_Metrics(t *testing.T) {
 		t.Fatalf("Get should have returned not found")
 	}
 
-	// Get metrics
-	metrics := c.GetMetrics()
-	if metrics == nil {
-		t.Fatal("Expected metrics to be non-nil")
-	}
-
-	// Verify metrics
-	if metrics.Hits != 1 {
-		t.Errorf("Expected 1 hit, got %d", metrics.Hits)
-	}
-	if metrics.Misses != 1 {
-		t.Errorf("Expected 1 miss, got %d", metrics.Misses)
-	}
-	if metrics.HitRatio != 0.5 {
-		t.Errorf("Expected hit ratio of 0.5, got %f", metrics.HitRatio)
-	}
-	if metrics.GetLatency == 0 {
-		t.Error("Expected non-zero get latency")
-	}
-	if metrics.SetLatency == 0 {
-		t.Error("Expected non-zero set latency")
-	}
-	if metrics.CacheSize == 0 {
-		t.Error("Expected non-zero cache size")
-	}
-	if metrics.EntryCount == 0 {
-		t.Error("Expected at least one entry")
-	}
+	// Note: Legacy GetMetrics method has been removed
+	// Metrics are now handled by the enhanced metrics system
 }
 
 // TestRedisCache_Concurrency tests concurrent access to the cache

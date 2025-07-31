@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	gometrics "github.com/MichaelAJay/go-metrics"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-logger"
@@ -32,7 +32,11 @@ type redisCache struct {
 	client     *redis.Client
 	options    *cache.CacheOptions
 	serializer serializer.Serializer
-	metrics    *cacheMetrics
+	
+	// Metrics - support both old and new systems
+	legacyMetrics   *cacheMetrics                // Legacy metrics for backward compatibility
+	enhancedMetrics cache.EnhancedCacheMetrics   // New go-metrics based system
+	providerName    string                       // Provider name for metrics tagging
 }
 
 // cacheMetrics implements a thread-safe metrics collector
@@ -79,12 +83,38 @@ func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cac
 		return nil, fmt.Errorf("failed to create serializer: %w", err)
 	}
 
+	// Initialize metrics systems
+	if options == nil {
+		options = &cache.CacheOptions{}
+	}
+	
+	legacyMetrics := &cacheMetrics{}
+	
+	// Determine which metrics system to use
+	var enhancedMetrics cache.EnhancedCacheMetrics
+	if options.EnhancedMetrics != nil {
+		enhancedMetrics = options.EnhancedMetrics
+	} else if options.GoMetricsRegistry != nil {
+		enhancedMetrics = metrics.NewEnhancedCacheMetrics(options.GoMetricsRegistry, options.GlobalMetricsTags)
+	} else {
+		// Use no-op metrics if disabled or no registry provided
+		if options.MetricsEnabled == false {
+			enhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
+		} else {
+			// Create default registry
+			registry := gometrics.NewRegistry()
+			enhancedMetrics = metrics.NewEnhancedCacheMetrics(registry, options.GlobalMetricsTags)
+		}
+	}
+
 	// Create Redis cache
 	c := &redisCache{
-		client:     client,
-		options:    options,
-		serializer: s,
-		metrics:    &cacheMetrics{},
+		client:          client,
+		options:         options,
+		serializer:      s,
+		legacyMetrics:   legacyMetrics,
+		enhancedMetrics: enhancedMetrics,
+		providerName:    "redis",
 	}
 
 	// Check connection to Redis
@@ -121,7 +151,7 @@ func formatMetadataKey(key string) string {
 func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordGetLatency(time.Since(start))
+		c.recordGetLatency(time.Since(start))
 	}()
 
 	// Validate key
@@ -139,7 +169,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 	data, err := c.client.Get(ctx, formattedKey).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			c.metrics.recordMiss()
+			c.recordMiss()
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -154,7 +184,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 	// Update metadata
 	c.updateAccessMetadata(ctx, key)
 
-	c.metrics.recordHit()
+	c.recordHit()
 	return value, true, nil
 }
 
@@ -162,7 +192,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordSetLatency(time.Since(start))
+		c.recordSetLatency(time.Since(start))
 	}()
 
 	// Validate key
@@ -211,7 +241,7 @@ func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Du
 func (c *redisCache) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordDeleteLatency(time.Since(start))
+		c.recordDeleteLatency(time.Since(start))
 	}()
 
 	// Validate key
@@ -416,7 +446,7 @@ func (c *redisCache) GetMany(ctx context.Context, keys []string) (map[string]any
 					result[keys[i]] = value
 					// Update metadata in background
 					go c.updateAccessMetadata(context.Background(), keys[i])
-					c.metrics.recordHit()
+					c.recordHit()
 				} else {
 					// Deserialization error, just log
 					if c.options.Logger != nil {
@@ -424,11 +454,11 @@ func (c *redisCache) GetMany(ctx context.Context, keys []string) (map[string]any
 							logger.Field{Key: "key", Value: keys[i]},
 							logger.Field{Key: "error", Value: err.Error()})
 					}
-					c.metrics.recordMiss()
+					c.recordMiss()
 				}
 			}
 		} else {
-			c.metrics.recordMiss()
+			c.recordMiss()
 		}
 	}
 
@@ -677,61 +707,6 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 	return results, nil
 }
 
-// GetMetrics returns a snapshot of the metrics
-func (c *redisCache) GetMetrics() *metrics.CacheMetricsSnapshot {
-	c.metrics.mu.RLock()
-	defer c.metrics.mu.RUnlock()
-
-	hitRate := float64(0)
-	totalOps := c.metrics.hits + c.metrics.misses
-	if totalOps > 0 {
-		hitRate = float64(c.metrics.hits) / float64(totalOps)
-	}
-
-	// Get stats from Redis
-	ctx := context.Background()
-	var dbSize int64
-	var info map[string]string
-
-	// Get DB size (approximate)
-	dbSizeCmd := c.client.DBSize(ctx)
-	if dbSizeCmd.Err() == nil {
-		dbSize = dbSizeCmd.Val()
-	}
-
-	// Get Redis info
-	infoCmd := c.client.Info(ctx)
-	if infoCmd.Err() == nil {
-		info = parseRedisInfo(infoCmd.Val())
-	}
-
-	// Calculate memory usage for our cache (approximate)
-	usedMemory := int64(0)
-	if memoryStr, ok := info["used_memory"]; ok {
-		if parsedMem, err := strconv.ParseInt(memoryStr, 10, 64); err == nil {
-			usedMemory = parsedMem
-		}
-	}
-
-	// If we have keys with our prefix, adjust memory usage proportionally
-	if dbSize > 0 {
-		keysWithPrefix := int64(len(c.GetKeys(ctx)))
-		if keysWithPrefix > 0 && keysWithPrefix < dbSize {
-			usedMemory = int64(float64(usedMemory) * (float64(keysWithPrefix) / float64(dbSize)))
-		}
-	}
-
-	return &metrics.CacheMetricsSnapshot{
-		Hits:          c.metrics.hits,
-		Misses:        c.metrics.misses,
-		HitRatio:      hitRate,
-		GetLatency:    c.metrics.getLatency,
-		SetLatency:    c.metrics.setLatency,
-		DeleteLatency: c.metrics.deleteLatency,
-		CacheSize:     usedMemory,
-		EntryCount:    int64(len(c.GetKeys(ctx))), // Only count keys with our prefix
-	}
-}
 
 // Helper function to parse Redis INFO command output
 func parseRedisInfo(info string) map[string]string {
@@ -815,34 +790,116 @@ func (c *redisCache) updateAccessMetadata(ctx context.Context, key string) {
 }
 
 // Metrics recording functions
-func (m *cacheMetrics) recordHit() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.hits++
+// New metrics recording functions that use both legacy and enhanced metrics
+func (c *redisCache) recordHit() {
+	// Legacy metrics
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.hits++
+	c.legacyMetrics.mu.Unlock()
+	
+	// Enhanced metrics
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordHit(c.providerName, tags)
 }
 
-func (m *cacheMetrics) recordMiss() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.misses++
+func (c *redisCache) recordMiss() {
+	// Legacy metrics
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.misses++
+	c.legacyMetrics.mu.Unlock()
+	
+	// Enhanced metrics
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordMiss(c.providerName, tags)
 }
 
-func (m *cacheMetrics) recordGetLatency(duration time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.getLatency = duration
+func (c *redisCache) recordGetLatency(duration time.Duration) {
+	// Legacy metrics
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.getLatency = duration
+	c.legacyMetrics.mu.Unlock()
+	
+	// Enhanced metrics
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordOperation(c.providerName, "get", "completed", duration, tags)
 }
 
-func (m *cacheMetrics) recordSetLatency(duration time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.setLatency = duration
+func (c *redisCache) recordSetLatency(duration time.Duration) {
+	// Legacy metrics
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.setLatency = duration
+	c.legacyMetrics.mu.Unlock()
+	
+	// Enhanced metrics
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordOperation(c.providerName, "set", "completed", duration, tags)
 }
 
-func (m *cacheMetrics) recordDeleteLatency(duration time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.deleteLatency = duration
+func (c *redisCache) recordDeleteLatency(duration time.Duration) {
+	// Legacy metrics
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.deleteLatency = duration
+	c.legacyMetrics.mu.Unlock()
+	
+	// Enhanced metrics
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordOperation(c.providerName, "delete", "completed", duration, tags)
+}
+
+// Helper function to get base tags for metrics
+func (c *redisCache) getBaseTags() gometrics.Tags {
+	tags := make(gometrics.Tags)
+	if c.options.GlobalMetricsTags != nil {
+		for k, v := range c.options.GlobalMetricsTags {
+			tags[k] = v
+		}
+	}
+	return tags
+}
+
+// recordRedisCommand records metrics for a Redis command
+func (c *redisCache) recordRedisCommand(command string, duration time.Duration, err error) {
+	tags := c.getBaseTags()
+	tags["command"] = command
+	
+	status := "success"
+	if err != nil {
+		status = "error"
+		// Record Redis-specific errors
+		errorType := "redis_error"
+		errorCategory := "unknown"
+		
+		// Categorize common Redis errors
+		if err == redis.Nil {
+			errorType = "not_found"
+			errorCategory = "key_not_found"
+		} else if strings.Contains(err.Error(), "connection refused") {
+			errorType = "connection_error"
+			errorCategory = "connection_refused"
+		} else if strings.Contains(err.Error(), "timeout") {
+			errorType = "connection_error"
+			errorCategory = "timeout"
+		}
+		
+		c.enhancedMetrics.RecordError(c.providerName, command, errorType, errorCategory, tags)
+	}
+	
+	tags["status"] = status
+	c.enhancedMetrics.RecordOperation(c.providerName, "redis_"+command, status, duration, tags)
+}
+
+// recordConnectionPoolStats records Redis connection pool metrics
+func (c *redisCache) recordConnectionPoolStats() {
+	stats := c.client.PoolStats()
+	tags := c.getBaseTags()
+	
+	// Record various pool statistics
+	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_hits", float64(stats.Hits), tags)
+	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_misses", float64(stats.Misses), tags)
+	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_timeouts", float64(stats.Timeouts), tags)
+	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_total_conns", float64(stats.TotalConns), tags)
+	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_idle_conns", float64(stats.IdleConns), tags)
+	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_stale_conns", float64(stats.StaleConns), tags)
 }
 
 // Increment atomically increments a numeric value in Redis

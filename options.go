@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	gometrics "github.com/MichaelAJay/go-metrics"
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
 	"github.com/MichaelAJay/go-cache/metrics"
@@ -54,6 +55,129 @@ func WithMaxSize(maxSize int64) CacheOption {
 	}
 }
 
+
+// WithGoMetricsRegistry sets the go-metrics registry for comprehensive metrics
+func WithGoMetricsRegistry(registry gometrics.Registry) CacheOption {
+	return func(o *CacheOptions) {
+		o.GoMetricsRegistry = registry
+		o.EnhancedMetrics = metrics.NewEnhancedCacheMetrics(registry, o.GlobalMetricsTags)
+	}
+}
+
+// WithMetricsEnabled enables or disables metrics collection
+func WithMetricsEnabled(enabled bool) CacheOption {
+	return func(o *CacheOptions) {
+		o.MetricsEnabled = enabled
+		if !enabled {
+			o.GoMetricsRegistry = gometrics.NewNoop()
+			o.EnhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
+		}
+	}
+}
+
+// WithGlobalMetricsTags sets global tags that will be applied to all metrics
+func WithGlobalMetricsTags(tags gometrics.Tags) CacheOption {
+	return func(o *CacheOptions) {
+		o.GlobalMetricsTags = tags
+	}
+}
+
+// WithSecurityConfig sets the security configuration
+func WithSecurityConfig(config *SecurityConfig) CacheOption {
+	return func(o *CacheOptions) {
+		o.Security = config
+	}
+}
+
+// WithHooks sets the lifecycle hooks
+func WithHooks(hooks *CacheHooks) CacheOption {
+	return func(o *CacheOptions) {
+		o.Hooks = hooks
+	}
+}
+
+// WithIndexes sets the secondary indexes
+func WithIndexes(indexes map[string]string) CacheOption {
+	return func(o *CacheOptions) {
+		o.Indexes = indexes
+	}
+}
+
+// WithCleanupConfig sets enhanced cleanup configuration
+func WithCleanupConfig(config *CleanupConfig) CacheOption {
+	return func(o *CacheOptions) {
+		o.CleanupConfig = config
+	}
+}
+
+// WithMetricsConfig sets enhanced metrics configuration
+func WithMetricsConfig(config *MetricsConfig) CacheOption {
+	return func(o *CacheOptions) {
+		o.MetricsConfig = config
+	}
+}
+
+// Advanced metrics configuration helpers
+
+// WithPrometheusMetrics configures the cache to use Prometheus metrics
+func WithPrometheusMetrics(registry gometrics.Registry, tags gometrics.Tags) CacheOption {
+	return func(o *CacheOptions) {
+		if registry == nil {
+			registry = gometrics.NewRegistry()
+		}
+		o.GoMetricsRegistry = registry
+		o.GlobalMetricsTags = tags
+		o.MetricsEnabled = true
+	}
+}
+
+// WithOpenTelemetryMetrics configures the cache to use OpenTelemetry metrics
+func WithOpenTelemetryMetrics(registry gometrics.Registry, tags gometrics.Tags) CacheOption {
+	return func(o *CacheOptions) {
+		if registry == nil {
+			registry = gometrics.NewRegistry()
+		}
+		o.GoMetricsRegistry = registry
+		o.GlobalMetricsTags = tags
+		o.MetricsEnabled = true
+	}
+}
+
+// WithServiceTags adds standard service tags to metrics
+func WithServiceTags(serviceName, version, environment string) CacheOption {
+	return func(o *CacheOptions) {
+		if o.GlobalMetricsTags == nil {
+			o.GlobalMetricsTags = make(gometrics.Tags)
+		}
+		o.GlobalMetricsTags["service"] = serviceName
+		o.GlobalMetricsTags["version"] = version
+		o.GlobalMetricsTags["environment"] = environment
+	}
+}
+
+// WithDetailedMetrics enables comprehensive metrics collection
+func WithDetailedMetrics(enabled bool) CacheOption {
+	return func(o *CacheOptions) {
+		if o.MetricsConfig == nil {
+			o.MetricsConfig = &MetricsConfig{}
+		}
+		o.MetricsConfig.EnableDetailedMetrics = enabled
+		o.MetricsConfig.EnableSecurityMetrics = enabled
+		o.MetricsConfig.EnableLatencyHistograms = enabled
+	}
+}
+
+// WithMetricsPrefix sets a prefix for all metric names
+func WithMetricsPrefix(prefix string) CacheOption {
+	return func(o *CacheOptions) {
+		if o.MetricsConfig == nil {
+			o.MetricsConfig = &MetricsConfig{}
+		}
+		o.MetricsConfig.MetricsPrefix = prefix
+	}
+}
+
+
 // Configuration structs
 
 // SecurityConfig defines security settings for cache operations
@@ -99,7 +223,12 @@ type CacheOptions struct {
 	Logger           logger.Logger
 	RedisOptions     *RedisOptions
 	SerializerFormat serializer.Format // Format to use for serialization
-	Metrics          metrics.CacheMetrics // Custom metrics implementation
+	
+	// go-metrics integration
+	GoMetricsRegistry  gometrics.Registry   // go-metrics registry for comprehensive metrics
+	MetricsEnabled     bool                 // Enable/disable metrics collection
+	GlobalMetricsTags  gometrics.Tags       // Global tags applied to all metrics
+	EnhancedMetrics    EnhancedCacheMetrics // Enhanced metrics implementation using go-metrics
 
 	// Enhanced configuration options
 	Security        *SecurityConfig           // Security configuration
@@ -107,7 +236,6 @@ type CacheOptions struct {
 	Indexes         map[string]string         // indexName -> keyPattern for secondary indexes
 	CleanupConfig   *CleanupConfig            // Enhanced cleanup configuration
 	MetricsConfig   *MetricsConfig            // Enhanced metrics configuration
-	EnhancedMetrics EnhancedCacheMetrics      // Enhanced metrics implementation
 }
 
 // RedisOptions represents configuration options for Redis cache

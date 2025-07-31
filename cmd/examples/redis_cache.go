@@ -142,13 +142,6 @@ func basicCacheOperations(ctx context.Context, c cache.Cache, log logger.Logger,
 		logger.Field{Key: "count", Value: len(results)},
 		logger.Field{Key: "configType", Value: configType})
 
-	// Get cache metrics
-	metrics := c.GetMetrics()
-	log.Info("Cache metrics",
-		logger.Field{Key: "hits", Value: metrics.Hits},
-		logger.Field{Key: "misses", Value: metrics.Misses},
-		logger.Field{Key: "hitRatio", Value: metrics.HitRatio},
-		logger.Field{Key: "configType", Value: configType})
 
 	// Delete our test data
 	keys = append(keys, key)

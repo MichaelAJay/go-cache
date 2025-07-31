@@ -5,16 +5,20 @@ import (
 	"sync"
 	"time"
 
+	gometrics "github.com/MichaelAJay/go-metrics"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/metrics"
 )
 
-// nullCache implements the Cache interface but does nothing
+// nullCache implements the Cache interface but doesn't store anything
+// Useful for testing or when you want to disable caching
 type nullCache struct {
-	metrics *cacheMetrics
+	enhancedMetrics cache.EnhancedCacheMetrics
+	providerName    string
+	legacyMetrics   *cacheMetrics
 }
 
-// cacheMetrics implements the CacheMetrics interface
+// cacheMetrics implements a thread-safe metrics collector for the null cache
 type cacheMetrics struct {
 	hits          int64
 	misses        int64
@@ -24,29 +28,57 @@ type cacheMetrics struct {
 	mu            sync.RWMutex
 }
 
+// NullCache exposes the null cache implementation
+type NullCache struct {
+	*nullCache
+}
+
 // NewNullCache creates a new null cache instance
 func NewNullCache(options *cache.CacheOptions) cache.Cache {
-	return &nullCache{
-		metrics: &cacheMetrics{},
+	// Initialize metrics systems
+	if options == nil {
+		options = &cache.CacheOptions{}
 	}
+	
+	legacyMetrics := &cacheMetrics{}
+	
+	// Determine which metrics system to use
+	var enhancedMetrics cache.EnhancedCacheMetrics
+	if options.EnhancedMetrics != nil {
+		enhancedMetrics = options.EnhancedMetrics
+	} else if options.GoMetricsRegistry != nil {
+		enhancedMetrics = metrics.NewEnhancedCacheMetrics(options.GoMetricsRegistry, options.GlobalMetricsTags)
+	} else {
+		// Use no-op metrics
+		enhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
+	}
+
+	return &NullCache{&nullCache{
+		enhancedMetrics: enhancedMetrics,
+		providerName:    "null",
+		legacyMetrics:   legacyMetrics,
+	}}
 }
+
 
 // Get always returns not found
 func (c *nullCache) Get(ctx context.Context, key string) (any, bool, error) {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordGetLatency(time.Since(start))
-		c.metrics.recordMiss()
+		c.recordGetLatency(time.Since(start))
 	}()
+
+	c.recordMiss()
 	return nil, false, nil
 }
 
-// Set does nothing
+// Set does nothing but records metrics
 func (c *nullCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordSetLatency(time.Since(start))
+		c.recordSetLatency(time.Since(start))
 	}()
+
 	return nil
 }
 
@@ -54,8 +86,9 @@ func (c *nullCache) Set(ctx context.Context, key string, value any, ttl time.Dur
 func (c *nullCache) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 	defer func() {
-		c.metrics.recordDeleteLatency(time.Since(start))
+		c.recordDeleteLatency(time.Since(start))
 	}()
+
 	return nil
 }
 
@@ -69,7 +102,7 @@ func (c *nullCache) Has(ctx context.Context, key string) bool {
 	return false
 }
 
-// GetKeys returns an empty slice
+// GetKeys always returns empty
 func (c *nullCache) GetKeys(ctx context.Context) []string {
 	return []string{}
 }
@@ -79,9 +112,12 @@ func (c *nullCache) Close() error {
 	return nil
 }
 
-// GetMany returns an empty map
+// GetMany returns empty map
 func (c *nullCache) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
-	return make(map[string]any), nil
+	for range keys {
+		c.recordMiss()
+	}
+	return map[string]any{}, nil
 }
 
 // SetMany does nothing
@@ -94,95 +130,32 @@ func (c *nullCache) DeleteMany(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// GetMetadata always returns ErrKeyNotFound
+// GetMetadata returns nil
 func (c *nullCache) GetMetadata(ctx context.Context, key string) (*cache.CacheEntryMetadata, error) {
 	return nil, cache.ErrKeyNotFound
 }
 
-// GetManyMetadata returns an empty map
+// GetManyMetadata returns empty map
 func (c *nullCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error) {
-	return make(map[string]*cache.CacheEntryMetadata), nil
+	return map[string]*cache.CacheEntryMetadata{}, nil
 }
 
-// recordHit records a cache hit
-func (m *cacheMetrics) recordHit() {
-	m.mu.Lock()
-	m.hits++
-	m.mu.Unlock()
-}
-
-// recordMiss records a cache miss
-func (m *cacheMetrics) recordMiss() {
-	m.mu.Lock()
-	m.misses++
-	m.mu.Unlock()
-}
-
-// recordGetLatency records the latency of a Get operation
-func (m *cacheMetrics) recordGetLatency(duration time.Duration) {
-	m.mu.Lock()
-	m.getLatency = duration
-	m.mu.Unlock()
-}
-
-// recordSetLatency records the latency of a Set operation
-func (m *cacheMetrics) recordSetLatency(duration time.Duration) {
-	m.mu.Lock()
-	m.setLatency = duration
-	m.mu.Unlock()
-}
-
-// recordDeleteLatency records the latency of a Delete operation
-func (m *cacheMetrics) recordDeleteLatency(duration time.Duration) {
-	m.mu.Lock()
-	m.deleteLatency = duration
-	m.mu.Unlock()
-}
-
-// GetMetrics returns the current metrics snapshot
-func (m *cacheMetrics) GetMetrics() *metrics.CacheMetricsSnapshot {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	total := m.hits + m.misses
-	hitRatio := 0.0
-	if total > 0 {
-		hitRatio = float64(m.hits) / float64(total)
-	}
-
-	return &metrics.CacheMetricsSnapshot{
-		Hits:          m.hits,
-		Misses:        m.misses,
-		HitRatio:      hitRatio,
-		GetLatency:    m.getLatency,
-		SetLatency:    m.setLatency,
-		DeleteLatency: m.deleteLatency,
-		CacheSize:     0,
-		EntryCount:    0,
-	}
-}
-
-// GetMetrics returns the current metrics snapshot
-func (c *nullCache) GetMetrics() *metrics.CacheMetricsSnapshot {
-	return c.metrics.GetMetrics()
-}
-
-// Increment does nothing and returns 0
+// Increment does nothing
 func (c *nullCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
 	return 0, nil
 }
 
-// Decrement does nothing and returns 0
+// Decrement does nothing
 func (c *nullCache) Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
 	return 0, nil
 }
 
-// SetIfNotExists does nothing and returns false
+// SetIfNotExists does nothing
 func (c *nullCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	return false, nil
 }
 
-// SetIfExists does nothing and returns false
+// SetIfExists does nothing
 func (c *nullCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	return false, nil
 }
@@ -197,7 +170,7 @@ func (c *nullCache) RemoveIndex(ctx context.Context, indexName string, keyPatter
 	return nil
 }
 
-// GetByIndex returns an empty slice
+// GetByIndex returns empty slice
 func (c *nullCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
 	return []string{}, nil
 }
@@ -207,12 +180,12 @@ func (c *nullCache) DeleteByIndex(ctx context.Context, indexName string, indexKe
 	return nil
 }
 
-// GetKeysByPattern returns an empty slice
+// GetKeysByPattern returns empty slice
 func (c *nullCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
 	return []string{}, nil
 }
 
-// DeleteByPattern does nothing and returns 0
+// DeleteByPattern does nothing
 func (c *nullCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
 	return 0, nil
 }
@@ -222,7 +195,59 @@ func (c *nullCache) UpdateMetadata(ctx context.Context, key string, updater cach
 	return cache.ErrKeyNotFound
 }
 
-// GetAndUpdate returns nil
+// GetAndUpdate does nothing
 func (c *nullCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
 	return nil, cache.ErrKeyNotFound
+}
+
+// Metrics recording functions
+func (c *nullCache) recordHit() {
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.hits++
+	c.legacyMetrics.mu.Unlock()
+	
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordHit(c.providerName, tags)
+}
+
+func (c *nullCache) recordMiss() {
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.misses++
+	c.legacyMetrics.mu.Unlock()
+	
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordMiss(c.providerName, tags)
+}
+
+func (c *nullCache) recordGetLatency(duration time.Duration) {
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.getLatency = duration
+	c.legacyMetrics.mu.Unlock()
+	
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordOperation(c.providerName, "get", "completed", duration, tags)
+}
+
+func (c *nullCache) recordSetLatency(duration time.Duration) {
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.setLatency = duration
+	c.legacyMetrics.mu.Unlock()
+	
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordOperation(c.providerName, "set", "completed", duration, tags)
+}
+
+func (c *nullCache) recordDeleteLatency(duration time.Duration) {
+	c.legacyMetrics.mu.Lock()
+	c.legacyMetrics.deleteLatency = duration
+	c.legacyMetrics.mu.Unlock()
+	
+	tags := c.getBaseTags()
+	c.enhancedMetrics.RecordOperation(c.providerName, "delete", "completed", duration, tags)
+}
+
+// Helper function to get base tags for metrics
+func (c *nullCache) getBaseTags() gometrics.Tags {
+	// Null cache typically doesn't need tags, but we'll provide empty ones
+	return make(gometrics.Tags)
 }

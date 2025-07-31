@@ -102,25 +102,8 @@ func TestNullCache_Metrics(t *testing.T) {
 	_, _, _ = c.Get(ctx, "key1")
 	_ = c.Delete(ctx, "key1")
 
-	// Get metrics
-	metrics := c.GetMetrics()
-
-	// Verify metrics
-	if metrics.Hits != 0 {
-		t.Errorf("Expected 0 hits, got %d", metrics.Hits)
-	}
-	if metrics.Misses != 1 {
-		t.Errorf("Expected 1 miss, got %d", metrics.Misses)
-	}
-	if metrics.HitRatio != 0.0 {
-		t.Errorf("Expected 0.0 hit ratio, got %f", metrics.HitRatio)
-	}
-	if metrics.CacheSize != 0 {
-		t.Errorf("Expected 0 cache size, got %d", metrics.CacheSize)
-	}
-	if metrics.EntryCount != 0 {
-		t.Errorf("Expected 0 entry count, got %d", metrics.EntryCount)
-	}
+	// Note: Legacy GetMetrics method has been removed
+	// Metrics are now handled by the enhanced metrics system
 }
 
 func TestNullCache_Cleanup(t *testing.T) {

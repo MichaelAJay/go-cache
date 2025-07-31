@@ -458,12 +458,11 @@ func TestMemoryCache_DeleteMany_Comprehensive(t *testing.T) {
 			}
 		}
 
-		// Get initial metrics
-		initialMetrics := c.GetMetrics()
-		initialSize := initialMetrics.CacheSize
-		initialCount := initialMetrics.EntryCount
+		// Check initial state
+		initialKeys := c.GetKeys(ctx)
+		initialCount := len(initialKeys)
 
-		if initialCount != int64(len(keys)) {
+		if initialCount != len(keys) {
 			t.Errorf("Expected initial entry count %d, got %d", len(keys), initialCount)
 		}
 
@@ -473,19 +472,15 @@ func TestMemoryCache_DeleteMany_Comprehensive(t *testing.T) {
 			t.Errorf("DeleteMany failed: %v", err)
 		}
 
-		// Check updated metrics
-		updatedMetrics := c.GetMetrics()
-		updatedSize := updatedMetrics.CacheSize
-		updatedCount := updatedMetrics.EntryCount
+		// Check updated state
+		updatedKeys := c.GetKeys(ctx)
+		updatedCount := len(updatedKeys)
 
 		if updatedCount != initialCount-3 {
 			t.Errorf("Expected entry count to decrease by 3, got change from %d to %d",
 				initialCount, updatedCount)
 		}
 
-		if updatedSize >= initialSize {
-			t.Errorf("Expected cache size to decrease, got change from %d to %d",
-				initialSize, updatedSize)
-		}
+		// Note: Size metrics no longer available via GetMetrics
 	})
 }

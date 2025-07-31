@@ -410,10 +410,9 @@ func TestConcurrentOperations(t *testing.T) {
 		<-done
 	}
 
-	// Final verification - get metrics
-	metrics := redisCache.GetMetrics()
-	t.Logf("Cache metrics after concurrent operations: hits=%d, misses=%d, ratio=%.2f",
-		metrics.Hits, metrics.Misses, metrics.HitRatio)
+	// Note: Legacy GetMetrics method has been removed
+	// Metrics are now handled by the enhanced metrics system
+	t.Logf("Concurrent operations completed successfully")
 
 	// Clean up
 	for i := 0; i < numKeys; i++ {

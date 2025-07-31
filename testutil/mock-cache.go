@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 type MockCache struct {
@@ -25,7 +24,6 @@ type MockCache struct {
 	OnDeleteManyCallback      func(ctx context.Context, keys []string) error
 	OnGetMetadataCallback     func(ctx context.Context, key string) (*cache.CacheEntryMetadata, error)
 	OnGetManyMetadataCallback func(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error)
-	OnGetMetricsCallback      func() *metrics.CacheMetricsSnapshot
 	mu                        sync.RWMutex
 }
 
@@ -235,31 +233,6 @@ func (m *MockCache) GetManyMetadata(ctx context.Context, keys []string) (map[str
 	return result, nil
 }
 
-// GetMetrics implements cache.Cache.
-func (m *MockCache) GetMetrics() *metrics.CacheMetricsSnapshot {
-	if m.OnGetMetricsCallback != nil {
-		return m.OnGetMetricsCallback()
-	}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var totalAccessCount int64
-	for _, metadata := range m.metadata {
-		totalAccessCount += metadata.AccessCount
-	}
-
-	return &metrics.CacheMetricsSnapshot{
-		Hits:          totalAccessCount,
-		Misses:        0,
-		HitRatio:      1.0,
-		GetLatency:    0,
-		SetLatency:    0,
-		DeleteLatency: 0,
-		CacheSize:     int64(len(m.data)),
-		EntryCount:    int64(len(m.data)),
-	}
-}
 
 // Increment atomically increments a numeric value in the mock cache
 func (m *MockCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {

@@ -1,35 +1,48 @@
-// Example demonstrating how to use go-cache with Prometheus metrics
+// Example demonstrating how to use go-cache with Prometheus metrics using go-metrics
 package main
 
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	gometrics "github.com/MichaelAJay/go-metrics"
+	"github.com/MichaelAJay/go-metrics/metric/prometheus"
 	"github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/providers/memory"
-	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 func main() {
-	// Create Prometheus metrics
-	prometheusMetrics, err := metrics.NewPrometheusMetrics("example-app", "example")
-	if err != nil {
-		fmt.Printf("Error creating metrics: %v\n", err)
-		os.Exit(1)
-	}
+	// Create go-metrics registry
+	registry := gometrics.NewRegistry()
+	
+	// Create Prometheus reporter
+	reporter := prometheus.NewReporter(
+		prometheus.WithDefaultLabels(map[string]string{
+			"service": "go-cache-example",
+			"version": "1.0.0",
+		}),
+	)
 
-	// Create cache with metrics
+	// Create cache with go-metrics integration
 	provider := memory.NewProvider()
 	c, err := provider.Create(&cache.CacheOptions{
-		TTL:             time.Minute * 5,
-		MaxEntries:      1000,
-		MaxSize:         1024 * 1024 * 10, // 10MB
-		CleanupInterval: time.Minute,
-		Metrics:         prometheusMetrics, // Use our Prometheus metrics
+		TTL:               time.Minute * 5,
+		MaxEntries:        1000,
+		MaxSize:           1024 * 1024 * 10, // 10MB
+		CleanupInterval:   time.Minute,
+		
+		// New go-metrics integration
+		GoMetricsRegistry: registry,
+		MetricsEnabled:    true,
+		GlobalMetricsTags: gometrics.Tags{
+			"provider":    "memory",
+			"environment": "development",
+		},
 	})
 	if err != nil {
 		fmt.Printf("Error creating cache: %v\n", err)
@@ -37,14 +50,27 @@ func main() {
 	}
 	defer c.Close()
 
-	// Start Prometheus server
-	server, err := metrics.StartPrometheusServer(prometheusMetrics, ":9090")
-	if err != nil {
-		fmt.Printf("Error starting Prometheus server: %v\n", err)
-		os.Exit(1)
-	}
+	// Start reporting metrics to Prometheus
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := reporter.Report(registry); err != nil {
+				fmt.Printf("Error reporting metrics: %v\n", err)
+			}
+		}
+	}()
 
-	fmt.Println("Prometheus metrics server running at http://localhost:9090/metrics")
+	// Create HTTP server for Prometheus scraping
+	http.Handle("/metrics", reporter.Handler())
+	server := &http.Server{Addr: ":9090"}
+	
+	go func() {
+		fmt.Println("Prometheus metrics server running at http://localhost:9090/metrics")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("Error starting server: %v\n", err)
+		}
+	}()
 
 	// Perform some cache operations to generate metrics
 	ctx := context.Background()
@@ -90,10 +116,17 @@ func main() {
 
 	fmt.Println("Shutting down...")
 
+	// Final metrics report
+	if err := reporter.Report(registry); err != nil {
+		fmt.Printf("Error reporting final metrics: %v\n", err)
+	}
+
 	// Graceful server shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		fmt.Printf("Prometheus server shutdown error: %v\n", err)
 	}
+	
+	fmt.Println("Cache metrics summary:")
 }

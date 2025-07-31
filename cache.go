@@ -27,8 +27,6 @@ type Cache interface {
 	GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
 	GetManyMetadata(ctx context.Context, keys []string) (map[string]*CacheEntryMetadata, error)
 
-	// Metrics
-	GetMetrics() *metrics.CacheMetricsSnapshot
 
 	// Atomic operations for counters
 	Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
@@ -82,12 +80,13 @@ const (
 )
 
 // CleanupReason represents the reason for cache entry cleanup
-type CleanupReason string
+type CleanupReason = metrics.CleanupReason
 
+// CleanupReason constants
 const (
-	CleanupExpired CleanupReason = "expired"
-	CleanupEvicted CleanupReason = "evicted"
-	CleanupManual  CleanupReason = "manual"
+	CleanupExpired = metrics.CleanupExpired
+	CleanupEvicted = metrics.CleanupEvicted
+	CleanupManual  = metrics.CleanupManual
 )
 
 
@@ -95,29 +94,8 @@ const (
 type CacheMiddleware func(next Cache) Cache
 
 
-// EnhancedCacheMetrics extends CacheMetrics with additional functionality
-type EnhancedCacheMetrics interface {
-	metrics.CacheMetrics // Inherit from metrics package
-
-	// Operation-specific metrics
-	RecordOperation(operation string, status string, duration time.Duration)
-	RecordOperationError(operation string, errorType string, err error)
-
-	// Security metrics
-	RecordSecurityEvent(eventType string, severity string, metadata map[string]any)
-	RecordTimingProtection(operation string, actualTime, adjustedTime time.Duration)
-
-	// Index metrics
-	RecordIndexOperation(indexName string, operation string, keyCount int, duration time.Duration)
-
-	// Cleanup metrics
-	RecordCleanup(reason CleanupReason, itemCount int, duration time.Duration)
-	RecordMemoryUsage(totalSize int64, entryCount int64)
-
-	// Advanced metrics
-	GetOperationLatencyPercentiles(operation string) map[string]time.Duration // P50, P95, P99
-	GetErrorRates() map[string]float64                                        // operation -> error rate
-}
+// EnhancedCacheMetrics is an alias to the metrics package interface to avoid duplication
+type EnhancedCacheMetrics = metrics.EnhancedCacheMetrics
 
 
 // CacheProvider defines the interface for cache providers
