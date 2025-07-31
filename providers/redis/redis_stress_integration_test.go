@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package redis
 
 import (
@@ -134,12 +137,12 @@ func TestCacheStressScenarios(t *testing.T) {
 		for i := 0; i < numLargeObjects; i++ {
 			key := fmt.Sprintf("%smemory-pressure:%d", testPrefix, i)
 			data := make([]byte, objectSizeKB*1024) // Convert KB to bytes
-			
+
 			// Fill with random data
 			for j := range data {
 				data[j] = byte(rand.Intn(256))
 			}
-			
+
 			largeObjects[key] = data
 		}
 
@@ -170,7 +173,7 @@ func TestCacheStressScenarios(t *testing.T) {
 			}
 
 			if len(retrievedData) != len(originalData) {
-				t.Errorf("Object %s: size mismatch, expected %d, got %d", 
+				t.Errorf("Object %s: size mismatch, expected %d, got %d",
 					key, len(originalData), len(retrievedData))
 			}
 		}
@@ -188,20 +191,20 @@ func TestCacheStressScenarios(t *testing.T) {
 		const baseExpiration = 100 * time.Millisecond
 
 		expiredKeys := make([]string, 0, numKeys)
-		
+
 		// Create keys with staggered expiration times
 		for i := 0; i < numKeys; i++ {
 			key := fmt.Sprintf("%sttl-rapid:%d", testPrefix, i)
 			value := fmt.Sprintf("expiring-value-%d", i)
-			
+
 			// Stagger expiration times between 50ms and 200ms
 			ttl := baseExpiration + time.Duration(rand.Intn(100))*time.Millisecond
-			
+
 			err := redis.Cache.Set(ctx, key, value, ttl)
 			if err != nil {
 				t.Fatalf("Failed to set key %s: %v", key, err)
 			}
-			
+
 			expiredKeys = append(expiredKeys, key)
 		}
 
@@ -239,9 +242,9 @@ func TestCacheStressScenarios(t *testing.T) {
 				finalCount++
 			}
 		}
-		
+
 		t.Logf("After 350ms: %d/%d keys exist", finalCount, numKeys)
-		
+
 		// Allow some tolerance for timing precision
 		if finalCount > numKeys/10 { // Allow up to 10% to still exist due to timing
 			t.Errorf("Too many keys still exist after expiration: %d/%d", finalCount, numKeys)
@@ -268,9 +271,9 @@ func TestCacheEdgeCases(t *testing.T) {
 
 	t.Run("ExtremeKeyNames", func(t *testing.T) {
 		edgeKeys := []struct {
-			name        string
-			key         string
-			shouldWork  bool
+			name       string
+			key        string
+			shouldWork bool
 		}{
 			{"Empty key", "", false},
 			{"Very long key", testPrefix + "very-long-key-" + generateLongString(1000), true},
@@ -283,7 +286,7 @@ func TestCacheEdgeCases(t *testing.T) {
 		for _, tc := range edgeKeys {
 			t.Run(tc.name, func(t *testing.T) {
 				value := fmt.Sprintf("value-for-%s", tc.name)
-				
+
 				err := redis.Cache.Set(ctx, tc.key, value, time.Hour)
 				if tc.shouldWork {
 					if err != nil {
@@ -315,16 +318,16 @@ func TestCacheEdgeCases(t *testing.T) {
 
 	t.Run("ExtremeValues", func(t *testing.T) {
 		extremeValues := []struct {
-			name        string
-			value       any
-			shouldWork  bool
+			name       string
+			value      any
+			shouldWork bool
 		}{
 			{"Nil value", nil, false}, // Nil serialization may fail
 			{"Empty string", "", true},
 			{"Empty slice", []string{}, true},
 			{"Empty map", map[string]string{}, true},
 			{"Very large string", generateLongString(10000), true},
-			{"Very large number", int64(9223372036854775807), true}, // Max int64
+			{"Very large number", int64(9223372036854775807), true},  // Max int64
 			{"Very small number", int64(-9223372036854775808), true}, // Min int64
 			{"Unicode string", "🌟🚀💯 Unicode test with emojis 中文 العربية", true},
 			{"Complex nested structure", map[string]any{
@@ -344,7 +347,7 @@ func TestCacheEdgeCases(t *testing.T) {
 		for i, tc := range extremeValues {
 			t.Run(tc.name, func(t *testing.T) {
 				key := fmt.Sprintf("%sextreme-value:%d", testPrefix, i)
-				
+
 				err := redis.Cache.Set(ctx, key, tc.value, time.Hour)
 				if tc.shouldWork {
 					if err != nil {
@@ -366,7 +369,7 @@ func TestCacheEdgeCases(t *testing.T) {
 					if tc.value == nil && retrievedValue != nil {
 						t.Errorf("Extreme value '%s': expected nil, got %v", tc.name, retrievedValue)
 					}
-					
+
 					t.Logf("Extreme value '%s': stored and retrieved successfully", tc.name)
 				} else {
 					if err == nil {
@@ -382,7 +385,7 @@ func TestCacheEdgeCases(t *testing.T) {
 	t.Run("ConcurrentSameKeyOperations", func(t *testing.T) {
 		const numGoroutines = 50
 		const operationsPerGoroutine = 20
-		
+
 		sharedKey := fmt.Sprintf("%sshared-key", testPrefix)
 		var wg sync.WaitGroup
 		errors := make(chan error, numGoroutines*operationsPerGoroutine)
@@ -398,7 +401,7 @@ func TestCacheEdgeCases(t *testing.T) {
 			wg.Add(1)
 			go func(workerID int) {
 				defer wg.Done()
-				
+
 				for j := 0; j < operationsPerGoroutine; j++ {
 					switch j % 4 {
 					case 0: // Set
@@ -406,17 +409,17 @@ func TestCacheEdgeCases(t *testing.T) {
 						if err := redis.Cache.Set(ctx, sharedKey, value, time.Hour); err != nil {
 							errors <- fmt.Errorf("worker %d set: %w", workerID, err)
 						}
-						
+
 					case 1: // Get
 						if _, _, err := redis.Cache.Get(ctx, sharedKey); err != nil {
 							errors <- fmt.Errorf("worker %d get: %w", workerID, err)
 						}
-						
+
 					case 2: // Increment (if possible)
 						if _, err := redis.Cache.Increment(ctx, sharedKey, 1, time.Hour); err != nil {
 							// Increment might fail if value is not numeric, that's OK
 						}
-						
+
 					case 3: // Delete and recreate
 						_ = redis.Cache.Delete(ctx, sharedKey)
 						if err := redis.Cache.Set(ctx, sharedKey, workerID, time.Hour); err != nil {
@@ -436,9 +439,9 @@ func TestCacheEdgeCases(t *testing.T) {
 			errorCount++
 		}
 
-		t.Logf("Concurrent same-key operations: %d errors out of %d operations", 
+		t.Logf("Concurrent same-key operations: %d errors out of %d operations",
 			errorCount, numGoroutines*operationsPerGoroutine)
-			
+
 		// Verify the key still exists and is accessible
 		_, found, err := redis.Cache.Get(ctx, sharedKey)
 		if err != nil {
@@ -455,7 +458,7 @@ func TestCacheEdgeCases(t *testing.T) {
 
 		for i := 0; i < cycles; i++ {
 			value := fmt.Sprintf("cycle-value-%d", i)
-			
+
 			// Create
 			err := redis.Cache.Set(ctx, key, value, time.Hour)
 			if err != nil {
@@ -523,10 +526,10 @@ func TestFailureScenarios(t *testing.T) {
 		// Try operation with very short timeout (should fail)
 		shortCtx, cancel := context.WithTimeout(ctx, 1*time.Nanosecond)
 		time.Sleep(1 * time.Millisecond) // Ensure timeout
-		
+
 		err = redis.Cache.Set(shortCtx, key, "timeout-value", time.Hour)
 		cancel()
-		
+
 		if err == nil {
 			t.Error("Expected timeout error, got nil")
 		}
@@ -549,7 +552,7 @@ func TestFailureScenarios(t *testing.T) {
 	t.Run("InvalidSerializationData", func(t *testing.T) {
 		// This test is harder to trigger with our current implementation
 		// but we can test with various data types that might cause issues
-		
+
 		problematicData := []struct {
 			name string
 			data any
@@ -561,12 +564,12 @@ func TestFailureScenarios(t *testing.T) {
 		for _, tc := range problematicData {
 			t.Run(tc.name, func(t *testing.T) {
 				key := fmt.Sprintf("%sinvalid-data:%s", testPrefix, tc.name)
-				
+
 				err := redis.Cache.Set(ctx, key, tc.data, time.Hour)
 				// We expect this to fail with serialization error
 				if err == nil {
 					t.Errorf("Expected serialization error for %s, got nil", tc.name)
-					
+
 					// If it somehow succeeded, try to get it back
 					_, found, err := redis.Cache.Get(ctx, key)
 					if err != nil {

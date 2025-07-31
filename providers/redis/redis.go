@@ -638,7 +638,8 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 				data, err := getCmd.Bytes()
 				originalKey := keyMap[metaKeys[i]]
 
-				if err == nil {
+				switch err {
+				case nil:
 					// Deserialize metadata
 					var meta metadataEntry
 					if err := json.Unmarshal(data, &meta); err == nil {
@@ -659,7 +660,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 							TTL:       ttls[originalKey],
 						}
 					}
-				} else if err == redis.Nil {
+				case redis.Nil:
 					// Key exists but metadata doesn't, return minimal metadata
 					results[originalKey] = &cache.CacheEntryMetadata{
 						Key:       originalKey,
@@ -875,7 +876,7 @@ func (c *redisCache) Increment(ctx context.Context, key string, delta int64, ttl
 		// This is likely a new key (first increment resulted in delta value)
 		// Set TTL on the key
 		c.client.Expire(ctx, formattedKey, ttl)
-		
+
 		// Store metadata for the new key
 		go c.storeMetadata(ctx, key, 8, ttl) // int64 is 8 bytes
 	}

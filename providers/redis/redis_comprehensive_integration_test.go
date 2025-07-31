@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package redis
 
 import (
@@ -21,7 +24,7 @@ func TestSessionManagementIntegration(t *testing.T) {
 			Security: &cache.SecurityConfig{
 				EnableTimingProtection: true,
 				MinProcessingTime:      5 * time.Millisecond,
-				SecureCleanup:         true,
+				SecureCleanup:          true,
 			},
 			Hooks: &cache.CacheHooks{
 				PreGet: func(ctx context.Context, key string) error {
@@ -195,7 +198,7 @@ func TestSessionManagementIntegration(t *testing.T) {
 
 			sessionMap := retrievedValue.(map[string]any)
 			if sessionMap["username"] != originalSession.Username {
-				t.Errorf("Session %s: expected username '%s', got '%v'", 
+				t.Errorf("Session %s: expected username '%s', got '%v'",
 					sessionID, originalSession.Username, sessionMap["username"])
 			}
 		}
@@ -281,9 +284,9 @@ func TestCacheProvidersIntegration(t *testing.T) {
 	t.Run("DataConsistencyAcrossProviders", func(t *testing.T) {
 		// Test data
 		testData := map[string]any{
-			fmt.Sprintf("%sstring", testPrefix):  "test-value",
-			fmt.Sprintf("%snumber", testPrefix):  42,
-			fmt.Sprintf("%sbool", testPrefix):    true,
+			fmt.Sprintf("%sstring", testPrefix): "test-value",
+			fmt.Sprintf("%snumber", testPrefix): 42,
+			fmt.Sprintf("%sbool", testPrefix):   true,
 			fmt.Sprintf("%scomplex", testPrefix): map[string]any{
 				"nested": map[string]any{
 					"value": "deeply-nested",
@@ -377,7 +380,7 @@ func TestConcurrentCacheOperations(t *testing.T) {
 				for j := 0; j < operationsPerGoroutine; j++ {
 					key := fmt.Sprintf("%swriter:%d:key:%d", testPrefix, workerID, j)
 					value := fmt.Sprintf("value-%d-%d", workerID, j)
-					
+
 					if err := redis.Cache.Set(ctx, key, value, time.Hour); err != nil {
 						errChan <- fmt.Errorf("writer %d: failed to set %s: %w", workerID, key, err)
 						return
@@ -395,7 +398,7 @@ func TestConcurrentCacheOperations(t *testing.T) {
 					// Try to read from various writers
 					writerID := j % (numGoroutines / 2)
 					key := fmt.Sprintf("%swriter:%d:key:%d", testPrefix, writerID, j)
-					
+
 					_, found, err := redis.Cache.Get(ctx, key)
 					if err != nil {
 						errChan <- fmt.Errorf("reader %d: failed to get %s: %w", workerID, key, err)
@@ -415,7 +418,7 @@ func TestConcurrentCacheOperations(t *testing.T) {
 			t.Error(err)
 		}
 
-		t.Logf("Completed %d concurrent operations across %d goroutines", 
+		t.Logf("Completed %d concurrent operations across %d goroutines",
 			numGoroutines*operationsPerGoroutine, numGoroutines)
 	})
 
@@ -503,7 +506,7 @@ func TestConcurrentCacheOperations(t *testing.T) {
 			default:
 				t.Fatalf("Unexpected counter type for counter %d: %T", i, finalValue)
 			}
-			
+
 			totalValue += counterValue
 		}
 
@@ -513,7 +516,7 @@ func TestConcurrentCacheOperations(t *testing.T) {
 			t.Errorf("Expected total counter value %d, got %d", expectedValue, totalValue)
 		}
 
-		t.Logf("Counter test passed: %d concurrent increments across %d counters resulted in total value %d", 
+		t.Logf("Counter test passed: %d concurrent increments across %d counters resulted in total value %d",
 			expectedValue, numGoroutines, totalValue)
 	})
 }
@@ -537,61 +540,61 @@ func TestErrorHandlingIntegration(t *testing.T) {
 
 	t.Run("ContextCancellation", func(t *testing.T) {
 		key := fmt.Sprintf("%scancel-test", testPrefix)
-		
+
 		// Create a context that will be cancelled
 		cancelCtx, cancel := context.WithCancel(ctx)
-		
+
 		// Cancel immediately
 		cancel()
-		
+
 		// Try to perform operations with cancelled context
 		err := redis.Cache.Set(cancelCtx, key, "value", time.Hour)
 		if err == nil {
 			t.Error("Expected error with cancelled context, got nil")
 		}
-		
+
 		_, _, err = redis.Cache.Get(cancelCtx, key)
 		if err == nil {
 			t.Error("Expected error with cancelled context, got nil")
 		}
-		
+
 		t.Logf("Context cancellation properly handled")
 	})
 
 	t.Run("TimeoutHandling", func(t *testing.T) {
 		key := fmt.Sprintf("%stimeout-test", testPrefix)
-		
+
 		// Create a context with very short timeout
 		timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Nanosecond)
 		defer cancel()
-		
+
 		// Wait to ensure timeout
 		time.Sleep(1 * time.Millisecond)
-		
+
 		// Try operations with timed-out context
 		err := redis.Cache.Set(timeoutCtx, key, "value", time.Hour)
 		if err == nil {
 			t.Error("Expected timeout error, got nil")
 		}
-		
+
 		t.Logf("Timeout handling working: %v", err)
 	})
 
 	t.Run("LargeDataHandling", func(t *testing.T) {
 		key := fmt.Sprintf("%slarge-data", testPrefix)
-		
+
 		// Create large data structure
 		largeData := make(map[string]string)
 		for i := 0; i < 1000; i++ {
 			largeData[fmt.Sprintf("key_%d", i)] = fmt.Sprintf("value_%d_with_some_longer_content_to_make_it_larger", i)
 		}
-		
+
 		// Store large data
 		err := redis.Cache.Set(ctx, key, largeData, time.Hour)
 		if err != nil {
 			t.Fatalf("Failed to store large data: %v", err)
 		}
-		
+
 		// Retrieve large data
 		retrievedValue, found, err := redis.Cache.Get(ctx, key)
 		if err != nil {
@@ -600,16 +603,16 @@ func TestErrorHandlingIntegration(t *testing.T) {
 		if !found {
 			t.Fatal("Large data should exist")
 		}
-		
+
 		retrievedMap, ok := retrievedValue.(map[string]any)
 		if !ok {
 			t.Fatalf("Expected map, got %T", retrievedValue)
 		}
-		
+
 		if len(retrievedMap) != len(largeData) {
 			t.Errorf("Expected %d items, got %d", len(largeData), len(retrievedMap))
 		}
-		
+
 		t.Logf("Successfully handled large data structure with %d items", len(largeData))
 	})
 }
@@ -634,13 +637,13 @@ func TestCacheWarmupAndPreloading(t *testing.T) {
 	t.Run("BulkDataPreloading", func(t *testing.T) {
 		// Simulate preloading common application data
 		preloadData := map[string]any{
-			fmt.Sprintf("%sconfig:app_name", testPrefix):      "My Application",
-			fmt.Sprintf("%sconfig:version", testPrefix):       "1.0.0",
-			fmt.Sprintf("%sconfig:features", testPrefix):      []string{"feature1", "feature2", "feature3"},
-			fmt.Sprintf("%sconfig:database_url", testPrefix):  "postgresql://localhost:5432/myapp",
-			fmt.Sprintf("%sconfig:cache_ttl", testPrefix):     3600,
-			fmt.Sprintf("%sconfig:max_users", testPrefix):     1000,
-			fmt.Sprintf("%sconfig:debug_mode", testPrefix):    false,
+			fmt.Sprintf("%sconfig:app_name", testPrefix):     "My Application",
+			fmt.Sprintf("%sconfig:version", testPrefix):      "1.0.0",
+			fmt.Sprintf("%sconfig:features", testPrefix):     []string{"feature1", "feature2", "feature3"},
+			fmt.Sprintf("%sconfig:database_url", testPrefix): "postgresql://localhost:5432/myapp",
+			fmt.Sprintf("%sconfig:cache_ttl", testPrefix):    3600,
+			fmt.Sprintf("%sconfig:max_users", testPrefix):    1000,
+			fmt.Sprintf("%sconfig:debug_mode", testPrefix):   false,
 		}
 
 		// Bulk preload using SetMany
@@ -724,7 +727,7 @@ func TestCacheWarmupAndPreloading(t *testing.T) {
 
 			profileMap := profile.(map[string]any)
 			if profileMap["username"] != user.username {
-				t.Errorf("User %s: expected username '%s', got '%v'", 
+				t.Errorf("User %s: expected username '%s', got '%v'",
 					user.id, user.username, profileMap["username"])
 			}
 		}
@@ -784,7 +787,7 @@ func TestFailoverAndResilience(t *testing.T) {
 
 	t.Run("ConnectionRecovery", func(t *testing.T) {
 		key := fmt.Sprintf("%srecovery-test", testPrefix)
-		
+
 		// Set initial value
 		err := redis.Cache.Set(ctx, key, "initial-value", time.Hour)
 		if err != nil {
@@ -802,25 +805,25 @@ func TestFailoverAndResilience(t *testing.T) {
 
 		// Note: In a real failover test, we would restart the Redis container here
 		// For this test, we'll just verify that the connection remains stable
-		
+
 		// Try multiple operations to ensure connection stability
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("%srecovery-%d", testPrefix, i)
 			testValue := fmt.Sprintf("recovery-value-%d", i)
-			
+
 			err := redis.Cache.Set(ctx, testKey, testValue, time.Hour)
 			if err != nil {
 				t.Errorf("Failed to set recovery key %d: %v", i, err)
 				continue
 			}
-			
+
 			retrievedValue, found, err := redis.Cache.Get(ctx, testKey)
 			if err != nil {
 				t.Errorf("Failed to get recovery key %d: %v", i, err)
 				continue
 			}
 			if !found || retrievedValue != testValue {
-				t.Errorf("Recovery key %d: expected %s, got %v (found: %v)", 
+				t.Errorf("Recovery key %d: expected %s, got %v (found: %v)",
 					i, testValue, retrievedValue, found)
 			}
 		}
@@ -895,7 +898,7 @@ func TestPerformanceUnderLoad(t *testing.T) {
 		close(errChan)
 
 		duration := time.Since(startTime)
-		
+
 		// Check for errors
 		errorCount := 0
 		for err := range errChan {
@@ -905,7 +908,7 @@ func TestPerformanceUnderLoad(t *testing.T) {
 
 		if errorCount == 0 {
 			opsPerSecond := float64(numOperations*2) / duration.Seconds() // *2 for set+get
-			t.Logf("High throughput test: %d operations in %v (%.2f ops/sec)", 
+			t.Logf("High throughput test: %d operations in %v (%.2f ops/sec)",
 				numOperations*2, duration, opsPerSecond)
 		}
 	})
@@ -913,7 +916,7 @@ func TestPerformanceUnderLoad(t *testing.T) {
 	t.Run("MemoryUsagePatterns", func(t *testing.T) {
 		// Test different payload sizes
 		payloadSizes := []int{100, 1000, 10000, 50000}
-		
+
 		for _, size := range payloadSizes {
 			t.Run(fmt.Sprintf("PayloadSize_%d", size), func(t *testing.T) {
 				// Create payload of specified size
@@ -923,11 +926,11 @@ func TestPerformanceUnderLoad(t *testing.T) {
 				}
 
 				key := fmt.Sprintf("%smemory:%d", testPrefix, size)
-				
+
 				start := time.Now()
 				err := redis.Cache.Set(ctx, key, payload, time.Hour)
 				setDuration := time.Since(start)
-				
+
 				if err != nil {
 					t.Fatalf("Failed to set payload size %d: %v", size, err)
 				}
@@ -935,7 +938,7 @@ func TestPerformanceUnderLoad(t *testing.T) {
 				start = time.Now()
 				retrievedValue, found, err := redis.Cache.Get(ctx, key)
 				getDuration := time.Since(start)
-				
+
 				if err != nil {
 					t.Fatalf("Failed to get payload size %d: %v", size, err)
 				}
@@ -949,7 +952,7 @@ func TestPerformanceUnderLoad(t *testing.T) {
 					t.Fatalf("Expected []byte, got %T", retrievedValue)
 				}
 				if len(retrievedBytes) != size {
-					t.Errorf("Payload size %d: expected length %d, got %d", 
+					t.Errorf("Payload size %d: expected length %d, got %d",
 						size, size, len(retrievedBytes))
 				}
 
@@ -979,7 +982,7 @@ func validateNestedMap(t *testing.T, keyPrefix string, expected, actual map[stri
 			if actualSlice, ok := actualValue.([]any); ok {
 				expectedSlice := expectedValue.([]any)
 				if len(actualSlice) != len(expectedSlice) {
-					t.Errorf("%s.%s: expected slice length %d, got %d", 
+					t.Errorf("%s.%s: expected slice length %d, got %d",
 						keyPrefix, key, len(expectedSlice), len(actualSlice))
 				}
 			} else {
