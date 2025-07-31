@@ -9,6 +9,15 @@
 *.dylib
 .DS_Store
 
+# Go binaries (executables without extensions)
+# Specific examples that have been built
+prometheus
+redis_msgpack_example
+simple
+
+# General pattern for Go executables in root
+/cmd/examples/*/main
+
 *.html
 *.json
 *.txt
