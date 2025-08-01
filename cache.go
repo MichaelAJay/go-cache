@@ -1,6 +1,7 @@
 package cache
 
 import (
+	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/interfaces"
 )
 
@@ -29,4 +30,16 @@ const (
 	CleanupExpired = interfaces.CleanupExpired
 	CleanupEvicted = interfaces.CleanupEvicted
 	CleanupManual  = interfaces.CleanupManual
+)
+
+// Re-export errors from errors package for backward compatibility
+var (
+	ErrKeyNotFound     = cacheErrors.ErrKeyNotFound
+	ErrInvalidTTL      = cacheErrors.ErrInvalidTTL
+	ErrSerialization   = cacheErrors.ErrSerialization
+	ErrDeserialization = cacheErrors.ErrDeserialization
+	ErrInvalidKey      = cacheErrors.ErrInvalidKey
+	ErrCacheFull       = cacheErrors.ErrCacheFull
+	ErrContextCanceled = cacheErrors.ErrContextCanceled
+	ErrInvalidValue    = cacheErrors.ErrInvalidValue
 )

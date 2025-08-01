@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
@@ -26,9 +27,9 @@ type memoryCache struct {
 	serializer serializer.Serializer
 
 	// Metrics - support both old and new systems
-	legacyMetrics   *cacheMetrics              // Legacy metrics for backward compatibility
+	legacyMetrics   *cacheMetrics                   // Legacy metrics for backward compatibility
 	enhancedMetrics interfaces.EnhancedCacheMetrics // New go-metrics based system
-	providerName    string                     // Provider name for metrics tagging
+	providerName    string                          // Provider name for metrics tagging
 
 	cleanupTicker   *time.Ticker
 	cleanupStopChan chan struct{}
@@ -161,12 +162,12 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 
 	// Validate key
 	if key == "" {
-		return nil, false, interfaces.ErrInvalidKey
+		return nil, false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, false, interfaces.ErrContextCanceled
+		return nil, false, cacheErrors.ErrContextCanceled
 	}
 
 	// Call PreGet hook
@@ -231,7 +232,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 						value = boolVal
 					} else {
 						// If all else fails, return error
-						return nil, false, interfaces.ErrDeserialization
+						return nil, false, cacheErrors.ErrDeserialization
 					}
 				}
 			}
@@ -279,13 +280,13 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 
 	// Validate key
 	if key == "" {
-		err = interfaces.ErrInvalidKey
+		err = cacheErrors.ErrInvalidKey
 		return err
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		err = interfaces.ErrContextCanceled
+		err = cacheErrors.ErrContextCanceled
 		return err
 	}
 
@@ -308,7 +309,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return interfaces.ErrSerialization
+		return cacheErrors.ErrSerialization
 	}
 
 	// Create the cache entry
@@ -329,7 +330,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 
 	// Check if cache is full (either by entry count or size)
 	if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
-		return interfaces.ErrCacheFull
+		return cacheErrors.ErrCacheFull
 	}
 
 	// Check if adding this entry would exceed max size
@@ -339,7 +340,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 			currentSize += e.size
 		}
 		if currentSize+entry.size > c.options.MaxSize {
-			return interfaces.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -363,12 +364,12 @@ func (c *memoryCache) Delete(ctx context.Context, key string) error {
 
 	// Validate key
 	if key == "" {
-		return interfaces.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -386,7 +387,7 @@ func (c *memoryCache) Delete(ctx context.Context, key string) error {
 func (c *memoryCache) Clear(ctx context.Context) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -480,7 +481,7 @@ func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]an
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, interfaces.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	start := time.Now()
@@ -544,7 +545,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	start := time.Now()
@@ -573,13 +574,13 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 	for key, value := range items {
 		// Validate key
 		if key == "" {
-			return interfaces.ErrInvalidKey
+			return cacheErrors.ErrInvalidKey
 		}
 
 		// Serialize value
 		data, err := c.serializer.Serialize(value)
 		if err != nil {
-			return interfaces.ErrSerialization
+			return cacheErrors.ErrSerialization
 		}
 
 		// Create entry
@@ -605,7 +606,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 	if c.options.MaxEntries > 0 {
 		availableSlots := c.options.MaxEntries - len(c.items)
 		if availableSlots < len(newEntries) {
-			return interfaces.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -616,7 +617,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 			currentSize += e.size
 		}
 		if currentSize+totalNewSize > c.options.MaxSize {
-			return interfaces.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -640,7 +641,7 @@ func (c *memoryCache) DeleteMany(ctx context.Context, keys []string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	start := time.Now()
@@ -669,17 +670,17 @@ func (c *memoryCache) DeleteMany(ctx context.Context, keys []string) error {
 func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
 	// Validate key
 	if key == "" {
-		return nil, interfaces.ErrInvalidKey
+		return nil, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, interfaces.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	// First check if the key exists
 	if !c.Has(ctx, key) {
-		return nil, interfaces.ErrKeyNotFound
+		return nil, cacheErrors.ErrKeyNotFound
 	}
 
 	c.mu.RLock()
@@ -715,7 +716,7 @@ func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[s
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, interfaces.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	result := make(map[string]*interfaces.CacheEntryMetadata)
@@ -887,12 +888,12 @@ func (c *memoryCache) getBaseTags() metric.Tags {
 func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
 	// Validate key
 	if key == "" {
-		return 0, interfaces.ErrInvalidKey
+		return 0, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return 0, interfaces.ErrContextCanceled
+		return 0, cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -924,7 +925,7 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 				// If can't deserialize as generic, try as int64
 				var intVal int64
 				if err := c.serializer.Deserialize(entry.value, &intVal); err != nil {
-					return 0, interfaces.ErrDeserialization
+					return 0, cacheErrors.ErrDeserialization
 				}
 				currentValue = intVal
 			} else {
@@ -941,7 +942,7 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 				case float32:
 					currentValue = int64(v)
 				default:
-					return 0, interfaces.ErrInvalidValue
+					return 0, cacheErrors.ErrInvalidValue
 				}
 			}
 		}
@@ -953,7 +954,7 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 	// Serialize new value
 	data, err := c.serializer.Serialize(newValue)
 	if err != nil {
-		return 0, interfaces.ErrSerialization
+		return 0, cacheErrors.ErrSerialization
 	}
 
 	// Create or update entry
@@ -992,12 +993,12 @@ func (c *memoryCache) Decrement(ctx context.Context, key string, delta int64, tt
 func (c *memoryCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	// Validate key
 	if key == "" {
-		return false, interfaces.ErrInvalidKey
+		return false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, interfaces.ErrContextCanceled
+		return false, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1025,12 +1026,12 @@ func (c *memoryCache) SetIfNotExists(ctx context.Context, key string, value any,
 func (c *memoryCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	// Validate key
 	if key == "" {
-		return false, interfaces.ErrInvalidKey
+		return false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, interfaces.ErrContextCanceled
+		return false, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1067,7 +1068,7 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return interfaces.ErrSerialization
+		return cacheErrors.ErrSerialization
 	}
 
 	// Create the cache entry
@@ -1084,7 +1085,7 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 
 	// Check cache limits
 	if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
-		return interfaces.ErrCacheFull
+		return cacheErrors.ErrCacheFull
 	}
 
 	if c.options.MaxSize > 0 {
@@ -1093,7 +1094,7 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 			currentSize += e.size
 		}
 		if currentSize+entry.size > c.options.MaxSize {
-			return interfaces.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -1109,7 +1110,7 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1151,7 +1152,7 @@ func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern
 func (c *memoryCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1190,7 +1191,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, interfaces.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.RLock()
@@ -1221,7 +1222,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Get the keys first
@@ -1249,7 +1250,7 @@ func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, index
 func (c *memoryCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, interfaces.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.RLock()
@@ -1276,7 +1277,7 @@ func (c *memoryCache) GetKeysByPattern(ctx context.Context, pattern string) ([]s
 func (c *memoryCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return 0, interfaces.ErrContextCanceled
+		return 0, cacheErrors.ErrContextCanceled
 	}
 
 	// Get matching keys first
@@ -1308,12 +1309,12 @@ func (c *memoryCache) DeleteByPattern(ctx context.Context, pattern string) (int,
 func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater interfaces.MetadataUpdater) error {
 	// Validate key
 	if key == "" {
-		return interfaces.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return interfaces.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1321,7 +1322,7 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater in
 
 	entry, exists := c.items[key]
 	if !exists {
-		return interfaces.ErrKeyNotFound
+		return cacheErrors.ErrKeyNotFound
 	}
 
 	// Check if entry has expired
@@ -1329,7 +1330,7 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater in
 	if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
 		delete(c.items, key)
 		c.removeFromAllIndexes(key)
-		return interfaces.ErrKeyNotFound
+		return cacheErrors.ErrKeyNotFound
 	}
 
 	// Create current metadata
@@ -1375,12 +1376,12 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater in
 func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater interfaces.ValueUpdater, ttl time.Duration) (any, error) {
 	// Validate key
 	if key == "" {
-		return nil, interfaces.ErrInvalidKey
+		return nil, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, interfaces.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1399,7 +1400,7 @@ func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater inte
 		} else {
 			// Deserialize current value
 			if err := c.serializer.Deserialize(entry.value, &currentValue); err != nil {
-				return nil, interfaces.ErrDeserialization
+				return nil, cacheErrors.ErrDeserialization
 			}
 		}
 	}
