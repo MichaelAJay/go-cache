@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/MichaelAJay/go-metrics/metric"
-	"github.com/MichaelAJay/go-logger"
-	"github.com/MichaelAJay/go-serializer"
 	"github.com/MichaelAJay/go-cache/metrics"
+	"github.com/MichaelAJay/go-logger"
+	"github.com/MichaelAJay/go-metrics/metric"
+	"github.com/MichaelAJay/go-serializer"
 )
 
 // CacheOption defines a function type for configuring cache options
@@ -54,7 +54,6 @@ func WithMaxSize(maxSize int64) CacheOption {
 		o.MaxSize = maxSize
 	}
 }
-
 
 // WithGoMetricsRegistry sets the go-metrics registry for comprehensive metrics
 func WithGoMetricsRegistry(registry metric.Registry) CacheOption {
@@ -177,7 +176,6 @@ func WithMetricsPrefix(prefix string) CacheOption {
 	}
 }
 
-
 // Configuration structs
 
 // SecurityConfig defines security settings for cache operations
@@ -200,9 +198,9 @@ type CacheHooks struct {
 
 // CleanupConfig defines enhanced cleanup configuration
 type CleanupConfig struct {
-	Interval          time.Duration                                     // Cleanup interval
-	BatchSize         int                                               // Maximum number of entries to clean per batch
-	MaxCleanupTime    time.Duration                                     // Maximum time to spend on cleanup per cycle
+	Interval          time.Duration                                    // Cleanup interval
+	BatchSize         int                                              // Maximum number of entries to clean per batch
+	MaxCleanupTime    time.Duration                                    // Maximum time to spend on cleanup per cycle
 	CustomCleanupFunc func(key string, entry *CacheEntryMetadata) bool // Custom cleanup logic
 }
 
@@ -223,19 +221,19 @@ type CacheOptions struct {
 	Logger           logger.Logger
 	RedisOptions     *RedisOptions
 	SerializerFormat serializer.Format // Format to use for serialization
-	
+
 	// go-metrics integration
-	GoMetricsRegistry  metric.Registry      // go-metrics registry for comprehensive metrics
-	MetricsEnabled     bool                 // Enable/disable metrics collection
-	GlobalMetricsTags  metric.Tags          // Global tags applied to all metrics
-	EnhancedMetrics    EnhancedCacheMetrics // Enhanced metrics implementation using go-metrics
+	GoMetricsRegistry metric.Registry      // go-metrics registry for comprehensive metrics
+	MetricsEnabled    bool                 // Enable/disable metrics collection
+	GlobalMetricsTags metric.Tags          // Global tags applied to all metrics
+	EnhancedMetrics   EnhancedCacheMetrics // Enhanced metrics implementation using go-metrics
 
 	// Enhanced configuration options
-	Security        *SecurityConfig           // Security configuration
-	Hooks           *CacheHooks               // Lifecycle hooks
-	Indexes         map[string]string         // indexName -> keyPattern for secondary indexes
-	CleanupConfig   *CleanupConfig            // Enhanced cleanup configuration
-	MetricsConfig   *MetricsConfig            // Enhanced metrics configuration
+	Security      *SecurityConfig   // Security configuration
+	Hooks         *CacheHooks       // Lifecycle hooks
+	Indexes       map[string]string // indexName -> keyPattern for secondary indexes
+	CleanupConfig *CleanupConfig    // Enhanced cleanup configuration
+	MetricsConfig *MetricsConfig    // Enhanced metrics configuration
 }
 
 // RedisOptions represents configuration options for Redis cache
