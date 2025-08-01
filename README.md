@@ -5,6 +5,7 @@ A pluggable, high-performance caching abstraction for Go applications that provi
 ## Features
 
 ### Core Features
+
 - **Provider Abstraction**: Unified interface supporting memory, Redis, and extensible to other providers
 - **Thread-Safe Operations**: All providers designed for high-concurrency usage
 - **Context-Aware Operations**: Full context support for cancellation and timeouts
@@ -12,6 +13,7 @@ A pluggable, high-performance caching abstraction for Go applications that provi
 - **Bulk Operations**: Efficient batch get/set/delete operations
 
 ### Advanced Features
+
 - **Secondary Indexing**: Support for complex queries beyond simple key-value operations
 - **Atomic Operations**: Increment/decrement with conditional set operations
 - **Pattern Operations**: Get/delete by key patterns with wildcard support
@@ -19,6 +21,7 @@ A pluggable, high-performance caching abstraction for Go applications that provi
 - **Cache Entry Lifecycle**: Update hooks and value transformation capabilities
 
 ### Security & Observability
+
 - **Security-First Design**: Timing attack protection and secure cleanup
 - **Comprehensive Metrics**: Detailed performance monitoring with Prometheus integration
 - **Enhanced Logging**: Structured logging with operation tracing
@@ -40,7 +43,6 @@ import (
     "time"
 
     "github.com/MichaelAJay/go-cache"
-    "github.com/MichaelAJay/go-cache/internal/providers/memory"
 )
 
 func main() {
@@ -48,7 +50,7 @@ func main() {
     manager := cache.NewCacheManager()
 
     // Register the memory cache provider
-    manager.RegisterProvider("memory", memory.NewProvider())
+    manager.RegisterProvider("memory", cache.NewMemoryProvider())
 
     // Create a cache instance
     myCache, err := manager.GetCache("memory",
@@ -63,24 +65,24 @@ func main() {
 
     // Basic operations
     ctx := context.Background()
-    
+
     // Set with custom TTL
     err = myCache.Set(ctx, "user:123", map[string]string{"name": "John"}, time.Hour)
-    
+
     // Get value
     value, exists, err := myCache.Get(ctx, "user:123")
     if exists {
         user := value.(map[string]string)
         fmt.Printf("User: %s\n", user["name"])
     }
-    
+
     // Bulk operations
     items := map[string]any{
         "session:1": "token1",
-        "session:2": "token2", 
+        "session:2": "token2",
     }
     err = myCache.SetMany(ctx, items, time.Hour)
-    
+
     // Secondary indexing for complex queries
     err = myCache.AddIndex(ctx, "sessions_by_user", "session:*", "user:123")
     sessionKeys, err := myCache.GetByIndex(ctx, "sessions_by_user", "user:123")
@@ -94,10 +96,10 @@ func main() {
 The memory cache provider uses an in-memory map with advanced features like secondary indexing and efficient cleanup. Ideal for single-instance applications requiring high performance.
 
 ```go
-import "github.com/MichaelAJay/go-cache/internal/providers/memory"
+import "github.com/MichaelAJay/go-cache"
 
 // Register memory provider
-manager.RegisterProvider("memory", memory.NewProvider())
+manager.RegisterProvider("memory", cache.NewMemoryProvider())
 
 // Create with advanced options
 memCache, err := manager.GetCache("memory",
@@ -112,8 +114,9 @@ memCache, err := manager.GetCache("memory",
 ```
 
 **Features:**
+
 - Secondary indexing for complex queries
-- Automatic cleanup with configurable intervals  
+- Automatic cleanup with configurable intervals
 - Memory-efficient storage with metadata tracking
 - Thread-safe concurrent operations
 
@@ -122,10 +125,10 @@ memCache, err := manager.GetCache("memory",
 The Redis cache provider offers distributed caching with persistence, clustering, and Lua script support. Perfect for multi-instance distributed applications.
 
 ```go
-import "github.com/MichaelAJay/go-cache/internal/providers/redis"
+import "github.com/MichaelAJay/go-cache"
 
 // Register Redis provider
-manager.RegisterProvider("redis", redis.NewProvider())
+manager.RegisterProvider("redis", cache.NewRedisProvider())
 
 // Create with comprehensive options
 redisCache, err := manager.GetCache("redis",
@@ -143,32 +146,37 @@ redisCache, err := manager.GetCache("redis",
 ```
 
 **Features:**
+
 - Full Redis feature support (clustering, persistence, pub/sub)
 - Connection pooling with automatic failover
 - Lua script execution for atomic operations
 - Multiple serialization formats (JSON, MessagePack, Gob)
 - Pipeline operations for batch processing
 
-See the [Redis Provider README](internal/providers/redis/README.md) for detailed examples and advanced configuration.
+See the [Redis Provider Documentation](https://godoc.org/github.com/MichaelAJay/go-cache#RedisProvider) for detailed examples and advanced configuration.
 
 ## Configuration Options
 
 ### Core Options
+
 - `WithTTL(duration)`: Set default TTL for cache entries
 - `WithMaxEntries(int)`: Maximum entries (memory cache)
 - `WithCleanupInterval(duration)`: Cleanup interval for expired entries
 - `WithLogger(logger)`: Custom logger instance
 - `WithMetrics(metrics)`: Custom metrics collector
 
-### Provider-Specific Options  
+### Provider-Specific Options
+
 - `WithRedisOptions(*RedisOptions)`: Redis connection and pool settings
 
 ### Security & Advanced Options
+
 - `WithSecurityConfig(*SecurityConfig)`: Enable timing protection and secure cleanup
 - `WithHooks(*CacheHooks)`: Pre/post operation hooks for validation
 - `WithIndexes(map[string]string)`: Pre-configure secondary indexes
 
 ### Metrics & Observability Options
+
 - `WithGoMetricsRegistry(gometrics.Registry)`: Set go-metrics registry for comprehensive metrics
 - `WithMetricsEnabled(bool)`: Enable/disable metrics collection
 - `WithGlobalMetricsTags(gometrics.Tags)`: Global tags applied to all metrics
@@ -194,20 +202,20 @@ cache, err := manager.GetCache("sessions",
     cache.WithTTL(24*time.Hour),
     cache.WithMaxEntries(100000),
     cache.WithCleanupInterval(10*time.Minute),
-    
+
     // Security
     cache.WithSecurityConfig(&cache.SecurityConfig{
         EnableTimingProtection: true,
         MinProcessingTime:      5*time.Millisecond,
         SecureCleanup:         true,
     }),
-    
+
     // Pre-configure indexes
     cache.WithIndexes(map[string]string{
         "sessions_by_user": "session:*",
         "admin_sessions":   "admin:*",
     }),
-    
+
     // Comprehensive metrics configuration
     cache.WithGoMetricsRegistry(registry),
     cache.WithGlobalMetricsTags(gometrics.Tags{
@@ -309,8 +317,8 @@ type SessionManager struct {
 
 func NewSessionManager() *SessionManager {
     manager := cache.NewCacheManager()
-    manager.RegisterProvider("redis", redis.NewProvider())
-    
+    manager.RegisterProvider("redis", cache.NewRedisProvider())
+
     sessionCache, _ := manager.GetCache("redis",
         cache.WithTTL(24*time.Hour),
         cache.WithRedisOptions(&cache.RedisOptions{
@@ -322,26 +330,26 @@ func NewSessionManager() *SessionManager {
             SecureCleanup:         true,
         }),
     )
-    
+
     return &SessionManager{cache: sessionCache}
 }
 
 func (sm *SessionManager) CreateSession(ctx context.Context, userID string, data map[string]any) (string, error) {
     sessionID := generateSessionID()
     sessionKey := fmt.Sprintf("session:%s", sessionID)
-    
+
     // Store session data
     err := sm.cache.Set(ctx, sessionKey, data, 0) // Use default TTL
     if err != nil {
         return "", err
     }
-    
+
     // Add to user index for efficient "get all user sessions" queries
     err = sm.cache.AddIndex(ctx, "sessions_by_user", "session:*", userID)
     if err != nil {
         return "", err
     }
-    
+
     return sessionID, nil
 }
 
@@ -351,18 +359,18 @@ func (sm *SessionManager) GetUserSessions(ctx context.Context, userID string) ([
     if err != nil {
         return nil, err
     }
-    
+
     // Bulk fetch session data
     sessions, err := sm.cache.GetMany(ctx, sessionKeys)
     if err != nil {
         return nil, err
     }
-    
+
     var result []map[string]any
     for _, session := range sessions {
         result = append(result, session.(map[string]any))
     }
-    
+
     return result, nil
 }
 
@@ -379,7 +387,7 @@ func (sm *SessionManager) InvalidateUserSessions(ctx context.Context, userID str
 This cache module is designed as the foundational storage layer for the [go-auth](https://github.com/MichaelAJay/go-auth) authentication system:
 
 - **Session Storage**: Primary storage for authentication sessions
-- **User Indexing**: Efficient user-to-sessions mapping via secondary indexes  
+- **User Indexing**: Efficient user-to-sessions mapping via secondary indexes
 - **Security Features**: Timing attack protection for session validation
 - **Automatic Cleanup**: TTL-based session expiration with secure memory cleanup
 - **Observability**: Comprehensive metrics for session management operations
