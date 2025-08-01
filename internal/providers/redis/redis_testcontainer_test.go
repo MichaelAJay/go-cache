@@ -1,4 +1,4 @@
-package redis
+package redis_test
 
 import (
 	"context"
@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/internal/providers/redis"
 	"github.com/MichaelAJay/go-serializer"
 )
 
 // TestRedis8BasicOperations tests basic CRUD operations with Redis 8.0
 func TestRedis8BasicOperations(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -154,7 +155,7 @@ func TestRedis8BasicOperations(t *testing.T) {
 
 		for originalKey, originalValue := range items {
 			if results[originalKey] != originalValue {
-				t.Errorf("Wrong value for %s: expected %v, got %v", 
+				t.Errorf("Wrong value for %s: expected %v, got %v",
 					originalKey, originalValue, results[originalKey])
 			}
 		}
@@ -178,9 +179,9 @@ func TestRedis8BasicOperations(t *testing.T) {
 
 // TestRedis8EnhancedFeatures tests the enhanced cache features with Redis 8.0
 func TestRedis8EnhancedFeatures(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 			// Enhanced features from Phase 1
@@ -214,7 +215,7 @@ func TestRedis8EnhancedFeatures(t *testing.T) {
 		// Set session data
 		sessionKeys := []string{
 			testPrefix + "session:123",
-			testPrefix + "session:456", 
+			testPrefix + "session:456",
 			testPrefix + "session:789",
 		}
 
@@ -233,7 +234,7 @@ func TestRedis8EnhancedFeatures(t *testing.T) {
 		}
 
 		// Query by index - this should return all session keys matching the pattern
-		keys, err := redis.Cache.GetByIndex(ctx, "sessions_by_user", "user1") 
+		keys, err := redis.Cache.GetByIndex(ctx, "sessions_by_user", "user1")
 		if err != nil {
 			t.Fatalf("GetByIndex failed: %v", err)
 		}
@@ -252,7 +253,7 @@ func TestRedis8EnhancedFeatures(t *testing.T) {
 		pattern := testPrefix + "pattern:*"
 		patternKeys := []string{
 			testPrefix + "pattern:1",
-			testPrefix + "pattern:2", 
+			testPrefix + "pattern:2",
 			testPrefix + "pattern:3",
 		}
 
@@ -379,13 +380,13 @@ func TestRedis8EnhancedFeatures(t *testing.T) {
 
 // TestRedisVersionCompatibility tests compatibility across Redis versions
 func TestRedisVersionCompatibility(t *testing.T) {
-	for _, version := range SupportedRedisVersions {
+	for _, version := range redis.SupportedRedisVersions {
 		t.Run(fmt.Sprintf("Redis-%s", strings.ReplaceAll(version, ":", "-")), func(t *testing.T) {
 			t.Parallel()
 
-			redis, err := NewRedisTestContainer(t,
-				WithRedisVersion(version),
-				WithCacheOptions(&cache.CacheOptions{
+			redis, err := redis.NewRedisTestContainer(t,
+				redis.WithRedisVersion(version),
+				redis.WithCacheOptions(&cache.CacheOptions{
 					TTL:              time.Hour,
 					SerializerFormat: serializer.Msgpack,
 				}),
@@ -416,7 +417,7 @@ func TestRedisVersionCompatibility(t *testing.T) {
 			}
 
 			if !found || result != value {
-				t.Errorf("Redis %s compatibility test failed: expected '%s', got '%v' (found: %v)", 
+				t.Errorf("Redis %s compatibility test failed: expected '%s', got '%v' (found: %v)",
 					version, value, result, found)
 			}
 
@@ -429,36 +430,36 @@ func TestRedisVersionCompatibility(t *testing.T) {
 func TestRedisContainerTLS(t *testing.T) {
 	t.Skip("TLS testing requires Redis TLS configuration - implement when needed")
 
-	/* 
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithTLS(),
-		WithLogLevel(redis.LogLevelDebug),
-	)
-	if err != nil {
-		t.Fatalf("Failed to start Redis TLS container: %v", err)
-	}
-	defer redis.Cleanup()
+	/*
+		redis, err := NewRedisTestContainer(t,
+			WithRedisVersion("redis:8.0"),
+			WithTLS(),
+			WithLogLevel(redis.LogLevelDebug),
+		)
+		if err != nil {
+			t.Fatalf("Failed to start Redis TLS container: %v", err)
+		}
+		defer redis.Cleanup()
 
-	// Verify TLS configuration
-	tlsConfig := redis.GetTLSConfig()
-	if tlsConfig == nil {
-		t.Fatal("Expected TLS configuration")
-	}
+		// Verify TLS configuration
+		tlsConfig := redis.GetTLSConfig()
+		if tlsConfig == nil {
+			t.Fatal("Expected TLS configuration")
+		}
 
-	// Test secure operations
-	ctx := context.Background()
-	err = redis.Cache.Set(ctx, "secure-key", "secure-value", time.Minute)
-	if err != nil {
-		t.Fatalf("TLS Set operation failed: %v", err)
-	}
+		// Test secure operations
+		ctx := context.Background()
+		err = redis.Cache.Set(ctx, "secure-key", "secure-value", time.Minute)
+		if err != nil {
+			t.Fatalf("TLS Set operation failed: %v", err)
+		}
 
-	value, found, err := redis.Cache.Get(ctx, "secure-key")
-	if err != nil {
-		t.Fatalf("TLS Get operation failed: %v", err)
-	}
-	if !found || value != "secure-value" {
-		t.Errorf("TLS operation data integrity failed")
-	}
+		value, found, err := redis.Cache.Get(ctx, "secure-key")
+		if err != nil {
+			t.Fatalf("TLS Get operation failed: %v", err)
+		}
+		if !found || value != "secure-value" {
+			t.Errorf("TLS operation data integrity failed")
+		}
 	*/
 }

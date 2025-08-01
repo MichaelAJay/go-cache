@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package redis
+package redis_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/internal/providers/redis"
 	"github.com/MichaelAJay/go-serializer"
 )
 
@@ -22,9 +23,9 @@ func TestCacheStressScenarios(t *testing.T) {
 		t.Skip("Skipping stress tests in short mode")
 	}
 
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -254,9 +255,9 @@ func TestCacheStressScenarios(t *testing.T) {
 
 // TestCacheEdgeCases tests unusual and edge case scenarios
 func TestCacheEdgeCases(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -499,9 +500,9 @@ func TestCacheEdgeCases(t *testing.T) {
 
 // TestFailureScenarios tests behavior under various failure conditions
 func TestFailureScenarios(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),

@@ -1,20 +1,21 @@
-package redis
+package redis_test
 
 import (
 	"context"
-	"fmt"  
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/internal/providers/redis"
 	"github.com/MichaelAJay/go-serializer"
 )
 
 // BenchmarkRedis8Operations benchmarks Redis 8.0 operations
 func BenchmarkRedis8Operations(b *testing.B) {
-	redis, err := NewRedisTestContainer(&testing.T{},
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(&testing.T{},
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -110,12 +111,12 @@ func BenchmarkRedis8Operations(b *testing.B) {
 // BenchmarkRedisVersionComparison compares performance across Redis versions
 func BenchmarkRedisVersionComparison(b *testing.B) {
 	versions := []string{"redis:7.2", "redis:8.0"}
-	
+
 	for _, version := range versions {
 		b.Run(fmt.Sprintf("Redis-%s", version), func(b *testing.B) {
-			redis, err := NewRedisTestContainer(&testing.T{},
-				WithRedisVersion(version),
-				WithCacheOptions(&cache.CacheOptions{
+			redis, err := redis.NewRedisTestContainer(&testing.T{},
+				redis.WithRedisVersion(version),
+				redis.WithCacheOptions(&cache.CacheOptions{
 					TTL:              time.Hour,
 					SerializerFormat: serializer.Msgpack,
 				}),
@@ -132,13 +133,13 @@ func BenchmarkRedisVersionComparison(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					key := fmt.Sprintf("%ssetget:%d", testPrefix, i)
-					
+
 					// Set
 					err := redis.Cache.Set(ctx, key, "benchmark-value", time.Hour)
 					if err != nil {
 						b.Fatalf("Set failed: %v", err)
 					}
-					
+
 					// Get
 					_, _, err = redis.Cache.Get(ctx, key)
 					if err != nil {
@@ -152,9 +153,9 @@ func BenchmarkRedisVersionComparison(b *testing.B) {
 
 // BenchmarkRedisMemoryUsage benchmarks memory usage patterns
 func BenchmarkRedisMemoryUsage(b *testing.B) {
-	redis, err := NewRedisTestContainer(&testing.T{},
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(&testing.T{},
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -169,7 +170,7 @@ func BenchmarkRedisMemoryUsage(b *testing.B) {
 
 	// Test different data sizes
 	dataSizes := []int{100, 1000, 10000, 100000}
-	
+
 	for _, size := range dataSizes {
 		b.Run(fmt.Sprintf("DataSize-%d", size), func(b *testing.B) {
 			// Create test data of specified size
@@ -180,7 +181,7 @@ func BenchmarkRedisMemoryUsage(b *testing.B) {
 
 			b.ResetTimer()
 			b.ReportAllocs()
-			
+
 			for i := 0; i < b.N; i++ {
 				key := fmt.Sprintf("%smem:%d:%d", testPrefix, size, i)
 				err := redis.Cache.Set(ctx, key, data, time.Hour)

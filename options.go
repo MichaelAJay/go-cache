@@ -1,11 +1,7 @@
 package cache
 
 import (
-	"time"
-
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/MichaelAJay/go-logger"
-	"github.com/MichaelAJay/go-metrics/metric"
 )
 
 // Re-export types from interfaces package for backward compatibility

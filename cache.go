@@ -1,11 +1,7 @@
 package cache
 
 import (
-	"context"
-	"time"
-
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 // Re-export types from interfaces package for backward compatibility
@@ -34,5 +30,3 @@ const (
 	CleanupEvicted = interfaces.CleanupEvicted
 	CleanupManual  = interfaces.CleanupManual
 )
-
-
