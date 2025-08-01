@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-metrics/metric"
-	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
 )
 
 // nullCache implements the Cache interface but doesn't store anything
 // Useful for testing or when you want to disable caching
 type nullCache struct {
-	enhancedMetrics cache.EnhancedCacheMetrics
+	enhancedMetrics interfaces.EnhancedCacheMetrics
 	providerName    string
 	legacyMetrics   *cacheMetrics
 }
@@ -34,16 +34,16 @@ type NullCache struct {
 }
 
 // NewNullCache creates a new null cache instance
-func NewNullCache(options *cache.CacheOptions) cache.Cache {
+func NewNullCache(options *interfaces.CacheOptions) interfaces.Cache {
 	// Initialize metrics systems
 	if options == nil {
-		options = &cache.CacheOptions{}
+		options = &interfaces.CacheOptions{}
 	}
 	
 	legacyMetrics := &cacheMetrics{}
 	
 	// Determine which metrics system to use
-	var enhancedMetrics cache.EnhancedCacheMetrics
+	var enhancedMetrics interfaces.EnhancedCacheMetrics
 	if options.EnhancedMetrics != nil {
 		enhancedMetrics = options.EnhancedMetrics
 	} else if options.GoMetricsRegistry != nil {
@@ -131,13 +131,13 @@ func (c *nullCache) DeleteMany(ctx context.Context, keys []string) error {
 }
 
 // GetMetadata returns nil
-func (c *nullCache) GetMetadata(ctx context.Context, key string) (*cache.CacheEntryMetadata, error) {
-	return nil, cache.ErrKeyNotFound
+func (c *nullCache) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
+	return nil, interfaces.ErrKeyNotFound
 }
 
 // GetManyMetadata returns empty map
-func (c *nullCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error) {
-	return map[string]*cache.CacheEntryMetadata{}, nil
+func (c *nullCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*interfaces.CacheEntryMetadata, error) {
+	return map[string]*interfaces.CacheEntryMetadata{}, nil
 }
 
 // Increment does nothing
@@ -191,13 +191,13 @@ func (c *nullCache) DeleteByPattern(ctx context.Context, pattern string) (int, e
 }
 
 // UpdateMetadata does nothing
-func (c *nullCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
-	return cache.ErrKeyNotFound
+func (c *nullCache) UpdateMetadata(ctx context.Context, key string, updater interfaces.MetadataUpdater) error {
+	return interfaces.ErrKeyNotFound
 }
 
 // GetAndUpdate does nothing
-func (c *nullCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
-	return nil, cache.ErrKeyNotFound
+func (c *nullCache) GetAndUpdate(ctx context.Context, key string, updater interfaces.ValueUpdater, ttl time.Duration) (any, error) {
+	return nil, interfaces.ErrKeyNotFound
 }
 
 // Metrics recording functions

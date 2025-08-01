@@ -11,7 +11,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
-	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-serializer"
 )
 
@@ -29,7 +29,7 @@ var SupportedRedisVersions = []string{
 type RedisTestContainer struct {
 	Container *tcredis.RedisContainer
 	Client    *goredis.Client
-	Cache     cache.Cache
+	Cache     interfaces.Cache
 	t         *testing.T
 	cleanup   func()
 }
@@ -37,7 +37,7 @@ type RedisTestContainer struct {
 // RedisContainerConfig holds configuration for Redis test container
 type RedisContainerConfig struct {
 	RedisVersion   string
-	CacheOptions   *cache.CacheOptions
+	CacheOptions   *interfaces.CacheOptions
 	ContainerOpts  []testcontainers.ContainerCustomizer
 	EnableTLS      bool
 	LogLevel       tcredis.LogLevel
@@ -62,7 +62,7 @@ func WithRedisVersion(version string) RedisContainerOption {
 }
 
 // WithCacheOptions sets the cache configuration options
-func WithCacheOptions(opts *cache.CacheOptions) RedisContainerOption {
+func WithCacheOptions(opts *interfaces.CacheOptions) RedisContainerOption {
 	return func(config *RedisContainerConfig) {
 		config.CacheOptions = opts
 	}
@@ -113,7 +113,7 @@ func NewRedisTestContainer(t *testing.T, opts ...RedisContainerOption) (*RedisTe
 	// Default configuration
 	config := &RedisContainerConfig{
 		RedisVersion: DefaultRedisVersion,
-		CacheOptions: &cache.CacheOptions{
+		CacheOptions: &interfaces.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		},

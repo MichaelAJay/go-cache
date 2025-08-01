@@ -3,7 +3,7 @@ package redis
 import (
 	"errors"
 
-	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -15,12 +15,12 @@ var RedisClientFactory = redis.NewClient
 type redisProvider struct{}
 
 // NewProvider creates a new Redis cache provider
-func NewProvider() cache.CacheProvider {
+func NewProvider() interfaces.CacheProvider {
 	return &redisProvider{}
 }
 
 // Create creates a new Redis cache instance
-func (p *redisProvider) Create(options *cache.CacheOptions) (cache.Cache, error) {
+func (p *redisProvider) Create(options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	if options == nil {
 		return nil, errors.New("cache options cannot be nil")
 	}

@@ -4,7 +4,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
 )
 
 // Default configuration values
@@ -25,8 +25,8 @@ const (
 
 // LoadRedisOptionsFromEnv creates a RedisOptions struct with values from environment variables
 // If environment variables are not set, default values are used
-func LoadRedisOptionsFromEnv() *cache.RedisOptions {
-	options := &cache.RedisOptions{
+func LoadRedisOptionsFromEnv() *interfaces.RedisOptions {
+	options := &interfaces.RedisOptions{
 		Address:  getEnvString(envRedisAddr, defaultRedisAddr),
 		Password: getEnvString(envRedisPassword, defaultRedisPassword),
 		DB:       getEnvInt(envRedisDB, defaultRedisDB),
