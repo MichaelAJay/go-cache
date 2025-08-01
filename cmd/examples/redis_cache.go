@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/internal/providers/redis"
 	"github.com/MichaelAJay/go-logger"
 )
 
@@ -28,7 +27,7 @@ func main() {
 // explicitConfig demonstrates using the Redis cache with explicit configuration
 func explicitConfig(ctx context.Context, log logger.Logger) {
 	// Create Redis provider
-	provider := redis.NewProvider()
+	provider := cache.NewRedisProvider()
 
 	// Configure cache with explicit Redis options
 	cacheOptions := &cache.CacheOptions{
@@ -58,7 +57,7 @@ func explicitConfig(ctx context.Context, log logger.Logger) {
 // envConfig demonstrates using the Redis cache with environment-based configuration
 func envConfig(ctx context.Context, log logger.Logger) {
 	// Create Redis provider
-	provider := redis.NewProvider()
+	provider := cache.NewRedisProvider()
 
 	// Configure cache without specifying Redis options (will use environment variables)
 	cacheOptions := &cache.CacheOptions{
