@@ -14,12 +14,18 @@ var RedisClientFactory = redis.NewClient
 // redisProvider implements the CacheProvider interface
 type redisProvider struct{}
 
-// NewProvider creates a new Redis cache provider
+// NewProvider creates a new Redis cache provider instance.
+// This provider offers distributed caching with Redis backend,
+// supporting atomic operations, pipelines, and connection pooling.
 func NewProvider() interfaces.CacheProvider {
 	return &redisProvider{}
 }
 
-// Create creates a new Redis cache instance
+// Create creates a new Redis cache instance with the provided options.
+// Requires CacheOptions with RedisOptions configured. If RedisOptions
+// is nil, attempts to load configuration from environment variables.
+// Returns an error if Redis connection cannot be established or
+// configuration is invalid.
 func (p *redisProvider) Create(options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	if options == nil {
 		return nil, errors.New("cache options cannot be nil")

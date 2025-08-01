@@ -27,7 +27,10 @@ type cacheManager struct {
 	mu        sync.RWMutex
 }
 
-// NewCacheManager creates a new cache manager instance
+// NewCacheManager creates a new cache manager instance.
+// The cache manager provides centralized management of multiple cache instances,
+// supporting different providers (memory, Redis) and configurations.
+// It handles provider registration, cache lifecycle, and resource cleanup.
 func NewCacheManager() CacheManager {
 	return &cacheManager{
 		providers: make(map[string]CacheProvider),

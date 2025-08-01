@@ -69,7 +69,25 @@ type MemoryCache struct {
 	*memoryCache
 }
 
-// NewMemoryCache creates a new memory cache instance
+// NewMemoryCache creates a new memory cache instance with the provided options.
+//
+// Initialization Process:
+// 1. Validates and applies configuration options (uses defaults if nil)
+// 2. Selects serialization format (defaults to Binary/Gob for memory performance)
+// 3. Initializes metrics systems (legacy and enhanced metrics support)
+// 4. Sets up secondary indexes from configuration
+// 5. Starts cleanup goroutine if cleanup interval is configured
+//
+// Features Initialized:
+// - Thread-safe map-based storage with RWMutex
+// - Configurable serialization (Binary, JSON, MessagePack)
+// - Automatic expiration and cleanup
+// - Secondary indexing for complex queries
+// - Comprehensive metrics and observability
+// - Security features (timing protection, secure cleanup)
+// - Lifecycle hooks for operation interception
+//
+// Returns an error if serialization setup fails or other initialization issues occur.
 func NewMemoryCache(options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	if options == nil {
 		options = &interfaces.CacheOptions{}
@@ -203,10 +221,26 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 		return nil, false, nil
 	}
 
-	// Deserialize value
+	// Deserialize value using progressive type recovery algorithm
 	var value any
 
-	// Try standard deserialization first
+	// Progressive Type Recovery Algorithm:
+	// This handles cases where serialization format requires concrete types
+	// (especially relevant for Binary/Gob format which needs exact type matching)
+	//
+	// Algorithm steps:
+	// 1. Generic deserialization: Try deserializing to interface{} first
+	// 2. Type-specific recovery: If generic fails, try common concrete types:
+	//    - string (most common for text data)
+	//    - int (common numeric type)  
+	//    - float64 (Go's default float type)
+	//    - bool (boolean values)
+	// 3. Graceful failure: Return deserialization error if all attempts fail
+	//
+	// This approach ensures:
+	// - Maximum compatibility with different serialization formats
+	// - Graceful handling of type mismatches
+	// - Support for cached values stored with different type expectations
 	if err := c.serializer.Deserialize(entry.value, &value); err != nil {
 		// If standard deserialization fails, try with specific types
 		// This helps with Binary format which may need concrete types
@@ -765,7 +799,24 @@ func (c *memoryCache) cleanupLoop() {
 	}
 }
 
-// cleanup removes expired entries from the cache
+// cleanup removes expired entries from the cache.
+//
+// Cleanup Algorithm:
+// 1. Single-pass iteration: Scans all cache entries once under read lock
+// 2. Batch identification: Collects expired keys without immediate deletion
+// 3. Atomic batch removal: Acquires write lock and removes all expired entries
+// 4. Index consistency: Updates secondary indexes by removing stale references
+// 5. Metrics recording: Tracks cleanup performance and item counts
+//
+// This algorithm minimizes lock contention by:
+// - Using read lock during scan phase (allows concurrent reads)  
+// - Batching deletions under a single write lock acquisition
+// - Performing index cleanup atomically with entry removal
+//
+// Performance characteristics:
+// - Time complexity: O(n) where n is total cache entries
+// - Space complexity: O(k) where k is number of expired entries
+// - Lock contention: Minimal due to read-heavy scan phase
 func (c *memoryCache) cleanup() {
 	start := time.Now()
 	now := time.Now()
@@ -1422,7 +1473,22 @@ func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater inte
 
 // Helper methods
 
-// matchesPattern checks if a key matches a glob pattern
+// matchesPattern checks if a key matches a glob pattern.
+//
+// Pattern Matching Algorithm:
+// 1. Primary matching: Uses filepath.Match for standard glob patterns
+//    - Supports * (match any sequence of characters)
+//    - Supports ? (match any single character)  
+//    - Supports [abc] and [a-z] character classes
+// 2. Fallback mechanism: If filepath.Match fails due to malformed patterns
+//    - Strips asterisks from pattern to get literal substring
+//    - Uses simple string containment check
+//    - Ensures robust matching even with invalid glob syntax
+//
+// This dual-approach ensures:
+// - Maximum compatibility with standard glob patterns
+// - Graceful degradation for edge cases
+// - No failures due to pattern syntax errors
 func (c *memoryCache) matchesPattern(key, pattern string) bool {
 	matched, err := filepath.Match(pattern, key)
 	if err != nil {
@@ -1432,7 +1498,23 @@ func (c *memoryCache) matchesPattern(key, pattern string) bool {
 	return matched
 }
 
-// removeFromAllIndexes removes a key from all indexes
+// removeFromAllIndexes removes a key from all indexes.
+//
+// Index Cleanup Algorithm:
+// 1. Iterates through all registered secondary indexes
+// 2. For each index, checks if the key matches the index's pattern
+// 3. If pattern matches, searches all index entries for the key
+// 4. Removes key from matching index entries using slice filtering
+// 5. Cleans up empty index entries to prevent memory leaks
+//
+// This algorithm ensures:
+// - Index consistency: No stale references remain after key deletion
+// - Memory efficiency: Empty index entries are garbage collected
+// - Pattern correctness: Only removes from indexes where key actually belongs
+//
+// Performance characteristics:
+// - Time complexity: O(i * e * k) where i=indexes, e=entries per index, k=keys per entry
+// - Called during: Delete operations, expiration cleanup, cache clearing
 func (c *memoryCache) removeFromAllIndexes(key string) {
 	for indexName, indexMap := range c.indexes {
 		pattern := c.indexPatterns[indexName]

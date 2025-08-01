@@ -65,7 +65,25 @@ type RedisCache struct {
 	*redisCache
 }
 
-// NewRedisCache creates a new Redis cache instance with an existing client
+// NewRedisCache creates a new Redis cache instance with an existing client.
+//
+// Initialization Process:
+// 1. Validates Redis client (must not be nil)
+// 2. Selects serialization format (defaults to MessagePack for network efficiency)
+// 3. Initializes metrics systems (legacy and enhanced metrics support)
+// 4. Tests Redis connectivity with ping command
+// 5. Sets up Redis-specific features (key prefixes, metadata handling)
+//
+// Features Configured:
+// - Redis client connection management
+// - Serialization with MessagePack (compact, fast)
+// - Key prefixing for namespace isolation
+// - Metadata storage for advanced cache features
+// - Pipeline operations for batch efficiency
+// - Atomic operations using Redis commands and Lua scripts
+// - Comprehensive error handling and connection resilience
+//
+// Returns an error if Redis connection fails or configuration is invalid.
 func NewRedisCache(client *redis.Client, options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	// Validate client
 	if client == nil {
@@ -274,7 +292,24 @@ func (c *redisCache) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// Clear removes all values from the cache with our prefix
+// Clear removes all values from the cache with our prefix.
+//
+// Redis Batch Clear Algorithm:
+// 1. Scan phase: Uses Redis SCAN command to find keys with cache prefix
+//    - Iterates with cursor to handle large datasets without blocking
+//    - Batch size of 100 keys per scan to balance performance and memory
+// 2. Batch deletion: Groups keys into batches of 100 for efficient deletion
+//    - Uses DEL command with multiple keys to minimize round trips
+//    - Processes both cache data keys and metadata keys separately
+// 3. Cleanup optimization: Separate scan-and-delete for metadata keys
+//    - Ensures complete cleanup of all associated data
+//    - Prevents orphaned metadata entries
+//
+// Performance characteristics:
+// - Memory efficient: Processes keys in small batches
+// - Non-blocking: Uses SCAN cursor iteration instead of KEYS command
+// - Network optimized: Batches DEL operations to reduce round trips
+// - Comprehensive: Cleans both data and metadata
 func (c *redisCache) Clear(ctx context.Context) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
