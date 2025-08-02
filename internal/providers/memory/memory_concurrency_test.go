@@ -140,7 +140,7 @@ func TestMemoryCache_ConcurrentBulkOperations(t *testing.T) {
 	wg.Wait()
 
 	// Verify some keys were written correctly
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		for j := 0; j < numOps; j += 5 { // Check every 5th operation to save time
 			for k := 0; k < 5; k++ {
 				key := fmt.Sprintf("bulk-key-%d-%d-%d", i, j, k)
@@ -163,7 +163,7 @@ func TestMemoryCache_ConcurrentBulkOperations(t *testing.T) {
 // This test should FAIL with -race until the synchronization issue is fixed
 func TestMemoryCache_RaceConditionDelete(t *testing.T) {
 	c, err := memory.NewMemoryCache(&cache.CacheOptions{
-		MaxEntries: 15000, // Increased to allow for concurrent operations
+		MaxEntries: 20000,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create memory cache: %v", err)
