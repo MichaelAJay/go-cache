@@ -383,8 +383,8 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 	// Add to appropriate indexes
 	c.addToIndexes(key)
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -660,8 +660,8 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 		c.items[key] = entry
 	}
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -848,14 +848,33 @@ func (c *memoryCache) cleanup() {
 }
 
 // updateSizeMetrics updates the size and entry count metrics
+// This version acquires its own read lock for safe concurrent access
 func (c *memoryCache) updateSizeMetrics() {
-	var totalSize int64
-	entryCount := int64(len(c.items))
+	c.mu.RLock()
+	totalSize, entryCount := c.calculateSizeMetricsUnsafe()
+	c.mu.RUnlock()
 
+	c.updateMetricsValues(totalSize, entryCount)
+}
+
+// updateSizeMetricsUnsafe updates metrics assuming caller holds the appropriate lock
+func (c *memoryCache) updateSizeMetricsUnsafe() {
+	totalSize, entryCount := c.calculateSizeMetricsUnsafe()
+	c.updateMetricsValues(totalSize, entryCount)
+}
+
+// calculateSizeMetricsUnsafe calculates metrics without acquiring locks
+// Caller must hold at least a read lock on c.mu
+func (c *memoryCache) calculateSizeMetricsUnsafe() (totalSize, entryCount int64) {
+	entryCount = int64(len(c.items))
 	for _, entry := range c.items {
 		totalSize += entry.size
 	}
+	return totalSize, entryCount
+}
 
+// updateMetricsValues updates the actual metrics values
+func (c *memoryCache) updateMetricsValues(totalSize, entryCount int64) {
 	// Update legacy metrics
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.cacheSize = totalSize
@@ -1029,8 +1048,8 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 
 	c.items[key] = newEntry
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return newValue, nil
 }
@@ -1151,8 +1170,8 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 
 	c.items[key] = entry
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since caller holds lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -1291,8 +1310,8 @@ func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, index
 		c.removeFromAllIndexes(key)
 	}
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -1350,8 +1369,8 @@ func (c *memoryCache) DeleteByPattern(ctx context.Context, pattern string) (int,
 		}
 	}
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return deletedCount, nil
 }

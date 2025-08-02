@@ -163,7 +163,7 @@ func TestMemoryCache_ConcurrentBulkOperations(t *testing.T) {
 // This test should FAIL with -race until the synchronization issue is fixed
 func TestMemoryCache_RaceConditionDelete(t *testing.T) {
 	c, err := memory.NewMemoryCache(&cache.CacheOptions{
-		MaxEntries: 10000,
+		MaxEntries: 15000, // Increased to allow for concurrent operations
 	})
 	if err != nil {
 		t.Fatalf("Failed to create memory cache: %v", err)
