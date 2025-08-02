@@ -1183,35 +1183,122 @@ func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern
 		return cacheErrors.ErrContextCanceled
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// For large datasets, use chunked processing to reduce lock contention
+	const LARGE_DATASET_THRESHOLD = 5000
+	const CHUNK_SIZE = 1000
 
-	// Register the index pattern if not already registered
+	// First, register the index pattern under write lock
+	c.mu.Lock()
 	if _, exists := c.indexPatterns[indexName]; !exists {
 		c.indexPatterns[indexName] = keyPattern
 		c.indexes[indexName] = make(map[string][]string)
 	}
+	itemCount := len(c.items)
+	c.mu.Unlock()
+
+	if itemCount > LARGE_DATASET_THRESHOLD {
+		return c.addIndexChunked(ctx, indexName, keyPattern, indexKey, CHUNK_SIZE)
+	}
+
+	return c.addIndexDirect(ctx, indexName, keyPattern, indexKey)
+}
+
+// addIndexDirect performs index creation with single lock (optimized for smaller datasets)
+func (c *memoryCache) addIndexDirect(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Find all existing keys that match the pattern and should be indexed under this indexKey
+	matchingKeys := make([]string, 0, len(c.items)/10) // Pre-allocate with heuristic capacity
+	
+	// Collect all matching keys first
 	for key := range c.items {
 		if c.matchesPattern(key, keyPattern) {
-			// Add to index
-			if c.indexes[indexName][indexKey] == nil {
-				c.indexes[indexName][indexKey] = make([]string, 0)
-			}
+			matchingKeys = append(matchingKeys, key)
+		}
+	}
+	
+	// Initialize index slice if needed with proper capacity
+	if c.indexes[indexName][indexKey] == nil {
+		c.indexes[indexName][indexKey] = make([]string, 0, len(matchingKeys))
+	}
+	
+	// Use map for O(1) duplicate detection instead of O(k) linear search
+	existingKeysMap := make(map[string]bool, len(c.indexes[indexName][indexKey]))
+	for _, existingKey := range c.indexes[indexName][indexKey] {
+		existingKeysMap[existingKey] = true
+	}
+	
+	// Add only new keys to the index
+	for _, key := range matchingKeys {
+		if !existingKeysMap[key] {
+			c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
+			existingKeysMap[key] = true // Update map for potential future operations
+		}
+	}
 
-			// Check if key is already in the index
-			found := false
-			for _, existingKey := range c.indexes[indexName][indexKey] {
-				if existingKey == key {
-					found = true
-					break
-				}
-			}
+	return nil
+}
 
-			if !found {
-				c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
+// addIndexChunked performs index creation with chunked processing (optimized for larger datasets)
+func (c *memoryCache) addIndexChunked(ctx context.Context, indexName string, keyPattern string, indexKey string, chunkSize int) error {
+	// Step 1: Collect all keys under read lock (allows concurrent reads)
+	c.mu.RLock()
+	allKeys := make([]string, 0, len(c.items))
+	for key := range c.items {
+		allKeys = append(allKeys, key)
+	}
+	c.mu.RUnlock()
+
+	// Step 2: Process pattern matching without holding locks (CPU-intensive work)
+	matchingKeys := make([]string, 0, len(allKeys)/10)
+	
+	for i := 0; i < len(allKeys); i += chunkSize {
+		// Check for context cancellation between chunks
+		if ctx.Err() != nil {
+			return cacheErrors.ErrContextCanceled
+		}
+
+		end := i + chunkSize
+		if end > len(allKeys) {
+			end = len(allKeys)
+		}
+
+		// Process chunk without any locks
+		for j := i; j < end; j++ {
+			if c.matchesPattern(allKeys[j], keyPattern) {
+				matchingKeys = append(matchingKeys, allKeys[j])
 			}
+		}
+	}
+
+	// Step 3: Update index under write lock (minimal lock duration)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Verify keys still exist (they might have been deleted during processing)
+	validMatchingKeys := make([]string, 0, len(matchingKeys))
+	for _, key := range matchingKeys {
+		if _, exists := c.items[key]; exists {
+			validMatchingKeys = append(validMatchingKeys, key)
+		}
+	}
+
+	// Initialize index slice if needed with proper capacity
+	if c.indexes[indexName][indexKey] == nil {
+		c.indexes[indexName][indexKey] = make([]string, 0, len(validMatchingKeys))
+	}
+
+	// Use map for O(1) duplicate detection
+	existingKeysMap := make(map[string]bool, len(c.indexes[indexName][indexKey]))
+	for _, existingKey := range c.indexes[indexName][indexKey] {
+		existingKeysMap[existingKey] = true
+	}
+
+	// Add only new keys to the index
+	for _, key := range validMatchingKeys {
+		if !existingKeysMap[key] {
+			c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
 		}
 	}
 
