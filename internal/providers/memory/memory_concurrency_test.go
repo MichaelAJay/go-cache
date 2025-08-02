@@ -119,7 +119,7 @@ func TestMemoryCache_ConcurrentBulkOperations(t *testing.T) {
 	}
 
 	// Create concurrent bulk getters (reading keys that may or may not exist yet)
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		go func(workerID int) {
 			defer wg.Done()
 			for j := 0; j < numOps; j++ {
@@ -157,6 +157,87 @@ func TestMemoryCache_ConcurrentBulkOperations(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestMemoryCache_RaceConditionDelete demonstrates the race condition in updateSizeMetrics
+// This test should FAIL with -race until the synchronization issue is fixed
+func TestMemoryCache_RaceConditionDelete(t *testing.T) {
+	c, err := memory.NewMemoryCache(&cache.CacheOptions{
+		MaxEntries: 10000,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create memory cache: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+	numWorkers := 20
+	numOpsPerWorker := 500
+
+	// Pre-populate the cache with items
+	for i := 0; i < numWorkers*numOpsPerWorker; i++ {
+		key := fmt.Sprintf("race-key-%d", i)
+		value := fmt.Sprintf("race-value-%d", i)
+		err := c.Set(ctx, key, value, time.Hour)
+		if err != nil {
+			t.Fatalf("Failed to populate cache: %v", err)
+		}
+	}
+
+	var wg sync.WaitGroup
+
+	// Start multiple goroutines that will concurrently delete items
+	// This will trigger the race condition between Delete() and updateSizeMetrics()
+	for i := range numWorkers {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			// Each worker deletes its own range of keys
+			start := workerID * numOpsPerWorker
+			end := start + numOpsPerWorker
+
+			for j := start; j < end; j++ {
+				key := fmt.Sprintf("race-key-%d", j)
+				// This Delete operation calls updateSizeMetrics() without proper synchronization
+				// causing concurrent map iteration and map write
+				err := c.Delete(ctx, key)
+				if err != nil {
+					t.Errorf("Delete failed: %v", err)
+				}
+			}
+		}(i)
+	}
+
+	// Start additional goroutines that perform other operations to increase contention
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				// Mix of operations that might trigger metrics updates
+				key := fmt.Sprintf("extra-key-%d-%d", workerID, j)
+
+				// Set new keys
+				err := c.Set(ctx, key, "extra-value", time.Hour)
+				if err != nil {
+					t.Errorf("Set failed: %v", err)
+				}
+
+				// Read existing keys
+				_, _, err = c.Get(ctx, key)
+				if err != nil {
+					t.Errorf("Get failed: %v", err)
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// This test is specifically designed to trigger the race condition
+	// It should fail with: "fatal error: concurrent map iteration and map write"
+	// when run with: go test -race
+	t.Log("If this test passes with -race, the race condition has been fixed")
 }
 
 // TestMemoryCache_ConcurrentMetadata tests concurrent metadata operations
