@@ -34,6 +34,13 @@ func WithCleanupInterval(interval time.Duration) CacheOption {
 	}
 }
 
+// WithSerializerFormat sets the serialization format for cache entries
+func WithSerializerFormat(format serializer.Format) CacheOption {
+	return func(o *CacheOptions) {
+		o.SerializerFormat = format
+	}
+}
+
 // WithLogger sets the logger for the cache
 func WithLogger(logger logger.Logger) CacheOption {
 	return func(o *CacheOptions) {
