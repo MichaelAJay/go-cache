@@ -96,6 +96,8 @@ type (
 	CacheOptions = interfaces.CacheOptions
 	CacheProvider = interfaces.CacheProvider
 	EnhancedCacheMetrics = interfaces.EnhancedCacheMetrics
+	TypedCacheProvider = interfaces.TypedCacheProvider
+	TypeInfo = interfaces.TypeInfo
 )
 
 // =============================================================================

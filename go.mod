@@ -5,8 +5,9 @@ go 1.23.3
 require (
 	github.com/MichaelAJay/go-logger v0.1.0
 	github.com/MichaelAJay/go-metrics v0.1.0
-	github.com/MichaelAJay/go-serializer v0.2.0
+	github.com/MichaelAJay/go-serializer v0.1.0
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.38.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.38.0
 )
@@ -61,7 +62,6 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.5 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
@@ -83,4 +83,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/MichaelAJay/go-metrics => ../go-metrics
+replace github.com/MichaelAJay/go-metrics => /Users/michaeljay/go-dev/go-metrics
+
+replace github.com/MichaelAJay/go-serializer => /Users/michaeljay/go-dev/go-serializer
+
+replace github.com/MichaelAJay/go-logger => /Users/michaeljay/go-dev/go-logger
