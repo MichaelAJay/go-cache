@@ -213,6 +213,11 @@ func (tc *TypedCache[T]) SetMany(ctx context.Context, items map[string]T, ttl ti
 	return tc.cache.SetMany(ctx, genericItems, ttl)
 }
 
+// DeleteMany removes multiple keys from the cache
+func (tc *TypedCache[T]) DeleteMany(ctx context.Context, keys []string) error {
+	return tc.cache.DeleteMany(ctx, keys)
+}
+
 // Unwrap returns the underlying cache for operations that don't need type safety
 func (tc *TypedCache[T]) Unwrap() interfaces.Cache {
 	return tc.cache
