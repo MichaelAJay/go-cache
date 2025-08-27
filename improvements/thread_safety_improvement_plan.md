@@ -12,7 +12,7 @@
 
 ### Tasks
 
-- Define a clear, goroutine-safe interface:
+- **Define a clear, goroutine-safe interface:**
 
   ```go
   type Cache[V any] interface {
@@ -25,169 +25,143 @@
   }
   ```
 
-Document guarantees:
+- **Document guarantees:**
+  - Safe for concurrent use
+  - Per-key atomicity for Set, Update, GetOrSet
+  - No shared mutable state crosses the boundary (deep copies)
 
-Safe for concurrent use.
+- **Introduce Codec[V] for serialization/copying**
 
-Per-key atomicity for Set, Update, GetOrSet.
+### Definition of Done
 
-No shared mutable state crosses the boundary (deep copies).
+- [ ] Interface defined and documented
+- [ ] Guarantees clearly specified in docstrings
+- [ ] Codec[V] abstraction available for implementations
+- [ ] Unit tests compile against interface stubs
 
-Introduce Codec[V] for serialization/copying.
+---
 
-Definition of Done
+## Phase 2: In-Memory Provider
 
-Interface defined and documented.
+### Tasks
 
-Guarantees clearly specified in docstrings.
+**Implement with:**
 
-Codec[V] abstraction available for implementations.
+- **Sharded map** (64/128 shards)
+- **Per-shard sync.RWMutex**
+- **Per-key locks** (striped or map of mutexes)
+- **singleflight.Group** for GetOrSet
+- **Store values as encoded bytes** via Codec
+  - On Get: decode into a fresh instance
+  - On Set: encode (deep copy semantics)
+- **Add TTL handling** with jitter
+- **Implement Update** with per-key lock
 
-Unit tests compile against interface stubs.
+### Definition of Done
 
-Phase 2: In-Memory Provider
-Tasks
+**In-memory provider passes:**
 
-Implement with:
+- [ ] Race detector (`go test -race`)
+- [ ] Parallel GetOrSet tests (loader runs once)
+- [ ] Parallel Update tests (no lost updates)
+- [ ] Values returned are always fresh (no shared mutable state)
+- [ ] Expiry works with jitter
+- [ ] Benchmarks run without global lock contention
 
-Sharded map (64/128 shards).
+---
 
-Per-shard sync.RWMutex.
+## Phase 3: Redis Provider
 
-Per-key locks (striped or map of mutexes).
+### Tasks
 
-singleflight.Group for GetOrSet.
+- **Use goroutine-safe Redis client** (e.g., go-redis)
 
-Store values as encoded bytes via Codec.
+**Implement:**
 
-On Get: decode into a fresh instance.
+- **GetOrSet:**
+  - Process-level singleflight
+  - Cross-process atomicity via Redis lock key (`SET lock:<k> NX PX` + loader)
 
-On Set: encode (deep copy semantics).
+- **Update:**
+  - `WATCH` + `MULTI`/`EXEC`, or Lua script for atomic update
 
-Add TTL handling with jitter.
+- **Increment/Decrement:** atomic Redis commands
+- **Store values via Codec** (same format as in-memory)
+- **Add TTL jitter**
+- **Optional:** stale-while-revalidate with lock key
 
-Implement Update with per-key lock.
+### Definition of Done
 
-Definition of Done
+- [ ] Redis provider passes integration tests with real Redis
+- [ ] Parallel GetOrSet across multiple processes executes loader once
+- [ ] Parallel Update preserves invariants with no race conditions
+- [ ] TTL jitter observed in expiry behavior
+- [ ] Fallback paths (lock timeout, retry) tested
 
-In-memory provider passes:
+---
 
-Race detector (go test -race).
+## Phase 4: Unified Testing & Validation
 
-Parallel GetOrSet tests (loader runs once).
+### Tasks
 
-Parallel Update tests (no lost updates).
+**Write concurrency stress tests:**
 
-Values returned are always fresh (no shared mutable state).
+- Hundreds of goroutines calling GetOrSet on same key
+- Parallel Update loops
 
-Expiry works with jitter.
+**Run fuzz tests** for key/value pairs (codec validation)
 
-Benchmarks run without global lock contention.
+**Test cross-provider consistency:**
 
-Phase 3: Redis Provider
-Tasks
+- In-memory & Redis behave identically under same tests
 
-Use goroutine-safe Redis client (e.g., go-redis).
+**Add benchmarks** (Get, Set, GetOrSet under load)
 
-Implement:
+### Definition of Done
 
-GetOrSet:
+- [ ] All tests pass under `-race`
+- [ ] Cross-provider consistency tests pass
+- [ ] Benchmarks show no pathological contention
+- [ ] Coverage >90% for cache logic
 
-Process-level singleflight.
+---
 
-Cross-process atomicity via Redis lock key (SET lock:<k> NX PX + loader).
+## Phase 5: Consumer Migration (Session Manager)
 
-Update:
+### Tasks
 
-WATCH + MULTI/EXEC, or Lua script for atomic update.
+**Replace consumer-side mutexes with:**
 
-Increment/Decrement: atomic Redis commands.
+- GetOrSet for session creation
+- Update for session mutation
+- Remove app-level locking assumptions
 
-Store values via Codec (same format as in-memory).
+**Add integration tests** for session-manager using both providers
 
-Add TTL jitter.
+### Definition of Done
 
-Optional: stale-while-revalidate with lock key.
+- [ ] Session-manager no longer uses its own locks for cache safety
+- [ ] Session-manager tests pass with both Redis and in-memory cache
+- [ ] Verified no regressions in session correctness under concurrency load
 
-Definition of Done
+---
 
-Redis provider passes integration tests with real Redis.
+## Phase 6: Rollout & Observability
 
-Parallel GetOrSet across multiple processes executes loader once.
+### Tasks
 
-Parallel Update preserves invariants with no race conditions.
+**Add metrics:**
 
-TTL jitter observed in expiry behavior.
+- Loader executions (per key)
+- Lock contention count
+- TTL expirations & jitter distribution
 
-Fallback paths (lock timeout, retry) tested.
+**Deploy behind feature flag**
 
-Phase 4: Unified Testing & Validation
-Tasks
+**Monitor for regressions**
 
-Write concurrency stress tests:
+### Definition of Done
 
-Hundreds of goroutines calling GetOrSet on same key.
-
-Parallel Update loops.
-
-Run fuzz tests for key/value pairs (codec validation).
-
-Test cross-provider consistency:
-
-In-memory & Redis behave identically under same tests.
-
-Add benchmarks (Get, Set, GetOrSet under load).
-
-Definition of Done
-
-All tests pass under -race.
-
-Cross-provider consistency tests pass.
-
-Benchmarks show no pathological contention.
-
-Coverage >90% for cache logic.
-
-Phase 5: Consumer Migration (Session Manager)
-Tasks
-
-Replace consumer-side mutexes with:
-
-GetOrSet for session creation.
-
-Update for session mutation.
-
-Remove app-level locking assumptions.
-
-Add integration tests for session-manager using both providers.
-
-Definition of Done
-
-Session-manager no longer uses its own locks for cache safety.
-
-Session-manager tests pass with both Redis and in-memory cache.
-
-Verified no regressions in session correctness under concurrency load.
-
-Phase 6: Rollout & Observability
-Tasks
-
-Add metrics:
-
-Loader executions (per key).
-
-Lock contention count.
-
-TTL expirations & jitter distribution.
-
-Deploy behind feature flag.
-
-Monitor for regressions.
-
-Definition of Done
-
-Metrics exported and observed.
-
-Feature flag rollout successful.
-
-No reported race conditions or regressions in production load tests.
+- [ ] Metrics exported and observed
+- [ ] Feature flag rollout successful
+- [ ] No reported race conditions or regressions in production load tests
