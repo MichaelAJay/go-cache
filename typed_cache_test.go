@@ -233,3 +233,118 @@ func TestTypedCache_GetAndUpdate(t *testing.T) {
 
 	t.Logf("TypedCache GetAndUpdate works correctly with gob serialization")
 }
+
+func TestTypedCache_DeleteMany(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a memory cache with gob (binary) serialization directly
+	cacheOptions := &CacheOptions{
+		TTL:              time.Hour,
+		SerializerFormat: serializer.Binary, // Use gob serialization
+	}
+	
+	cache, err := memory.NewMemoryCache(cacheOptions)
+	require.NoError(t, err)
+	defer cache.Close()
+
+	// Create a typed cache wrapper for TestSession
+	typedCache := NewTypedCache[*TestSession](cache)
+
+	// Create test sessions
+	sessions := map[string]*TestSession{
+		"session1": {
+			ID:       "sess-1",
+			UserID:   "user-1",
+			Metadata: map[string]string{"type": "web"},
+			Tags:     []string{"active"},
+		},
+		"session2": {
+			ID:       "sess-2", 
+			UserID:   "user-2",
+			Metadata: map[string]string{"type": "mobile"},
+			Tags:     []string{"active", "premium"},
+		},
+		"session3": {
+			ID:       "sess-3",
+			UserID:   "user-3", 
+			Metadata: map[string]string{"type": "web"},
+			Tags:     []string{"inactive"},
+		},
+	}
+
+	// Store all sessions
+	err = typedCache.SetMany(ctx, sessions, time.Hour)
+	require.NoError(t, err, "SetMany should succeed")
+
+	// Verify all sessions exist
+	for key := range sessions {
+		_, found, err := typedCache.Get(ctx, key)
+		require.NoError(t, err)
+		require.True(t, found, "Session %s should exist", key)
+	}
+
+	// Test DeleteMany - delete session1 and session2
+	keysToDelete := []string{"session1", "session2"}
+	err = typedCache.DeleteMany(ctx, keysToDelete)
+	require.NoError(t, err, "DeleteMany should succeed")
+
+	// Verify deleted sessions no longer exist
+	for _, key := range keysToDelete {
+		_, found, err := typedCache.Get(ctx, key)
+		require.NoError(t, err)
+		assert.False(t, found, "Session %s should be deleted", key)
+	}
+
+	// Verify remaining session still exists
+	_, found, err := typedCache.Get(ctx, "session3")
+	require.NoError(t, err)
+	assert.True(t, found, "Session3 should still exist")
+
+	t.Logf("TypedCache DeleteMany works correctly with gob serialization")
+}
+
+func TestTypedCache_DeleteMany_NonExistentKeys(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a memory cache with gob (binary) serialization directly
+	cacheOptions := &CacheOptions{
+		TTL:              time.Hour,
+		SerializerFormat: serializer.Binary, // Use gob serialization
+	}
+	
+	cache, err := memory.NewMemoryCache(cacheOptions)
+	require.NoError(t, err)
+	defer cache.Close()
+
+	// Create a typed cache wrapper for TestSession
+	typedCache := NewTypedCache[*TestSession](cache)
+
+	// Test deleting non-existent keys (should not error)
+	err = typedCache.DeleteMany(ctx, []string{"nonexistent1", "nonexistent2"})
+	require.NoError(t, err, "DeleteMany of non-existent keys should succeed")
+
+	t.Logf("TypedCache DeleteMany handles non-existent keys correctly")
+}
+
+func TestTypedCache_DeleteMany_Empty(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a memory cache with gob (binary) serialization directly
+	cacheOptions := &CacheOptions{
+		TTL:              time.Hour,
+		SerializerFormat: serializer.Binary, // Use gob serialization
+	}
+	
+	cache, err := memory.NewMemoryCache(cacheOptions)
+	require.NoError(t, err)
+	defer cache.Close()
+
+	// Create a typed cache wrapper for TestSession
+	typedCache := NewTypedCache[*TestSession](cache)
+
+	// Test deleting empty slice (should not error)
+	err = typedCache.DeleteMany(ctx, []string{})
+	require.NoError(t, err, "DeleteMany with empty keys should succeed")
+
+	t.Logf("TypedCache DeleteMany handles empty keys slice correctly")
+}
