@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/internal/providers/memory"
 	"github.com/MichaelAJay/go-logger"
 )
 
@@ -20,7 +19,7 @@ func main() {
 	manager := cache.NewCacheManager()
 
 	// Register the memory cache provider
-	manager.RegisterProvider("memory", memory.NewProvider())
+	manager.RegisterProvider("memory", cache.NewMemoryProvider())
 
 	// Create a cache instance with options
 	cache, err := manager.GetCache("memory",

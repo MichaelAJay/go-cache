@@ -7,7 +7,6 @@ import (
 
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/internal/providers/memory"
 )
 
 func main() {
@@ -15,7 +14,7 @@ func main() {
 	registry := metric.NewDefaultRegistry()
 	
 	// Create cache with metrics
-	provider := memory.NewProvider()
+	provider := cache.NewMemoryProvider()
 	c, err := provider.Create(&cache.CacheOptions{
 		TTL:               time.Minute * 5,
 		MaxEntries:        1000,

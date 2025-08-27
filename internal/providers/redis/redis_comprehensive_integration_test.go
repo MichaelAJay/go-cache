@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package redis
+package redis_test
 
 import (
 	"context"
@@ -11,14 +11,16 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
+	"github.com/MichaelAJay/go-cache/internal/providers/redis"
 	"github.com/MichaelAJay/go-serializer"
 )
 
 // TestSessionManagementIntegration tests realistic session management scenarios
 func TestSessionManagementIntegration(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&interfaces.CacheOptions{
 			TTL:              24 * time.Hour,
 			SerializerFormat: serializer.Msgpack,
 			Security: &cache.SecurityConfig{
@@ -266,9 +268,9 @@ func TestSessionManagementIntegration(t *testing.T) {
 // TestCacheProvidersIntegration tests integration between different cache providers
 func TestCacheProvidersIntegration(t *testing.T) {
 	// Start Redis container for comparison
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -350,9 +352,9 @@ func TestCacheProvidersIntegration(t *testing.T) {
 
 // TestConcurrentCacheOperations tests cache behavior under concurrent access
 func TestConcurrentCacheOperations(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -523,9 +525,9 @@ func TestConcurrentCacheOperations(t *testing.T) {
 
 // TestErrorHandlingIntegration tests error handling in realistic scenarios
 func TestErrorHandlingIntegration(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -619,9 +621,9 @@ func TestErrorHandlingIntegration(t *testing.T) {
 
 // TestCacheWarmupAndPreloading tests cache warming scenarios
 func TestCacheWarmupAndPreloading(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              2 * time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -738,9 +740,9 @@ func TestCacheWarmupAndPreloading(t *testing.T) {
 
 // TestFailoverAndResilience tests cache behavior during failures
 func TestFailoverAndResilience(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),
@@ -834,9 +836,9 @@ func TestFailoverAndResilience(t *testing.T) {
 
 // TestPerformanceUnderLoad tests cache performance under various load conditions
 func TestPerformanceUnderLoad(t *testing.T) {
-	redis, err := NewRedisTestContainer(t,
-		WithRedisVersion("redis:8.0"),
-		WithCacheOptions(&cache.CacheOptions{
+	redis, err := redis.NewRedisTestContainer(t,
+		redis.WithRedisVersion("redis:8.0"),
+		redis.WithCacheOptions(&cache.CacheOptions{
 			TTL:              time.Hour,
 			SerializerFormat: serializer.Msgpack,
 		}),

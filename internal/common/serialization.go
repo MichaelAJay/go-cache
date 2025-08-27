@@ -6,8 +6,15 @@ import (
 	"github.com/MichaelAJay/go-serializer"
 )
 
-// GetSerializer returns a serializer instance for the given format
-// This provides a centralized way to get serializers across all providers
+// GetSerializer returns a serializer instance for the given format.
+// This provides a centralized way to get serializers across all providers.
+//
+// Supported formats:
+// - JSON: Human-readable, cross-language compatible, moderate performance
+// - Binary (Gob): Go-native, fast, type-safe, not cross-language compatible
+// - MessagePack: Binary format, cross-language, good performance
+//
+// Returns an error if the format is not supported.
 func GetSerializer(format serializer.Format) (serializer.Serializer, error) {
 	switch format {
 	case serializer.JSON:
@@ -21,13 +28,25 @@ func GetSerializer(format serializer.Format) (serializer.Serializer, error) {
 	}
 }
 
-// GetDefaultSerializerFormat returns the default serializer format
+// GetDefaultSerializerFormat returns the default serializer format.
+// Currently returns JSON for maximum compatibility across different systems.
 func GetDefaultSerializerFormat() serializer.Format {
 	return serializer.JSON
 }
 
-// EstimateSerializedSize estimates the serialized size of a value
-// This is useful for cache size calculations and memory management
+// EstimateSerializedSize estimates the serialized size of a value.
+// This is useful for cache size calculations and memory management.
+//
+// Size Estimation Algorithm:
+// 1. Handles nil values: returns 0
+// 2. Type-specific estimates:
+//    - string/[]byte: actual byte length
+//    - numeric types: 8 bytes (covers most cases)
+//    - bool: 1 byte
+//    - complex types: 100 bytes (rough estimate)
+//
+// Note: This provides rough estimates for memory planning. For exact sizes,
+// actual serialization would be required, which would impact performance.
 func EstimateSerializedSize(value any) int64 {
 	if value == nil {
 		return 0

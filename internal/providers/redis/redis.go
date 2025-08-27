@@ -9,10 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MichaelAJay/go-metrics/metric"
-	"github.com/MichaelAJay/go-cache"
+	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
+	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-logger"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
 	"github.com/go-redis/redis/v8"
 )
@@ -30,13 +31,13 @@ const (
 // redisCache implements the Cache interface using Redis
 type redisCache struct {
 	client     *redis.Client
-	options    *cache.CacheOptions
+	options    *interfaces.CacheOptions
 	serializer serializer.Serializer
-	
+
 	// Metrics - support both old and new systems
-	legacyMetrics   *cacheMetrics                // Legacy metrics for backward compatibility
-	enhancedMetrics cache.EnhancedCacheMetrics   // New go-metrics based system
-	providerName    string                       // Provider name for metrics tagging
+	legacyMetrics   *cacheMetrics                   // Legacy metrics for backward compatibility
+	enhancedMetrics interfaces.EnhancedCacheMetrics // New go-metrics based system
+	providerName    string                          // Provider name for metrics tagging
 }
 
 // cacheMetrics implements a thread-safe metrics collector
@@ -64,8 +65,26 @@ type RedisCache struct {
 	*redisCache
 }
 
-// NewRedisCache creates a new Redis cache instance with an existing client
-func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cache, error) {
+// NewRedisCache creates a new Redis cache instance with an existing client.
+//
+// Initialization Process:
+// 1. Validates Redis client (must not be nil)
+// 2. Selects serialization format (defaults to MessagePack for network efficiency)
+// 3. Initializes metrics systems (legacy and enhanced metrics support)
+// 4. Tests Redis connectivity with ping command
+// 5. Sets up Redis-specific features (key prefixes, metadata handling)
+//
+// Features Configured:
+// - Redis client connection management
+// - Serialization with MessagePack (compact, fast)
+// - Key prefixing for namespace isolation
+// - Metadata storage for advanced cache features
+// - Pipeline operations for batch efficiency
+// - Atomic operations using Redis commands and Lua scripts
+// - Comprehensive error handling and connection resilience
+//
+// Returns an error if Redis connection fails or configuration is invalid.
+func NewRedisCache(client *redis.Client, options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	// Validate client
 	if client == nil {
 		return nil, fmt.Errorf("redis client is required")
@@ -85,20 +104,20 @@ func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cac
 
 	// Initialize metrics systems
 	if options == nil {
-		options = &cache.CacheOptions{}
+		options = &interfaces.CacheOptions{}
 	}
-	
+
 	legacyMetrics := &cacheMetrics{}
-	
+
 	// Determine which metrics system to use
-	var enhancedMetrics cache.EnhancedCacheMetrics
+	var enhancedMetrics interfaces.EnhancedCacheMetrics
 	if options.EnhancedMetrics != nil {
 		enhancedMetrics = options.EnhancedMetrics
 	} else if options.GoMetricsRegistry != nil {
 		enhancedMetrics = metrics.NewEnhancedCacheMetrics(options.GoMetricsRegistry, options.GlobalMetricsTags)
 	} else {
 		// Use no-op metrics if disabled or no registry provided
-		if options.MetricsEnabled == false {
+		if !options.MetricsEnabled {
 			enhancedMetrics = metrics.NewNoopEnhancedCacheMetrics()
 		} else {
 			// Create default registry
@@ -129,7 +148,7 @@ func NewRedisCache(client *redis.Client, options *cache.CacheOptions) (cache.Cac
 }
 
 // NewRedisCacheWithConfig creates a new Redis cache instance with its own client
-func NewRedisCacheWithConfig(config *redis.Options, options *cache.CacheOptions) (cache.Cache, error) {
+func NewRedisCacheWithConfig(config *redis.Options, options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	// Create Redis client
 	client := redis.NewClient(config)
 
@@ -156,12 +175,12 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 
 	// Validate key
 	if key == "" {
-		return nil, false, cache.ErrInvalidKey
+		return nil, false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, false, cache.ErrContextCanceled
+		return nil, false, cacheErrors.ErrContextCanceled
 	}
 
 	// Get value from Redis
@@ -178,7 +197,7 @@ func (c *redisCache) Get(ctx context.Context, key string) (any, bool, error) {
 	// Deserialize value
 	var value any
 	if err := c.serializer.Deserialize(data, &value); err != nil {
-		return nil, false, cache.ErrDeserialization
+		return nil, false, cacheErrors.ErrDeserialization
 	}
 
 	// Update metadata
@@ -197,12 +216,12 @@ func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Du
 
 	// Validate key
 	if key == "" {
-		return cache.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -216,7 +235,7 @@ func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Du
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return cache.ErrSerialization
+		return cacheErrors.ErrSerialization
 	}
 
 	// Store value in Redis
@@ -246,12 +265,12 @@ func (c *redisCache) Delete(ctx context.Context, key string) error {
 
 	// Validate key
 	if key == "" {
-		return cache.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Remove value from Redis
@@ -273,11 +292,28 @@ func (c *redisCache) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// Clear removes all values from the cache with our prefix
+// Clear removes all values from the cache with our prefix.
+//
+// Redis Batch Clear Algorithm:
+// 1. Scan phase: Uses Redis SCAN command to find keys with cache prefix
+//    - Iterates with cursor to handle large datasets without blocking
+//    - Batch size of 100 keys per scan to balance performance and memory
+// 2. Batch deletion: Groups keys into batches of 100 for efficient deletion
+//    - Uses DEL command with multiple keys to minimize round trips
+//    - Processes both cache data keys and metadata keys separately
+// 3. Cleanup optimization: Separate scan-and-delete for metadata keys
+//    - Ensures complete cleanup of all associated data
+//    - Prevents orphaned metadata entries
+//
+// Performance characteristics:
+// - Memory efficient: Processes keys in small batches
+// - Non-blocking: Uses SCAN cursor iteration instead of KEYS command
+// - Network optimized: Batches DEL operations to reduce round trips
+// - Comprehensive: Cleans both data and metadata
 func (c *redisCache) Clear(ctx context.Context) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Use scan to find all keys matching our prefix
@@ -420,7 +456,7 @@ func (c *redisCache) GetMany(ctx context.Context, keys []string) (map[string]any
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	// Format keys
@@ -474,7 +510,7 @@ func (c *redisCache) SetMany(ctx context.Context, items map[string]any, ttl time
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -493,7 +529,7 @@ func (c *redisCache) SetMany(ctx context.Context, items map[string]any, ttl time
 		// Serialize value
 		data, err := c.serializer.Serialize(value)
 		if err != nil {
-			return cache.ErrSerialization
+			return cacheErrors.ErrSerialization
 		}
 
 		// Add to pipeline
@@ -518,7 +554,7 @@ func (c *redisCache) DeleteMany(ctx context.Context, keys []string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Format keys
@@ -544,20 +580,20 @@ func (c *redisCache) DeleteMany(ctx context.Context, keys []string) error {
 }
 
 // GetMetadata retrieves metadata for a cache entry
-func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheEntryMetadata, error) {
+func (c *redisCache) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
 	// Validate key
 	if key == "" {
-		return nil, cache.ErrInvalidKey
+		return nil, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	// First check if the key exists
 	if !c.Has(ctx, key) {
-		return nil, cache.ErrKeyNotFound
+		return nil, cacheErrors.ErrKeyNotFound
 	}
 
 	// Get metadata from Redis
@@ -566,7 +602,7 @@ func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheE
 	if err != nil {
 		if err == redis.Nil {
 			// Key exists but metadata doesn't, return minimal metadata
-			return &cache.CacheEntryMetadata{
+			return &interfaces.CacheEntryMetadata{
 				Key:       key,
 				CreatedAt: time.Now(),
 			}, nil
@@ -577,7 +613,7 @@ func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheE
 	// Deserialize metadata
 	var meta metadataEntry
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, cache.ErrDeserialization
+		return nil, cacheErrors.ErrDeserialization
 	}
 
 	// Get TTL from Redis
@@ -588,7 +624,7 @@ func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheE
 	}
 
 	// Create cache entry metadata
-	return &cache.CacheEntryMetadata{
+	return &interfaces.CacheEntryMetadata{
 		Key:          key,
 		CreatedAt:    meta.CreatedAt,
 		LastAccessed: meta.LastAccessed,
@@ -600,18 +636,18 @@ func (c *redisCache) GetMetadata(ctx context.Context, key string) (*cache.CacheE
 }
 
 // GetManyMetadata retrieves metadata for multiple cache entries
-func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error) {
+func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*interfaces.CacheEntryMetadata, error) {
 	// Validate keys
 	if len(keys) == 0 {
-		return map[string]*cache.CacheEntryMetadata{}, nil
+		return map[string]*interfaces.CacheEntryMetadata{}, nil
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
-	results := make(map[string]*cache.CacheEntryMetadata)
+	results := make(map[string]*interfaces.CacheEntryMetadata)
 
 	// Format metadata keys
 	metaKeys := make([]string, 0, len(keys))
@@ -675,7 +711,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 					// Deserialize metadata
 					var meta metadataEntry
 					if err := json.Unmarshal(data, &meta); err == nil {
-						results[originalKey] = &cache.CacheEntryMetadata{
+						results[originalKey] = &interfaces.CacheEntryMetadata{
 							Key:          originalKey,
 							CreatedAt:    meta.CreatedAt,
 							LastAccessed: meta.LastAccessed,
@@ -686,7 +722,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 						}
 					} else {
 						// Return minimal metadata on deserialization error
-						results[originalKey] = &cache.CacheEntryMetadata{
+						results[originalKey] = &interfaces.CacheEntryMetadata{
 							Key:       originalKey,
 							CreatedAt: time.Now(),
 							TTL:       ttls[originalKey],
@@ -694,7 +730,7 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 					}
 				case redis.Nil:
 					// Key exists but metadata doesn't, return minimal metadata
-					results[originalKey] = &cache.CacheEntryMetadata{
+					results[originalKey] = &interfaces.CacheEntryMetadata{
 						Key:       originalKey,
 						CreatedAt: time.Now(),
 						TTL:       ttls[originalKey],
@@ -706,7 +742,6 @@ func (c *redisCache) GetManyMetadata(ctx context.Context, keys []string) (map[st
 
 	return results, nil
 }
-
 
 // Helper function to parse Redis INFO command output
 func parseRedisInfo(info string) map[string]string {
@@ -742,7 +777,7 @@ func (c *redisCache) storeMetadata(ctx context.Context, key string, size int, tt
 	// Serialize metadata
 	data, err := json.Marshal(meta)
 	if err != nil {
-		return cache.ErrSerialization
+		return cacheErrors.ErrSerialization
 	}
 
 	// Store metadata in Redis with the same TTL as the main key
@@ -796,7 +831,7 @@ func (c *redisCache) recordHit() {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.hits++
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordHit(c.providerName, tags)
@@ -807,7 +842,7 @@ func (c *redisCache) recordMiss() {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.misses++
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordMiss(c.providerName, tags)
@@ -818,7 +853,7 @@ func (c *redisCache) recordGetLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.getLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "get", "completed", duration, tags)
@@ -829,7 +864,7 @@ func (c *redisCache) recordSetLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.setLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "set", "completed", duration, tags)
@@ -840,7 +875,7 @@ func (c *redisCache) recordDeleteLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.deleteLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	// Enhanced metrics
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "delete", "completed", duration, tags)
@@ -861,14 +896,14 @@ func (c *redisCache) getBaseTags() metric.Tags {
 func (c *redisCache) recordRedisCommand(command string, duration time.Duration, err error) {
 	tags := c.getBaseTags()
 	tags["command"] = command
-	
+
 	status := "success"
 	if err != nil {
 		status = "error"
 		// Record Redis-specific errors
 		errorType := "redis_error"
 		errorCategory := "unknown"
-		
+
 		// Categorize common Redis errors
 		if err == redis.Nil {
 			errorType = "not_found"
@@ -880,10 +915,10 @@ func (c *redisCache) recordRedisCommand(command string, duration time.Duration, 
 			errorType = "connection_error"
 			errorCategory = "timeout"
 		}
-		
+
 		c.enhancedMetrics.RecordError(c.providerName, command, errorType, errorCategory, tags)
 	}
-	
+
 	tags["status"] = status
 	c.enhancedMetrics.RecordOperation(c.providerName, "redis_"+command, status, duration, tags)
 }
@@ -892,7 +927,7 @@ func (c *redisCache) recordRedisCommand(command string, duration time.Duration, 
 func (c *redisCache) recordConnectionPoolStats() {
 	stats := c.client.PoolStats()
 	tags := c.getBaseTags()
-	
+
 	// Record various pool statistics
 	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_hits", float64(stats.Hits), tags)
 	c.enhancedMetrics.RecordProviderSpecific(c.providerName, "connection_pool_misses", float64(stats.Misses), tags)
@@ -906,12 +941,12 @@ func (c *redisCache) recordConnectionPoolStats() {
 func (c *redisCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
 	// Validate key
 	if key == "" {
-		return 0, cache.ErrInvalidKey
+		return 0, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return 0, cache.ErrContextCanceled
+		return 0, cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -952,12 +987,12 @@ func (c *redisCache) Decrement(ctx context.Context, key string, delta int64, ttl
 func (c *redisCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	// Validate key
 	if key == "" {
-		return false, cache.ErrInvalidKey
+		return false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, cache.ErrContextCanceled
+		return false, cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -971,7 +1006,7 @@ func (c *redisCache) SetIfNotExists(ctx context.Context, key string, value any, 
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return false, cache.ErrSerialization
+		return false, cacheErrors.ErrSerialization
 	}
 
 	formattedKey := formatKey(key)
@@ -994,12 +1029,12 @@ func (c *redisCache) SetIfNotExists(ctx context.Context, key string, value any, 
 func (c *redisCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	// Validate key
 	if key == "" {
-		return false, cache.ErrInvalidKey
+		return false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, cache.ErrContextCanceled
+		return false, cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -1013,7 +1048,7 @@ func (c *redisCache) SetIfExists(ctx context.Context, key string, value any, ttl
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return false, cache.ErrSerialization
+		return false, cacheErrors.ErrSerialization
 	}
 
 	formattedKey := formatKey(key)
@@ -1052,18 +1087,18 @@ func (c *redisCache) SetIfExists(ctx context.Context, key string, value any, ttl
 func (c *redisCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
 	// Validate parameters
 	if indexName == "" || keyPattern == "" || indexKey == "" {
-		return cache.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Get all existing cache keys and filter by pattern
 	allKeys := c.GetKeys(ctx)
 	var matchingKeys []string
-	
+
 	// Use filepath.Match to match keys against pattern (same as memory provider)
 	for _, key := range allKeys {
 		matched, err := filepath.Match(keyPattern, key)
@@ -1116,12 +1151,12 @@ func (c *redisCache) RemoveIndex(ctx context.Context, indexName string, keyPatte
 func (c *redisCache) GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error) {
 	// Validate parameters
 	if indexName == "" || indexKey == "" {
-		return []string{}, cache.ErrInvalidKey
+		return []string{}, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return []string{}, cache.ErrContextCanceled
+		return []string{}, cacheErrors.ErrContextCanceled
 	}
 
 	// Create index set key
@@ -1161,12 +1196,12 @@ func (c *redisCache) DeleteByIndex(ctx context.Context, indexName string, indexK
 func (c *redisCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
 	// Validate pattern
 	if pattern == "" {
-		return []string{}, cache.ErrInvalidKey
+		return []string{}, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return []string{}, cache.ErrContextCanceled
+		return []string{}, cacheErrors.ErrContextCanceled
 	}
 
 	// Add cache prefix to pattern for Redis scan
@@ -1202,12 +1237,12 @@ func (c *redisCache) GetKeysByPattern(ctx context.Context, pattern string) ([]st
 func (c *redisCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
 	// Validate pattern
 	if pattern == "" {
-		return 0, cache.ErrInvalidKey
+		return 0, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return 0, cache.ErrContextCanceled
+		return 0, cacheErrors.ErrContextCanceled
 	}
 
 	// Get all keys matching the pattern
@@ -1230,13 +1265,13 @@ func (c *redisCache) DeleteByPattern(ctx context.Context, pattern string) (int, 
 }
 
 // UpdateMetadata updates metadata for a cache entry - STUB IMPLEMENTATION
-func (c *redisCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+func (c *redisCache) UpdateMetadata(ctx context.Context, key string, updater interfaces.MetadataUpdater) error {
 	// TODO: Implement Redis-based metadata updates
 	return fmt.Errorf("UpdateMetadata not yet implemented for Redis provider")
 }
 
 // GetAndUpdate atomically gets and updates a cache entry - STUB IMPLEMENTATION
-func (c *redisCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+func (c *redisCache) GetAndUpdate(ctx context.Context, key string, updater interfaces.ValueUpdater, ttl time.Duration) (any, error) {
 	// TODO: Implement Redis-based atomic get-and-update using Lua scripts
 	return nil, fmt.Errorf("GetAndUpdate not yet implemented for Redis provider")
 }

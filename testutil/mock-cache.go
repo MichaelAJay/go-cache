@@ -46,15 +46,31 @@ func (m *MockCache) Get(ctx context.Context, key string) (any, bool, error) {
 		return m.OnGetCallback(ctx, key)
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	value, exists := m.data[key]
-	if exists && m.metadata[key] != nil {
+	if !exists {
+		return nil, false, nil
+	}
+
+	// Check TTL expiration
+	if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+		if time.Since(metadata.CreatedAt) > metadata.TTL {
+			// Entry has expired - remove it and return not found
+			delete(m.data, key)
+			delete(m.metadata, key)
+			m.removeFromAllIndexes(key)
+			return nil, false, nil
+		}
+	}
+
+	// Update access metadata for non-expired entries
+	if m.metadata[key] != nil {
 		m.metadata[key].LastAccessed = time.Now()
 		m.metadata[key].AccessCount++
 	}
-	return value, exists, nil
+	return value, true, nil
 }
 
 // Set implements Cache.
@@ -120,11 +136,26 @@ func (m *MockCache) Has(ctx context.Context, key string) bool {
 		return m.OnHasCallback(ctx, key)
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	_, exists := m.data[key]
-	return exists
+	if !exists {
+		return false
+	}
+
+	// Check TTL expiration
+	if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+		if time.Since(metadata.CreatedAt) > metadata.TTL {
+			// Entry has expired - remove it
+			delete(m.data, key)
+			delete(m.metadata, key)
+			m.removeFromAllIndexes(key)
+			return false
+		}
+	}
+
+	return true
 }
 
 // GetKeys implements Cache.
@@ -157,12 +188,23 @@ func (m *MockCache) GetMany(ctx context.Context, keys []string) (map[string]any,
 		return m.OnGetManyCallback(ctx, keys)
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	result := make(map[string]any)
 	for _, key := range keys {
 		if value, exists := m.data[key]; exists {
+			// Check TTL expiration
+			if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+				if time.Since(metadata.CreatedAt) > metadata.TTL {
+					// Entry has expired - remove it and skip
+					delete(m.data, key)
+					delete(m.metadata, key)
+					m.removeFromAllIndexes(key)
+					continue
+				}
+			}
+
 			result[key] = value
 			if m.metadata[key] != nil {
 				m.metadata[key].LastAccessed = time.Now()
@@ -219,13 +261,23 @@ func (m *MockCache) GetMetadata(ctx context.Context, key string) (*cache.CacheEn
 		return m.OnGetMetadataCallback(ctx, key)
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	metadata, exists := m.metadata[key]
 	if !exists {
 		return nil, nil
 	}
+
+	// Check TTL expiration
+	if metadata.TTL > 0 && time.Since(metadata.CreatedAt) > metadata.TTL {
+		// Entry has expired - remove it
+		delete(m.data, key)
+		delete(m.metadata, key)
+		m.removeFromAllIndexes(key)
+		return nil, nil
+	}
+
 	return metadata, nil
 }
 
@@ -260,6 +312,19 @@ func (m *MockCache) Increment(ctx context.Context, key string, delta int64, ttl 
 
 	value, exists := m.data[key]
 	var currentValue int64 = 0
+
+	// Check TTL expiration if entry exists
+	if exists {
+		if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+			if time.Since(metadata.CreatedAt) > metadata.TTL {
+				// Entry has expired - remove it and treat as non-existent
+				delete(m.data, key)
+				delete(m.metadata, key)
+				m.removeFromAllIndexes(key)
+				exists = false
+			}
+		}
+	}
 
 	if exists {
 		// Convert existing value to int64
@@ -319,10 +384,23 @@ func (m *MockCache) SetIfNotExists(ctx context.Context, key string, value any, t
 		return false, ctx.Err()
 	}
 
-	// Check if key exists (simple existence check for mock)
+	// Check if key exists (with TTL expiration check)
 	_, exists := m.data[key]
 	if exists {
-		// Key exists
+		// Check TTL expiration
+		if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+			if time.Since(metadata.CreatedAt) > metadata.TTL {
+				// Entry has expired - remove it and treat as non-existent
+				delete(m.data, key)
+				delete(m.metadata, key)
+				m.removeFromAllIndexes(key)
+				exists = false
+			}
+		}
+	}
+
+	if exists {
+		// Key exists and hasn't expired
 		return false, nil
 	}
 
@@ -354,10 +432,23 @@ func (m *MockCache) SetIfExists(ctx context.Context, key string, value any, ttl 
 		return false, ctx.Err()
 	}
 
-	// Check if key exists
+	// Check if key exists (with TTL expiration check)
 	_, exists := m.data[key]
+	if exists {
+		// Check TTL expiration
+		if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+			if time.Since(metadata.CreatedAt) > metadata.TTL {
+				// Entry has expired - remove it and treat as non-existent
+				delete(m.data, key)
+				delete(m.metadata, key)
+				m.removeFromAllIndexes(key)
+				exists = false
+			}
+		}
+	}
+
 	if !exists {
-		// Key doesn't exist
+		// Key doesn't exist or has expired
 		return false, nil
 	}
 
@@ -667,8 +758,22 @@ func (m *MockCache) GetAndUpdate(ctx context.Context, key string, updater cache.
 		return nil, ctx.Err()
 	}
 
-	// Get current value
+	// Get current value (with TTL expiration check)
 	currentValue, exists := m.data[key]
+	if exists {
+		// Check TTL expiration
+		if metadata := m.metadata[key]; metadata != nil && metadata.TTL > 0 {
+			if time.Since(metadata.CreatedAt) > metadata.TTL {
+				// Entry has expired - remove it and treat as non-existent
+				delete(m.data, key)
+				delete(m.metadata, key)
+				m.removeFromAllIndexes(key)
+				exists = false
+				currentValue = nil
+			}
+		}
+	}
+
 	if !exists {
 		currentValue = nil
 	}

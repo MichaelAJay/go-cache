@@ -1,4 +1,4 @@
-package redis
+package redis_test
 
 import (
 	"context"
@@ -7,24 +7,16 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/internal/providers/redis"
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
 	goredis "github.com/go-redis/redis/v8"
 )
 
-// getRedisAddr returns the Redis address for testing
-func getRedisAddr() string {
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
-		addr = "localhost:6379"
-	}
-	return addr
-}
-
 // TestRedisProviderUnit conducts unit tests for the Redis provider without requiring
 // an actual Redis connection
 func TestRedisProviderUnit(t *testing.T) {
-	provider := NewProvider()
+	provider := redis.NewProvider()
 
 	// Test with nil options
 	t.Run("NilOptions", func(t *testing.T) {
@@ -57,7 +49,7 @@ func TestRedisProviderUnit(t *testing.T) {
 		// LoadRedisOptionsFromEnv will set a default address of "127.0.0.1:6379"
 		// so this should NOT return ErrInvalidRedisOptions.
 		// The connection may fail if Redis is not running, but that's a different error.
-		if err == ErrInvalidRedisOptions {
+		if err == redis.ErrInvalidRedisOptions {
 			t.Errorf("Got ErrInvalidRedisOptions but should be using default Redis address from environment loader")
 		}
 
@@ -76,7 +68,7 @@ func TestRedisProviderUnit(t *testing.T) {
 			},
 		})
 
-		if err != ErrInvalidRedisOptions {
+		if err != redis.ErrInvalidRedisOptions {
 			t.Errorf("Expected ErrInvalidRedisOptions, got %v", err)
 		}
 	})
@@ -93,7 +85,7 @@ func TestRedisProviderUnit(t *testing.T) {
 
 		// The connection may fail (if Redis isn't running), but the provider
 		// should at least attempt to create a cache without returning ErrInvalidRedisOptions
-		if err == ErrInvalidRedisOptions {
+		if err == redis.ErrInvalidRedisOptions {
 			t.Error("Provider rejected valid Redis options")
 		}
 	})
@@ -124,7 +116,7 @@ func TestProvider_Create(t *testing.T) {
 		},
 	}
 
-	provider := NewProvider()
+	provider := redis.NewProvider()
 	c, err := provider.Create(options)
 	if err != nil {
 		t.Fatalf("Failed to create cache: %v", err)
@@ -222,7 +214,7 @@ func TestProvider_Create(t *testing.T) {
 // TestProvider_LoadRedisOptionsFromEnv tests loading Redis options from environment
 func TestProvider_LoadRedisOptionsFromEnv(t *testing.T) {
 	// Test with default values
-	options := LoadRedisOptionsFromEnv()
+	options := redis.LoadRedisOptionsFromEnv()
 	if options.Address != "127.0.0.1:6379" {
 		t.Errorf("Expected default address '127.0.0.1:6379', got %s", options.Address)
 	}
@@ -242,7 +234,7 @@ func TestProvider_LoadRedisOptionsFromEnv(t *testing.T) {
 	t.Setenv("REDIS_DB", "1")
 	t.Setenv("REDIS_POOL_SIZE", "20")
 
-	options = LoadRedisOptionsFromEnv()
+	options = redis.LoadRedisOptionsFromEnv()
 	if options.Address != "test:6379" {
 		t.Errorf("Expected address 'test:6379', got %s", options.Address)
 	}

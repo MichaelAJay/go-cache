@@ -5,15 +5,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MichaelAJay/go-metrics/metric"
-	"github.com/MichaelAJay/go-cache"
+	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
+	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
 )
 
 // nullCache implements the Cache interface but doesn't store anything
 // Useful for testing or when you want to disable caching
 type nullCache struct {
-	enhancedMetrics cache.EnhancedCacheMetrics
+	enhancedMetrics interfaces.EnhancedCacheMetrics
 	providerName    string
 	legacyMetrics   *cacheMetrics
 }
@@ -34,16 +35,16 @@ type NullCache struct {
 }
 
 // NewNullCache creates a new null cache instance
-func NewNullCache(options *cache.CacheOptions) cache.Cache {
+func NewNullCache(options *interfaces.CacheOptions) interfaces.Cache {
 	// Initialize metrics systems
 	if options == nil {
-		options = &cache.CacheOptions{}
+		options = &interfaces.CacheOptions{}
 	}
-	
+
 	legacyMetrics := &cacheMetrics{}
-	
+
 	// Determine which metrics system to use
-	var enhancedMetrics cache.EnhancedCacheMetrics
+	var enhancedMetrics interfaces.EnhancedCacheMetrics
 	if options.EnhancedMetrics != nil {
 		enhancedMetrics = options.EnhancedMetrics
 	} else if options.GoMetricsRegistry != nil {
@@ -59,7 +60,6 @@ func NewNullCache(options *cache.CacheOptions) cache.Cache {
 		legacyMetrics:   legacyMetrics,
 	}}
 }
-
 
 // Get always returns not found
 func (c *nullCache) Get(ctx context.Context, key string) (any, bool, error) {
@@ -131,13 +131,13 @@ func (c *nullCache) DeleteMany(ctx context.Context, keys []string) error {
 }
 
 // GetMetadata returns nil
-func (c *nullCache) GetMetadata(ctx context.Context, key string) (*cache.CacheEntryMetadata, error) {
-	return nil, cache.ErrKeyNotFound
+func (c *nullCache) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
+	return nil, cacheErrors.ErrKeyNotFound
 }
 
 // GetManyMetadata returns empty map
-func (c *nullCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error) {
-	return map[string]*cache.CacheEntryMetadata{}, nil
+func (c *nullCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*interfaces.CacheEntryMetadata, error) {
+	return map[string]*interfaces.CacheEntryMetadata{}, nil
 }
 
 // Increment does nothing
@@ -191,13 +191,13 @@ func (c *nullCache) DeleteByPattern(ctx context.Context, pattern string) (int, e
 }
 
 // UpdateMetadata does nothing
-func (c *nullCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
-	return cache.ErrKeyNotFound
+func (c *nullCache) UpdateMetadata(ctx context.Context, key string, updater interfaces.MetadataUpdater) error {
+	return cacheErrors.ErrKeyNotFound
 }
 
 // GetAndUpdate does nothing
-func (c *nullCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
-	return nil, cache.ErrKeyNotFound
+func (c *nullCache) GetAndUpdate(ctx context.Context, key string, updater interfaces.ValueUpdater, ttl time.Duration) (any, error) {
+	return nil, cacheErrors.ErrKeyNotFound
 }
 
 // Metrics recording functions
@@ -205,7 +205,7 @@ func (c *nullCache) recordHit() {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.hits++
 	c.legacyMetrics.mu.Unlock()
-	
+
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordHit(c.providerName, tags)
 }
@@ -214,7 +214,7 @@ func (c *nullCache) recordMiss() {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.misses++
 	c.legacyMetrics.mu.Unlock()
-	
+
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordMiss(c.providerName, tags)
 }
@@ -223,7 +223,7 @@ func (c *nullCache) recordGetLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.getLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "get", "completed", duration, tags)
 }
@@ -232,7 +232,7 @@ func (c *nullCache) recordSetLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.setLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "set", "completed", duration, tags)
 }
@@ -241,7 +241,7 @@ func (c *nullCache) recordDeleteLatency(duration time.Duration) {
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.deleteLatency = duration
 	c.legacyMetrics.mu.Unlock()
-	
+
 	tags := c.getBaseTags()
 	c.enhancedMetrics.RecordOperation(c.providerName, "delete", "completed", duration, tags)
 }

@@ -4,7 +4,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
 )
 
 // Default configuration values
@@ -23,10 +23,20 @@ const (
 	envRedisPoolSize = "REDIS_POOL_SIZE"
 )
 
-// LoadRedisOptionsFromEnv creates a RedisOptions struct with values from environment variables
-// If environment variables are not set, default values are used
-func LoadRedisOptionsFromEnv() *cache.RedisOptions {
-	options := &cache.RedisOptions{
+// LoadRedisOptionsFromEnv creates a RedisOptions struct with values from environment variables.
+// If environment variables are not set, default values are used.
+//
+// Environment Variables:
+// - REDIS_ADDR: Redis server address (default: "127.0.0.1:6379")
+// - REDIS_PASSWORD: Redis password (default: "" - no password)
+// - REDIS_DB: Redis database number (default: 0)
+// - REDIS_POOL_SIZE: Connection pool size (default: 10)
+//
+// This function provides a convenient way to configure Redis from environment
+// variables, especially useful in containerized deployments where configuration
+// is typically provided via environment variables.
+func LoadRedisOptionsFromEnv() *interfaces.RedisOptions {
+	options := &interfaces.RedisOptions{
 		Address:  getEnvString(envRedisAddr, defaultRedisAddr),
 		Password: getEnvString(envRedisPassword, defaultRedisPassword),
 		DB:       getEnvInt(envRedisDB, defaultRedisDB),

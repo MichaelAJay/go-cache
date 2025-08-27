@@ -7,7 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MichaelAJay/go-cache"
+	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
+	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
@@ -18,17 +19,59 @@ const (
 	defaultKeyTTL = time.Hour * 24 * 7 // 1 week
 )
 
+// TODO: Fix serialization/deserialization reliability issues
+//
+// PROBLEM DESCRIPTION:
+// The current deserialization logic in the Get method (around line 244-274) has a
+// cascade fallback approach that tries multiple concrete types (string, int, float64, bool)
+// when the primary deserialization to any fails. This approach has several issues:
+//
+// 1. Type inference ambiguity - values may deserialize to wrong types
+// 2. Performance overhead - multiple deserialization attempts per failed get operation
+// 3. Inconsistent behavior - same data may return different types across calls
+// 4. Error masking - original deserialization errors are lost in fallback attempts
+//
+// ROOT CAUSE:
+// The issue stems from c.serializer.Deserialize() call patterns that rely on runtime
+// type inference rather than preserving the original type information when data was stored.
+//
+// TESTING PLAN:
+// 1. Create comprehensive deserialization test suite:
+//    - Test struct deserialization (most common failure case)
+//    - Test primitive type consistency (int -> float64 conversion issues)
+//    - Test error scenarios (malformed data, incompatible types)
+//    - Test concurrent access during deserialization failures
+//    - Test performance impact of fallback cascades
+//
+// 2. Create integration tests with real sessionstore usage:
+//    - Test Session struct serialization/deserialization
+//    - Test metadata map[string]string handling
+//    - Test timestamp field preservation (int64 vs other types)
+//
+// 3. Add benchmarks to measure performance impact:
+//    - Benchmark successful deserialization (baseline)
+//    - Benchmark fallback cascade performance (worst case)
+//    - Compare memory allocation patterns
+//
+// SOLUTION APPROACHES TO EVALUATE:
+// A) Store type metadata alongside serialized data
+// B) Use typed serialization methods that preserve Go type info
+// C) Implement configurable deserialization strategy per cache instance
+// D) Add strict mode that fails fast without fallback attempts
+//
+// PRIORITY: HIGH - This affects data integrity and performance in production usage
+
 // memoryCache implements the Cache interface using an in-memory map
 type memoryCache struct {
 	items      map[string]*cacheEntry
 	mu         sync.RWMutex
-	options    *cache.CacheOptions
+	options    *interfaces.CacheOptions
 	serializer serializer.Serializer
 
 	// Metrics - support both old and new systems
-	legacyMetrics   *cacheMetrics              // Legacy metrics for backward compatibility
-	enhancedMetrics cache.EnhancedCacheMetrics // New go-metrics based system
-	providerName    string                     // Provider name for metrics tagging
+	legacyMetrics   *cacheMetrics                   // Legacy metrics for backward compatibility
+	enhancedMetrics interfaces.EnhancedCacheMetrics // New go-metrics based system
+	providerName    string                          // Provider name for metrics tagging
 
 	cleanupTicker   *time.Ticker
 	cleanupStopChan chan struct{}
@@ -36,8 +79,8 @@ type memoryCache struct {
 	// Enhanced features
 	indexes        map[string]map[string][]string // indexName -> indexKey -> []primaryKeys
 	indexPatterns  map[string]string              // indexName -> keyPattern
-	hooks          *cache.CacheHooks
-	securityConfig *cache.SecurityConfig
+	hooks          *interfaces.CacheHooks
+	securityConfig *interfaces.SecurityConfig
 }
 
 // cacheMetrics implements a thread-safe metrics collector
@@ -68,10 +111,28 @@ type MemoryCache struct {
 	*memoryCache
 }
 
-// NewMemoryCache creates a new memory cache instance
-func NewMemoryCache(options *cache.CacheOptions) (cache.Cache, error) {
+// NewMemoryCache creates a new memory cache instance with the provided options.
+//
+// Initialization Process:
+// 1. Validates and applies configuration options (uses defaults if nil)
+// 2. Selects serialization format (defaults to Binary/Gob for memory performance)
+// 3. Initializes metrics systems (legacy and enhanced metrics support)
+// 4. Sets up secondary indexes from configuration
+// 5. Starts cleanup goroutine if cleanup interval is configured
+//
+// Features Initialized:
+// - Thread-safe map-based storage with RWMutex
+// - Configurable serialization (Binary, JSON, MessagePack)
+// - Automatic expiration and cleanup
+// - Secondary indexing for complex queries
+// - Comprehensive metrics and observability
+// - Security features (timing protection, secure cleanup)
+// - Lifecycle hooks for operation interception
+//
+// Returns an error if serialization setup fails or other initialization issues occur.
+func NewMemoryCache(options *interfaces.CacheOptions) (interfaces.Cache, error) {
 	if options == nil {
-		options = &cache.CacheOptions{}
+		options = &interfaces.CacheOptions{}
 	}
 
 	// Determine serializer format
@@ -90,7 +151,7 @@ func NewMemoryCache(options *cache.CacheOptions) (cache.Cache, error) {
 	legacyMetrics := &cacheMetrics{}
 
 	// Determine which metrics system to use
-	var enhancedMetrics cache.EnhancedCacheMetrics
+	var enhancedMetrics interfaces.EnhancedCacheMetrics
 	if options.EnhancedMetrics != nil {
 		enhancedMetrics = options.EnhancedMetrics
 	} else if options.GoMetricsRegistry != nil {
@@ -161,12 +222,12 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 
 	// Validate key
 	if key == "" {
-		return nil, false, cache.ErrInvalidKey
+		return nil, false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, false, cache.ErrContextCanceled
+		return nil, false, cacheErrors.ErrContextCanceled
 	}
 
 	// Call PreGet hook
@@ -202,10 +263,26 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 		return nil, false, nil
 	}
 
-	// Deserialize value
+	// Deserialize value using progressive type recovery algorithm
 	var value any
 
-	// Try standard deserialization first
+	// Progressive Type Recovery Algorithm:
+	// This handles cases where serialization format requires concrete types
+	// (especially relevant for Binary/Gob format which needs exact type matching)
+	//
+	// Algorithm steps:
+	// 1. Generic deserialization: Try deserializing to any first
+	// 2. Type-specific recovery: If generic fails, try common concrete types:
+	//    - string (most common for text data)
+	//    - int (common numeric type)
+	//    - float64 (Go's default float type)
+	//    - bool (boolean values)
+	// 3. Graceful failure: Return deserialization error if all attempts fail
+	//
+	// This approach ensures:
+	// - Maximum compatibility with different serialization formats
+	// - Graceful handling of type mismatches
+	// - Support for cached values stored with different type expectations
 	if err := c.serializer.Deserialize(entry.value, &value); err != nil {
 		// If standard deserialization fails, try with specific types
 		// This helps with Binary format which may need concrete types
@@ -231,7 +308,7 @@ func (c *memoryCache) Get(ctx context.Context, key string) (any, bool, error) {
 						value = boolVal
 					} else {
 						// If all else fails, return error
-						return nil, false, cache.ErrDeserialization
+						return nil, false, cacheErrors.ErrDeserialization
 					}
 				}
 			}
@@ -279,13 +356,13 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 
 	// Validate key
 	if key == "" {
-		err = cache.ErrInvalidKey
+		err = cacheErrors.ErrInvalidKey
 		return err
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		err = cache.ErrContextCanceled
+		err = cacheErrors.ErrContextCanceled
 		return err
 	}
 
@@ -308,7 +385,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return cache.ErrSerialization
+		return cacheErrors.ErrSerialization
 	}
 
 	// Create the cache entry
@@ -329,7 +406,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 
 	// Check if cache is full (either by entry count or size)
 	if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
-		return cache.ErrCacheFull
+		return cacheErrors.ErrCacheFull
 	}
 
 	// Check if adding this entry would exceed max size
@@ -339,7 +416,7 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 			currentSize += e.size
 		}
 		if currentSize+entry.size > c.options.MaxSize {
-			return cache.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -348,8 +425,8 @@ func (c *memoryCache) Set(ctx context.Context, key string, value any, ttl time.D
 	// Add to appropriate indexes
 	c.addToIndexes(key)
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -363,12 +440,12 @@ func (c *memoryCache) Delete(ctx context.Context, key string) error {
 
 	// Validate key
 	if key == "" {
-		return cache.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -386,7 +463,7 @@ func (c *memoryCache) Delete(ctx context.Context, key string) error {
 func (c *memoryCache) Clear(ctx context.Context) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -480,7 +557,7 @@ func (c *memoryCache) GetMany(ctx context.Context, keys []string) (map[string]an
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	start := time.Now()
@@ -544,7 +621,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	start := time.Now()
@@ -573,13 +650,13 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 	for key, value := range items {
 		// Validate key
 		if key == "" {
-			return cache.ErrInvalidKey
+			return cacheErrors.ErrInvalidKey
 		}
 
 		// Serialize value
 		data, err := c.serializer.Serialize(value)
 		if err != nil {
-			return cache.ErrSerialization
+			return cacheErrors.ErrSerialization
 		}
 
 		// Create entry
@@ -605,7 +682,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 	if c.options.MaxEntries > 0 {
 		availableSlots := c.options.MaxEntries - len(c.items)
 		if availableSlots < len(newEntries) {
-			return cache.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -616,7 +693,7 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 			currentSize += e.size
 		}
 		if currentSize+totalNewSize > c.options.MaxSize {
-			return cache.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
@@ -625,8 +702,8 @@ func (c *memoryCache) SetMany(ctx context.Context, items map[string]any, ttl tim
 		c.items[key] = entry
 	}
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -640,7 +717,7 @@ func (c *memoryCache) DeleteMany(ctx context.Context, keys []string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	start := time.Now()
@@ -666,20 +743,20 @@ func (c *memoryCache) DeleteMany(ctx context.Context, keys []string) error {
 }
 
 // GetMetadata retrieves metadata for a cache entry
-func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*cache.CacheEntryMetadata, error) {
+func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
 	// Validate key
 	if key == "" {
-		return nil, cache.ErrInvalidKey
+		return nil, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	// First check if the key exists
 	if !c.Has(ctx, key) {
-		return nil, cache.ErrKeyNotFound
+		return nil, cacheErrors.ErrKeyNotFound
 	}
 
 	c.mu.RLock()
@@ -695,7 +772,7 @@ func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*cache.Cache
 		}
 	}
 
-	return &cache.CacheEntryMetadata{
+	return &interfaces.CacheEntryMetadata{
 		Key:          key,
 		CreatedAt:    entry.createdAt,
 		LastAccessed: entry.lastAccess,
@@ -707,18 +784,18 @@ func (c *memoryCache) GetMetadata(ctx context.Context, key string) (*cache.Cache
 }
 
 // GetManyMetadata retrieves metadata for multiple cache entries
-func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*cache.CacheEntryMetadata, error) {
+func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[string]*interfaces.CacheEntryMetadata, error) {
 	// Validate keys
 	if len(keys) == 0 {
-		return map[string]*cache.CacheEntryMetadata{}, nil
+		return map[string]*interfaces.CacheEntryMetadata{}, nil
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
-	result := make(map[string]*cache.CacheEntryMetadata)
+	result := make(map[string]*interfaces.CacheEntryMetadata)
 	now := time.Now()
 
 	c.mu.RLock()
@@ -736,7 +813,7 @@ func (c *memoryCache) GetManyMetadata(ctx context.Context, keys []string) (map[s
 				ttl = entry.expiresAt.Sub(now)
 			}
 
-			result[key] = &cache.CacheEntryMetadata{
+			result[key] = &interfaces.CacheEntryMetadata{
 				Key:          key,
 				CreatedAt:    entry.createdAt,
 				LastAccessed: entry.lastAccess,
@@ -764,7 +841,24 @@ func (c *memoryCache) cleanupLoop() {
 	}
 }
 
-// cleanup removes expired entries from the cache
+// cleanup removes expired entries from the cache.
+//
+// Cleanup Algorithm:
+// 1. Single-pass iteration: Scans all cache entries once under read lock
+// 2. Batch identification: Collects expired keys without immediate deletion
+// 3. Atomic batch removal: Acquires write lock and removes all expired entries
+// 4. Index consistency: Updates secondary indexes by removing stale references
+// 5. Metrics recording: Tracks cleanup performance and item counts
+//
+// This algorithm minimizes lock contention by:
+// - Using read lock during scan phase (allows concurrent reads)
+// - Batching deletions under a single write lock acquisition
+// - Performing index cleanup atomically with entry removal
+//
+// Performance characteristics:
+// - Time complexity: O(n) where n is total cache entries
+// - Space complexity: O(k) where k is number of expired entries
+// - Lock contention: Minimal due to read-heavy scan phase
 func (c *memoryCache) cleanup() {
 	start := time.Now()
 	now := time.Now()
@@ -796,14 +890,33 @@ func (c *memoryCache) cleanup() {
 }
 
 // updateSizeMetrics updates the size and entry count metrics
+// This version acquires its own read lock for safe concurrent access
 func (c *memoryCache) updateSizeMetrics() {
-	var totalSize int64
-	entryCount := int64(len(c.items))
+	c.mu.RLock()
+	totalSize, entryCount := c.calculateSizeMetricsUnsafe()
+	c.mu.RUnlock()
 
+	c.updateMetricsValues(totalSize, entryCount)
+}
+
+// updateSizeMetricsUnsafe updates metrics assuming caller holds the appropriate lock
+func (c *memoryCache) updateSizeMetricsUnsafe() {
+	totalSize, entryCount := c.calculateSizeMetricsUnsafe()
+	c.updateMetricsValues(totalSize, entryCount)
+}
+
+// calculateSizeMetricsUnsafe calculates metrics without acquiring locks
+// Caller must hold at least a read lock on c.mu
+func (c *memoryCache) calculateSizeMetricsUnsafe() (totalSize, entryCount int64) {
+	entryCount = int64(len(c.items))
 	for _, entry := range c.items {
 		totalSize += entry.size
 	}
+	return totalSize, entryCount
+}
 
+// updateMetricsValues updates the actual metrics values
+func (c *memoryCache) updateMetricsValues(totalSize, entryCount int64) {
 	// Update legacy metrics
 	c.legacyMetrics.mu.Lock()
 	c.legacyMetrics.cacheSize = totalSize
@@ -887,12 +1000,12 @@ func (c *memoryCache) getBaseTags() metric.Tags {
 func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
 	// Validate key
 	if key == "" {
-		return 0, cache.ErrInvalidKey
+		return 0, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return 0, cache.ErrContextCanceled
+		return 0, cacheErrors.ErrContextCanceled
 	}
 
 	// Use default TTL if not specified
@@ -924,7 +1037,7 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 				// If can't deserialize as generic, try as int64
 				var intVal int64
 				if err := c.serializer.Deserialize(entry.value, &intVal); err != nil {
-					return 0, cache.ErrDeserialization
+					return 0, cacheErrors.ErrDeserialization
 				}
 				currentValue = intVal
 			} else {
@@ -941,7 +1054,7 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 				case float32:
 					currentValue = int64(v)
 				default:
-					return 0, cache.ErrInvalidValue
+					return 0, cacheErrors.ErrInvalidValue
 				}
 			}
 		}
@@ -953,7 +1066,7 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 	// Serialize new value
 	data, err := c.serializer.Serialize(newValue)
 	if err != nil {
-		return 0, cache.ErrSerialization
+		return 0, cacheErrors.ErrSerialization
 	}
 
 	// Create or update entry
@@ -977,8 +1090,8 @@ func (c *memoryCache) Increment(ctx context.Context, key string, delta int64, tt
 
 	c.items[key] = newEntry
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return newValue, nil
 }
@@ -992,12 +1105,12 @@ func (c *memoryCache) Decrement(ctx context.Context, key string, delta int64, tt
 func (c *memoryCache) SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	// Validate key
 	if key == "" {
-		return false, cache.ErrInvalidKey
+		return false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, cache.ErrContextCanceled
+		return false, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1025,12 +1138,12 @@ func (c *memoryCache) SetIfNotExists(ctx context.Context, key string, value any,
 func (c *memoryCache) SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	// Validate key
 	if key == "" {
-		return false, cache.ErrInvalidKey
+		return false, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, cache.ErrContextCanceled
+		return false, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1067,7 +1180,7 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 	// Serialize value
 	data, err := c.serializer.Serialize(value)
 	if err != nil {
-		return cache.ErrSerialization
+		return cacheErrors.ErrSerialization
 	}
 
 	// Create the cache entry
@@ -1084,7 +1197,7 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 
 	// Check cache limits
 	if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
-		return cache.ErrCacheFull
+		return cacheErrors.ErrCacheFull
 	}
 
 	if c.options.MaxSize > 0 {
@@ -1093,14 +1206,14 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 			currentSize += e.size
 		}
 		if currentSize+entry.size > c.options.MaxSize {
-			return cache.ErrCacheFull
+			return cacheErrors.ErrCacheFull
 		}
 	}
 
 	c.items[key] = entry
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since caller holds lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -1109,38 +1222,125 @@ func (c *memoryCache) setLocked(key string, value any, ttl time.Duration, now ti
 func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// For large datasets, use chunked processing to reduce lock contention
+	const LARGE_DATASET_THRESHOLD = 5000
+	const CHUNK_SIZE = 1000
 
-	// Register the index pattern if not already registered
+	// First, register the index pattern under write lock
+	c.mu.Lock()
 	if _, exists := c.indexPatterns[indexName]; !exists {
 		c.indexPatterns[indexName] = keyPattern
 		c.indexes[indexName] = make(map[string][]string)
 	}
+	itemCount := len(c.items)
+	c.mu.Unlock()
+
+	if itemCount > LARGE_DATASET_THRESHOLD {
+		return c.addIndexChunked(ctx, indexName, keyPattern, indexKey, CHUNK_SIZE)
+	}
+
+	return c.addIndexDirect(ctx, indexName, keyPattern, indexKey)
+}
+
+// addIndexDirect performs index creation with single lock (optimized for smaller datasets)
+func (c *memoryCache) addIndexDirect(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Find all existing keys that match the pattern and should be indexed under this indexKey
+	matchingKeys := make([]string, 0, len(c.items)/10) // Pre-allocate with heuristic capacity
+
+	// Collect all matching keys first
 	for key := range c.items {
 		if c.matchesPattern(key, keyPattern) {
-			// Add to index
-			if c.indexes[indexName][indexKey] == nil {
-				c.indexes[indexName][indexKey] = make([]string, 0)
-			}
+			matchingKeys = append(matchingKeys, key)
+		}
+	}
 
-			// Check if key is already in the index
-			found := false
-			for _, existingKey := range c.indexes[indexName][indexKey] {
-				if existingKey == key {
-					found = true
-					break
-				}
-			}
+	// Initialize index slice if needed with proper capacity
+	if c.indexes[indexName][indexKey] == nil {
+		c.indexes[indexName][indexKey] = make([]string, 0, len(matchingKeys))
+	}
 
-			if !found {
-				c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
+	// Use map for O(1) duplicate detection instead of O(k) linear search
+	existingKeysMap := make(map[string]bool, len(c.indexes[indexName][indexKey]))
+	for _, existingKey := range c.indexes[indexName][indexKey] {
+		existingKeysMap[existingKey] = true
+	}
+
+	// Add only new keys to the index
+	for _, key := range matchingKeys {
+		if !existingKeysMap[key] {
+			c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
+			existingKeysMap[key] = true // Update map for potential future operations
+		}
+	}
+
+	return nil
+}
+
+// addIndexChunked performs index creation with chunked processing (optimized for larger datasets)
+func (c *memoryCache) addIndexChunked(ctx context.Context, indexName string, keyPattern string, indexKey string, chunkSize int) error {
+	// Step 1: Collect all keys under read lock (allows concurrent reads)
+	c.mu.RLock()
+	allKeys := make([]string, 0, len(c.items))
+	for key := range c.items {
+		allKeys = append(allKeys, key)
+	}
+	c.mu.RUnlock()
+
+	// Step 2: Process pattern matching without holding locks (CPU-intensive work)
+	matchingKeys := make([]string, 0, len(allKeys)/10)
+
+	for i := 0; i < len(allKeys); i += chunkSize {
+		// Check for context cancellation between chunks
+		if ctx.Err() != nil {
+			return cacheErrors.ErrContextCanceled
+		}
+
+		end := i + chunkSize
+		if end > len(allKeys) {
+			end = len(allKeys)
+		}
+
+		// Process chunk without any locks
+		for j := i; j < end; j++ {
+			if c.matchesPattern(allKeys[j], keyPattern) {
+				matchingKeys = append(matchingKeys, allKeys[j])
 			}
+		}
+	}
+
+	// Step 3: Update index under write lock (minimal lock duration)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Verify keys still exist (they might have been deleted during processing)
+	validMatchingKeys := make([]string, 0, len(matchingKeys))
+	for _, key := range matchingKeys {
+		if _, exists := c.items[key]; exists {
+			validMatchingKeys = append(validMatchingKeys, key)
+		}
+	}
+
+	// Initialize index slice if needed with proper capacity
+	if c.indexes[indexName][indexKey] == nil {
+		c.indexes[indexName][indexKey] = make([]string, 0, len(validMatchingKeys))
+	}
+
+	// Use map for O(1) duplicate detection
+	existingKeysMap := make(map[string]bool, len(c.indexes[indexName][indexKey]))
+	for _, existingKey := range c.indexes[indexName][indexKey] {
+		existingKeysMap[existingKey] = true
+	}
+
+	// Add only new keys to the index
+	for _, key := range validMatchingKeys {
+		if !existingKeysMap[key] {
+			c.indexes[indexName][indexKey] = append(c.indexes[indexName][indexKey], key)
 		}
 	}
 
@@ -1151,7 +1351,7 @@ func (c *memoryCache) AddIndex(ctx context.Context, indexName string, keyPattern
 func (c *memoryCache) RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1190,7 +1390,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.RLock()
@@ -1221,7 +1421,7 @@ func (c *memoryCache) GetByIndex(ctx context.Context, indexName string, indexKey
 func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, indexKey string) error {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	// Get the keys first
@@ -1239,8 +1439,8 @@ func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, index
 		c.removeFromAllIndexes(key)
 	}
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return nil
 }
@@ -1249,7 +1449,7 @@ func (c *memoryCache) DeleteByIndex(ctx context.Context, indexName string, index
 func (c *memoryCache) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.RLock()
@@ -1276,7 +1476,7 @@ func (c *memoryCache) GetKeysByPattern(ctx context.Context, pattern string) ([]s
 func (c *memoryCache) DeleteByPattern(ctx context.Context, pattern string) (int, error) {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return 0, cache.ErrContextCanceled
+		return 0, cacheErrors.ErrContextCanceled
 	}
 
 	// Get matching keys first
@@ -1298,22 +1498,22 @@ func (c *memoryCache) DeleteByPattern(ctx context.Context, pattern string) (int,
 		}
 	}
 
-	// Update metrics
-	c.updateSizeMetrics()
+	// Update metrics (using unsafe version since we hold write lock)
+	c.updateSizeMetricsUnsafe()
 
 	return deletedCount, nil
 }
 
 // UpdateMetadata updates the metadata of a cache entry
-func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater cache.MetadataUpdater) error {
+func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater interfaces.MetadataUpdater) error {
 	// Validate key
 	if key == "" {
-		return cache.ErrInvalidKey
+		return cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return cache.ErrContextCanceled
+		return cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1321,7 +1521,7 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater ca
 
 	entry, exists := c.items[key]
 	if !exists {
-		return cache.ErrKeyNotFound
+		return cacheErrors.ErrKeyNotFound
 	}
 
 	// Check if entry has expired
@@ -1329,7 +1529,7 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater ca
 	if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
 		delete(c.items, key)
 		c.removeFromAllIndexes(key)
-		return cache.ErrKeyNotFound
+		return cacheErrors.ErrKeyNotFound
 	}
 
 	// Create current metadata
@@ -1338,7 +1538,7 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater ca
 		ttl = entry.expiresAt.Sub(now)
 	}
 
-	currentMetadata := &cache.CacheEntryMetadata{
+	currentMetadata := &interfaces.CacheEntryMetadata{
 		Key:          key,
 		CreatedAt:    entry.createdAt,
 		LastAccessed: entry.lastAccess,
@@ -1372,15 +1572,15 @@ func (c *memoryCache) UpdateMetadata(ctx context.Context, key string, updater ca
 }
 
 // GetAndUpdate atomically gets and updates a cache entry
-func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater cache.ValueUpdater, ttl time.Duration) (any, error) {
+func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater interfaces.ValueUpdater, ttl time.Duration) (any, error) {
 	// Validate key
 	if key == "" {
-		return nil, cache.ErrInvalidKey
+		return nil, cacheErrors.ErrInvalidKey
 	}
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, cache.ErrContextCanceled
+		return nil, cacheErrors.ErrContextCanceled
 	}
 
 	c.mu.Lock()
@@ -1399,7 +1599,7 @@ func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater cach
 		} else {
 			// Deserialize current value
 			if err := c.serializer.Deserialize(entry.value, &currentValue); err != nil {
-				return nil, cache.ErrDeserialization
+				return nil, cacheErrors.ErrDeserialization
 			}
 		}
 	}
@@ -1421,7 +1621,23 @@ func (c *memoryCache) GetAndUpdate(ctx context.Context, key string, updater cach
 
 // Helper methods
 
-// matchesPattern checks if a key matches a glob pattern
+// matchesPattern checks if a key matches a glob pattern.
+//
+// Pattern Matching Algorithm:
+// 1. Primary matching: Uses filepath.Match for standard glob patterns
+//   - Supports * (match any sequence of characters)
+//   - Supports ? (match any single character)
+//   - Supports [abc] and [a-z] character classes
+//
+// 2. Fallback mechanism: If filepath.Match fails due to malformed patterns
+//   - Strips asterisks from pattern to get literal substring
+//   - Uses simple string containment check
+//   - Ensures robust matching even with invalid glob syntax
+//
+// This dual-approach ensures:
+// - Maximum compatibility with standard glob patterns
+// - Graceful degradation for edge cases
+// - No failures due to pattern syntax errors
 func (c *memoryCache) matchesPattern(key, pattern string) bool {
 	matched, err := filepath.Match(pattern, key)
 	if err != nil {
@@ -1431,7 +1647,23 @@ func (c *memoryCache) matchesPattern(key, pattern string) bool {
 	return matched
 }
 
-// removeFromAllIndexes removes a key from all indexes
+// removeFromAllIndexes removes a key from all indexes.
+//
+// Index Cleanup Algorithm:
+// 1. Iterates through all registered secondary indexes
+// 2. For each index, checks if the key matches the index's pattern
+// 3. If pattern matches, searches all index entries for the key
+// 4. Removes key from matching index entries using slice filtering
+// 5. Cleans up empty index entries to prevent memory leaks
+//
+// This algorithm ensures:
+// - Index consistency: No stale references remain after key deletion
+// - Memory efficiency: Empty index entries are garbage collected
+// - Pattern correctness: Only removes from indexes where key actually belongs
+//
+// Performance characteristics:
+// - Time complexity: O(i * e * k) where i=indexes, e=entries per index, k=keys per entry
+// - Called during: Delete operations, expiration cleanup, cache clearing
 func (c *memoryCache) removeFromAllIndexes(key string) {
 	for indexName, indexMap := range c.indexes {
 		pattern := c.indexPatterns[indexName]
@@ -1459,4 +1691,579 @@ func (c *memoryCache) addToIndexes(key string) {
 	// The actual indexing happens when AddIndex is called explicitly
 	// This is a placeholder for automatic indexing logic that would
 	// need to be implemented based on specific requirements
+}
+
+// =============================================================================
+// TypedCacheProvider implementation for optimized type-safe operations
+// =============================================================================
+
+// GetWithTypeInfo retrieves a value with type information for optimized deserialization
+func (c *memoryCache) GetWithTypeInfo(ctx context.Context, key string, typeInfo interfaces.TypeInfo) (any, bool, error) {
+	start := time.Now()
+	defer func() {
+		c.recordGetLatency(time.Since(start))
+		// Apply timing protection if enabled
+		if c.securityConfig != nil && c.securityConfig.EnableTimingProtection {
+			elapsed := time.Since(start)
+			if elapsed < c.securityConfig.MinProcessingTime {
+				actualTime := elapsed
+				adjustedTime := c.securityConfig.MinProcessingTime
+				time.Sleep(adjustedTime - actualTime)
+
+				// Record timing protection metrics
+				tags := c.getBaseTags()
+				c.enhancedMetrics.RecordTimingProtection(c.providerName, "get", actualTime, adjustedTime, tags)
+			}
+		}
+	}()
+
+	// Validate key
+	if key == "" {
+		return nil, false, cacheErrors.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return nil, false, cacheErrors.ErrContextCanceled
+	}
+
+	// Call PreGet hook
+	if c.hooks != nil && c.hooks.PreGet != nil {
+		if err := c.hooks.PreGet(ctx, key); err != nil {
+			return nil, false, err
+		}
+	}
+
+	c.mu.RLock()
+	entry, exists := c.items[key]
+	c.mu.RUnlock()
+
+	if !exists {
+		c.recordMiss()
+		// Call PostGet hook for miss
+		if c.hooks != nil && c.hooks.PostGet != nil {
+			c.hooks.PostGet(ctx, key, nil, false, nil)
+		}
+		return nil, false, nil
+	}
+
+	// Check if entry has expired
+	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+		c.mu.Lock()
+		delete(c.items, key)
+		c.mu.Unlock()
+		c.recordMiss()
+		// Call PostGet hook for expired entry
+		if c.hooks != nil && c.hooks.PostGet != nil {
+			c.hooks.PostGet(ctx, key, nil, false, nil)
+		}
+		return nil, false, nil
+	}
+
+	// Try typed deserialization if the serializer supports it
+	var value any
+	var err error
+	
+	// Check if serializer supports typed deserialization using the proper interface
+	if typedSerializer, ok := c.serializer.(interface {
+		DeserializeWithTypeInfo(data []byte, typeInfo serializer.TypeInfo) (any, error)
+	}); ok {
+		// Convert our TypeInfo to the serializer's TypeInfo format
+		serializerTypeInfo := serializer.TypeInfo{
+			Type:     typeInfo.Type,
+			TypeName: typeInfo.TypeName,
+		}
+		
+		// Use typed deserialization - this is the key improvement!
+		value, err = typedSerializer.DeserializeWithTypeInfo(entry.value, serializerTypeInfo)
+		if err != nil {
+			return nil, false, cacheErrors.ErrDeserialization
+		}
+	} else {
+		// Fallback to regular deserialization
+		if err := c.serializer.Deserialize(entry.value, &value); err != nil {
+			// If standard deserialization fails, try with specific types (existing logic)
+			var strVal string
+			if err := c.serializer.Deserialize(entry.value, &strVal); err == nil {
+				value = strVal
+			} else {
+				var intVal int
+				if err := c.serializer.Deserialize(entry.value, &intVal); err == nil {
+					value = intVal
+				} else {
+					var floatVal float64
+					if err := c.serializer.Deserialize(entry.value, &floatVal); err == nil {
+						value = floatVal
+					} else {
+						var boolVal bool
+						if err := c.serializer.Deserialize(entry.value, &boolVal); err == nil {
+							value = boolVal
+						} else {
+							return nil, false, cacheErrors.ErrDeserialization
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Update access metadata
+	c.mu.Lock()
+	entry.accessCount++
+	entry.lastAccess = time.Now()
+	c.mu.Unlock()
+
+	c.recordHit()
+	// Call PostGet hook for successful get
+	if c.hooks != nil && c.hooks.PostGet != nil {
+		c.hooks.PostGet(ctx, key, value, true, nil)
+	}
+	return value, true, nil
+}
+
+// SetWithTypeInfo stores a value with type information for optimized serialization
+func (c *memoryCache) SetWithTypeInfo(ctx context.Context, key string, value any, typeInfo interfaces.TypeInfo, ttl time.Duration) error {
+	// Check if serializer supports typed serialization
+	if typedSerializer, ok := c.serializer.(interface {
+		SerializeWithTypeInfo(v any, typeInfo serializer.TypeInfo) ([]byte, error)
+	}); ok {
+		// Convert our TypeInfo to the serializer's TypeInfo format
+		serializerTypeInfo := serializer.TypeInfo{
+			Type:     typeInfo.Type,
+			TypeName: typeInfo.TypeName,
+		}
+		
+		// Use typed serialization for potential optimization
+		start := time.Now()
+		var err error
+		defer func() {
+			c.recordSetLatency(time.Since(start))
+			// Apply timing protection if enabled
+			if c.securityConfig != nil && c.securityConfig.EnableTimingProtection {
+				elapsed := time.Since(start)
+				if elapsed < c.securityConfig.MinProcessingTime {
+					actualTime := elapsed
+					adjustedTime := c.securityConfig.MinProcessingTime
+					time.Sleep(adjustedTime - actualTime)
+
+					// Record timing protection metrics
+					tags := c.getBaseTags()
+					c.enhancedMetrics.RecordTimingProtection(c.providerName, "set", actualTime, adjustedTime, tags)
+				}
+			}
+			// Call PostSet hook
+			if c.hooks != nil && c.hooks.PostSet != nil {
+				c.hooks.PostSet(ctx, key, value, ttl, err)
+			}
+		}()
+
+		// Validate key
+		if key == "" {
+			err = cacheErrors.ErrInvalidKey
+			return err
+		}
+
+		// Check for context cancellation
+		if ctx.Err() != nil {
+			err = cacheErrors.ErrContextCanceled
+			return err
+		}
+
+		// Call PreSet hook
+		if c.hooks != nil && c.hooks.PreSet != nil {
+			if hookErr := c.hooks.PreSet(ctx, key, value, ttl); hookErr != nil {
+				err = hookErr
+				return err
+			}
+		}
+
+		// Use default TTL if not specified
+		if ttl == 0 {
+			ttl = c.options.TTL
+		}
+		if ttl <= 0 {
+			ttl = defaultKeyTTL
+		}
+
+		// Serialize value using typed serialization
+		data, err := typedSerializer.SerializeWithTypeInfo(value, serializerTypeInfo)
+		if err != nil {
+			return cacheErrors.ErrSerialization
+		}
+
+		// Create the cache entry
+		now := time.Now()
+		entry := &cacheEntry{
+			value:     data,
+			createdAt: now,
+			size:      int64(len(data)),
+			tags:      []string{},
+		}
+
+		if ttl > 0 {
+			entry.expiresAt = now.Add(ttl)
+		}
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		// Check if cache is full (either by entry count or size)
+		if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
+			return cacheErrors.ErrCacheFull
+		}
+
+		// Check if adding this entry would exceed max size
+		if c.options.MaxSize > 0 {
+			currentSize := int64(0)
+			for _, e := range c.items {
+				currentSize += e.size
+			}
+			if currentSize+entry.size > c.options.MaxSize {
+				return cacheErrors.ErrCacheFull
+			}
+		}
+
+		c.items[key] = entry
+
+		// Add to appropriate indexes
+		c.addToIndexes(key)
+
+		// Update metrics (using unsafe version since we hold write lock)
+		c.updateSizeMetricsUnsafe()
+
+		return nil
+	} else {
+		// Fallback to regular Set method
+		return c.Set(ctx, key, value, ttl)
+	}
+}
+
+// GetAndUpdateWithTypeInfo performs atomic get-and-update with type information
+func (c *memoryCache) GetAndUpdateWithTypeInfo(ctx context.Context, key string, typeInfo interfaces.TypeInfo, updater func(any) (any, bool), ttl time.Duration) (any, error) {
+	// Validate key
+	if key == "" {
+		return nil, cacheErrors.ErrInvalidKey
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return nil, cacheErrors.ErrContextCanceled
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, exists := c.items[key]
+	var currentValue any
+
+	if exists {
+		// Check if entry has expired
+		now := time.Now()
+		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+			delete(c.items, key)
+			c.removeFromAllIndexes(key)
+			exists = false
+		} else {
+			// Deserialize current value using typed deserialization if available
+			if typedSerializer, ok := c.serializer.(interface {
+				DeserializeWithTypeInfo(data []byte, typeInfo serializer.TypeInfo) (any, error)
+			}); ok {
+				serializerTypeInfo := serializer.TypeInfo{
+					Type:     typeInfo.Type,
+					TypeName: typeInfo.TypeName,
+				}
+				
+				var err error
+				currentValue, err = typedSerializer.DeserializeWithTypeInfo(entry.value, serializerTypeInfo)
+				if err != nil {
+					return nil, cacheErrors.ErrDeserialization
+				}
+			} else {
+				// Fallback to regular deserialization
+				if err := c.serializer.Deserialize(entry.value, &currentValue); err != nil {
+					return nil, cacheErrors.ErrDeserialization
+				}
+			}
+		}
+	}
+
+	// Apply the updater
+	newValue, shouldUpdate := updater(currentValue)
+
+	if shouldUpdate {
+		// Update the entry using typed serialization if available
+		if typedSerializer, ok := c.serializer.(interface {
+			SerializeWithTypeInfo(v any, typeInfo serializer.TypeInfo) ([]byte, error)
+		}); ok {
+			serializerTypeInfo := serializer.TypeInfo{
+				Type:     typeInfo.Type,
+				TypeName: typeInfo.TypeName,
+			}
+			
+			err := c.setLockedWithTypeInfo(key, newValue, serializerTypeInfo, typedSerializer, ttl, time.Now())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// Fallback to regular setLocked
+			err := c.setLocked(key, newValue, ttl, time.Now())
+			if err != nil {
+				return nil, err
+			}
+		}
+		return newValue, nil
+	}
+
+	return currentValue, nil
+}
+
+// setLockedWithTypeInfo is a helper method for typed serialization while holding the lock
+func (c *memoryCache) setLockedWithTypeInfo(key string, value any, typeInfo serializer.TypeInfo, typedSerializer interface {
+	SerializeWithTypeInfo(v any, typeInfo serializer.TypeInfo) ([]byte, error)
+}, ttl time.Duration, now time.Time) error {
+	// Use default TTL if not specified
+	if ttl == 0 {
+		ttl = c.options.TTL
+	}
+	if ttl <= 0 {
+		ttl = defaultKeyTTL
+	}
+
+	// Serialize value using typed serialization
+	data, err := typedSerializer.SerializeWithTypeInfo(value, typeInfo)
+	if err != nil {
+		return cacheErrors.ErrSerialization
+	}
+
+	// Create the cache entry
+	entry := &cacheEntry{
+		value:     data,
+		createdAt: now,
+		size:      int64(len(data)),
+		tags:      []string{},
+	}
+
+	if ttl > 0 {
+		entry.expiresAt = now.Add(ttl)
+	}
+
+	// Check cache limits
+	if c.options.MaxEntries > 0 && len(c.items) >= c.options.MaxEntries {
+		return cacheErrors.ErrCacheFull
+	}
+
+	if c.options.MaxSize > 0 {
+		currentSize := int64(0)
+		for _, e := range c.items {
+			currentSize += e.size
+		}
+		if currentSize+entry.size > c.options.MaxSize {
+			return cacheErrors.ErrCacheFull
+		}
+	}
+
+	c.items[key] = entry
+
+	// Update metrics (using unsafe version since caller holds lock)
+	c.updateSizeMetricsUnsafe()
+
+	return nil
+}
+
+// GetManyWithTypeInfo retrieves multiple values with type information
+func (c *memoryCache) GetManyWithTypeInfo(ctx context.Context, keys []string, typeInfo interfaces.TypeInfo) (map[string]any, error) {
+	// Validate keys
+	if len(keys) == 0 {
+		return map[string]any{}, nil
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return nil, cacheErrors.ErrContextCanceled
+	}
+
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		c.recordGetLatency(duration)
+
+		// Record batch operation metrics
+		tags := c.getBaseTags()
+		c.enhancedMetrics.RecordBatchOperation(c.providerName, "get", len(keys), duration, tags)
+	}()
+
+	result := make(map[string]any, len(keys))
+	now := time.Now()
+
+	// Check if serializer supports typed deserialization
+	var typedSerializer interface {
+		DeserializeWithTypeInfo(data []byte, typeInfo serializer.TypeInfo) (any, error)
+	}
+	
+	var serializerTypeInfo serializer.TypeInfo
+	if ts, ok := c.serializer.(interface {
+		DeserializeWithTypeInfo(data []byte, typeInfo serializer.TypeInfo) (any, error)
+	}); ok {
+		typedSerializer = ts
+		serializerTypeInfo = serializer.TypeInfo{
+			Type:     typeInfo.Type,
+			TypeName: typeInfo.TypeName,
+		}
+	}
+
+	c.mu.RLock()
+	for _, key := range keys {
+		entry, exists := c.items[key]
+
+		if exists {
+			// Skip expired entries
+			if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+				c.recordMiss()
+				continue
+			}
+
+			// Deserialize value using typed deserialization if available
+			var value any
+			var err error
+			
+			if typedSerializer != nil {
+				value, err = typedSerializer.DeserializeWithTypeInfo(entry.value, serializerTypeInfo)
+			} else {
+				err = c.serializer.Deserialize(entry.value, &value)
+			}
+			
+			if err == nil {
+				result[key] = value
+
+				// Update entry metadata in a non-blocking way
+				go func(k string) {
+					c.mu.Lock()
+					if e, ok := c.items[k]; ok {
+						e.accessCount++
+						e.lastAccess = time.Now()
+					}
+					c.mu.Unlock()
+				}(key)
+
+				c.recordHit()
+			} else {
+				c.recordMiss()
+			}
+		} else {
+			c.recordMiss()
+		}
+	}
+	c.mu.RUnlock()
+
+	return result, nil
+}
+
+// SetManyWithTypeInfo stores multiple values with type information
+func (c *memoryCache) SetManyWithTypeInfo(ctx context.Context, items map[string]any, typeInfo interfaces.TypeInfo, ttl time.Duration) error {
+	// Validate items
+	if len(items) == 0 {
+		return nil
+	}
+
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		return cacheErrors.ErrContextCanceled
+	}
+
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		c.recordSetLatency(duration)
+
+		// Record batch operation metrics
+		tags := c.getBaseTags()
+		c.enhancedMetrics.RecordBatchOperation(c.providerName, "set", len(items), duration, tags)
+	}()
+
+	// Check if serializer supports typed serialization
+	if typedSerializer, ok := c.serializer.(interface {
+		SerializeWithTypeInfo(v any, typeInfo serializer.TypeInfo) ([]byte, error)
+	}); ok {
+		// Use typed bulk operation for better performance
+		serializerTypeInfo := serializer.TypeInfo{
+			Type:     typeInfo.Type,
+			TypeName: typeInfo.TypeName,
+		}
+
+		// Use default TTL if not specified
+		if ttl == 0 {
+			ttl = c.options.TTL
+		}
+		if ttl <= 0 {
+			ttl = defaultKeyTTL
+		}
+
+		now := time.Now()
+		newEntries := make(map[string]*cacheEntry, len(items))
+
+		// First, serialize all values and check size constraints
+		totalNewSize := int64(0)
+		for key, value := range items {
+			// Validate key
+			if key == "" {
+				return cacheErrors.ErrInvalidKey
+			}
+
+			// Serialize value using typed serialization
+			data, err := typedSerializer.SerializeWithTypeInfo(value, serializerTypeInfo)
+			if err != nil {
+				return cacheErrors.ErrSerialization
+			}
+
+			// Create entry
+			entry := &cacheEntry{
+				value:     data,
+				createdAt: now,
+				size:      int64(len(data)),
+				tags:      []string{},
+			}
+
+			if ttl > 0 {
+				entry.expiresAt = now.Add(ttl)
+			}
+
+			newEntries[key] = entry
+			totalNewSize += entry.size
+		}
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		// Check if adding these entries would exceed limits
+		if c.options.MaxEntries > 0 {
+			availableSlots := c.options.MaxEntries - len(c.items)
+			if availableSlots < len(newEntries) {
+				return cacheErrors.ErrCacheFull
+			}
+		}
+
+		// Check size constraints
+		if c.options.MaxSize > 0 {
+			currentSize := int64(0)
+			for _, e := range c.items {
+				currentSize += e.size
+			}
+			if currentSize+totalNewSize > c.options.MaxSize {
+				return cacheErrors.ErrCacheFull
+			}
+		}
+
+		// Add all entries
+		for key, entry := range newEntries {
+			c.items[key] = entry
+		}
+
+		// Update metrics (using unsafe version since we hold write lock)
+		c.updateSizeMetricsUnsafe()
+
+		return nil
+	} else {
+		// Fallback to regular SetMany
+		return c.SetMany(ctx, items, ttl)
+	}
 }

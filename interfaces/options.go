@@ -1,4 +1,4 @@
-package cache
+package interfaces
 
 import (
 	"context"
@@ -31,6 +31,13 @@ func WithMaxEntries(max int) CacheOption {
 func WithCleanupInterval(interval time.Duration) CacheOption {
 	return func(o *CacheOptions) {
 		o.CleanupInterval = interval
+	}
+}
+
+// WithSerializerFormat sets the serialization format for cache entries
+func WithSerializerFormat(format serializer.Format) CacheOption {
+	return func(o *CacheOptions) {
+		o.SerializerFormat = format
 	}
 }
 

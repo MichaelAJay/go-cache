@@ -12,7 +12,6 @@ import (
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-metrics/metric/otel"
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/internal/providers/memory"
 )
 
 func main() {
@@ -35,7 +34,7 @@ func main() {
 	defer reporter.Close()
 
 	// Create cache with go-metrics integration
-	provider := memory.NewProvider()
+	provider := cache.NewMemoryProvider()
 	c, err := provider.Create(&cache.CacheOptions{
 		TTL:               time.Minute * 5,
 		MaxEntries:        1000,

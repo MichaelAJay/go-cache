@@ -2,16 +2,16 @@
 
 ## Project Overview
 
-Go-Cache is a pluggable, high-performance caching abstraction for Go applications that provides unified interfaces for multiple cache providers (memory, Redis, etc.) with comprehensive observability, security features, and advanced functionality like secondary indexing.
+Go-Cache is undergoing **strategic refactoring** to become a high-performance, generic-first caching abstraction for Go applications. The new design eliminates legacy complexity while preserving all enterprise features through clean, thread-safe, type-safe interfaces.
 
 ### Key Features
 
-- **Provider Abstraction**: Unified interface supporting memory, Redis, and extensible to other providers
-- **Secondary Indexing**: Support for complex queries beyond simple key-value operations
-- **Security-First Design**: Timing attack protection, secure cleanup, lifecycle hooks
-- **Comprehensive Observability**: Detailed metrics, structured logging, performance monitoring
-- **Thread-Safe Operations**: All providers designed for high-concurrency usage
-- **Serialization Support**: Pluggable serialization with multiple format support
+- **Generic-First Design**: All interfaces are `Cache[T]` - no `interface{}` types anywhere
+- **Thread-Safe by Design**: All concurrency handled at cache layer - consumers never need synchronization primitives
+- **Enterprise Features Preserved**: Secondary indexing, comprehensive metrics, security features, middleware system
+- **Aggressive Performance**: Lock-free operations where possible, atomic guarantees, sub-microsecond latency
+- **Provider Abstraction**: Memory and Redis providers completely rewritten for optimal concurrency
+- **Breaking Changes Embraced**: Clean design prioritized over backward compatibility
 
 ## Architecture
 
@@ -47,13 +47,13 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 
 ### Design Principles
 
-1. **Interface Segregation**: Clean, focused interfaces that don't force unnecessary dependencies
-2. **Provider Agnostic**: Applications shouldn't know or care which cache provider is used
-3. **Observability First**: All operations instrumented with metrics and logging
-4. **Security Conscious**: Built-in protections against timing attacks and data leakage
-5. **Performance Optimized**: Minimal overhead, efficient memory usage, fast operations
-6. **Extensible**: Easy to add new providers, serializers, or features
-7. **Airtight Cleanup**: Cache is pruned regularly
+1. **Generic-First Architecture**: All interfaces use Go generics - compile-time type safety, zero runtime type assertions
+2. **Thread-Safety at Cache Layer**: All concurrency complexity handled internally - consumers never need mutexes/locks
+3. **Bold Breaking Changes**: Clean design prioritized over backward compatibility
+4. **Enterprise Features Preserved**: Secondary indexing, metrics, security, middleware maintained and enhanced
+5. **Observability First**: Comprehensive go-metrics integration, Prometheus, OpenTelemetry support  
+6. **Security Conscious**: Built-in protections against timing attacks, secure cleanup, enhanced for concurrent access
+7. **Performance Optimized**: Lock-free where possible, atomic operations, sub-microsecond latency targets
 
 ## Development Guidelines
 
@@ -69,18 +69,17 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 
 **All providers must implement:**
 
-- Complete `Cache` interface
-- Thread-safe operations
-- Proper error handling and propagation
-- Metrics collection integration
-- Lifecycle hook support
-- Serialization abstraction
-- Memory cleanup (no leaks)
+- Complete `Cache[T]` generic interface with full type safety
+- Atomic thread-safe operations (GetOrSet, Update with singleflight pattern)
+- All enterprise features: secondary indexing, metrics, security, middleware
+- Provider-optimized serialization (memory: native types, Redis: optimal encoding)
+- Performance targets: >1M ops/sec (memory), >100k ops/sec (Redis)
+- Zero memory leaks under sustained high-concurrency load
 
 **Provider-Specific Features:**
 
-- **Memory Provider**: Fast local caching, automatic cleanup, secondary indexing
-- **Redis Provider**: Distributed caching, cluster support, persistence, Lua scripts
+- **Memory Provider**: Lock-free operations, sharded maps, hierarchical cleanup, zero-copy optimizations
+- **Redis Provider**: Distributed locks, Lua scripts, pipelined operations, circuit breakers, cluster support
 
 ### Testing Patterns
 
@@ -108,21 +107,51 @@ Go-Cache is a pluggable, high-performance caching abstraction for Go application
 
 ## Key Interfaces
 
-### Core Cache Interface
+### Core Cache Interface (NEW - Generic & Thread-Safe)
 
 ```go
-type Cache interface {
-    // Basic operations
-    Get(ctx context.Context, key string) (any, bool, error)
-    Set(ctx context.Context, key string, value any, ttl time.Duration) error
+type Cache[T any] interface {
+    // Basic operations - thread-safe and generic
+    Get(ctx context.Context, key string) (T, bool, error)
+    Set(ctx context.Context, key string, value T, ttl time.Duration) error
     Delete(ctx context.Context, key string) error
-
-    // Advanced operations
-    GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error)
+    Clear(ctx context.Context) error
+    Has(ctx context.Context, key string) bool
+    
+    // Atomic operations (eliminate consumer-side locking)
+    GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error)
+    Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error)
+    
+    // Batch operations for performance
+    GetMany(ctx context.Context, keys []string) (map[string]T, error)
+    SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error
+    DeleteMany(ctx context.Context, keys []string) error
+    
+    // Secondary indexing (thread-safe)
     AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
-    UpdateMetadata(ctx context.Context, key string, updater MetadataUpdater) error
+    RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
+    GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error)
+    DeleteByIndex(ctx context.Context, indexName string, indexKey string) error
+    
+    // Conditional operations
+    SetIfNotExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error)
+    SetIfExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error)
+    
+    // Pattern operations
+    GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
+    DeleteByPattern(ctx context.Context, pattern string) (int, error)
+    
+    // Metadata operations  
+    GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
 
     // Lifecycle
+    Close() error
+}
+
+// Manager for creating provider-specific typed caches
+type Manager interface {
+    NewCache[T any](name string, opts ...Option) (Cache[T], error)
+    RegisterProvider(name string, provider CacheProvider)
     Close() error
 }
 ```
@@ -181,51 +210,75 @@ type SecurityConfig struct {
 
 ## Common Usage Patterns
 
-### Basic Cache Operations
+### Basic Cache Operations (NEW - Generic & Thread-Safe)
 
 ```go
-// Initialize cache
-cache, err := manager.GetCache("sessions",
-    WithProvider("memory"),
+// Initialize typed cache - no more interface{} anywhere
+manager := cache.NewManager()
+sessions, err := manager.NewCache[*models.Session]("memory",
     WithTTL(24*time.Hour),
     WithCleanupInterval(5*time.Minute),
 )
 
-// Basic operations
-err = cache.Set(ctx, "session:123", session, time.Hour)
-value, found, err := cache.Get(ctx, "session:123")
-err = cache.Delete(ctx, "session:123")
+// Basic operations - fully type-safe
+session := &models.Session{ID: "123", UserID: "456"}
+err = sessions.Set(ctx, "session:123", session, time.Hour)
+session, found, err := sessions.Get(ctx, "session:123") // Returns *models.Session, not interface{}
+err = sessions.Delete(ctx, "session:123")
+
+// Atomic operations replace consumer-side locking
+session, err = sessions.GetOrSet(ctx, "session:123", func(ctx context.Context) (*models.Session, error) {
+    return loadSessionFromDB(ctx, "123") // Only called once even under high concurrency
+}, time.Hour)
+
+// Update operations are atomic
+session, err = sessions.Update(ctx, "session:123", func(old *models.Session, exists bool) (*models.Session, error) {
+    if !exists {
+        return nil, errors.New("session not found")
+    }
+    old.LastAccessed = time.Now()
+    return old, nil
+}, time.Hour)
 ```
 
-### Secondary Indexing
+### Secondary Indexing (Thread-Safe)
 
 ```go
-// Add indexing for complex queries
-err = cache.AddIndex(ctx, "sessions_by_user", "session:*", "user:456")
+// Add indexing for complex queries - all thread-safe
+err = sessions.AddIndex(ctx, "sessions_by_user", "session:*", "user:456")
 
-// Query by index
-sessionKeys, err := cache.GetByIndex(ctx, "sessions_by_user", "user:456")
+// Query by index - no external synchronization needed
+sessionKeys, err := sessions.GetByIndex(ctx, "sessions_by_user", "user:456")
 
-// Bulk operations using indexes
-err = cache.DeleteByIndex(ctx, "sessions_by_user", "user:456")
+// Bulk operations using indexes - atomic operations
+err = sessions.DeleteByIndex(ctx, "sessions_by_user", "user:456")
+
+// Multiple indexes can be managed concurrently
+err = sessions.AddIndex(ctx, "sessions_by_role", "session:*", "admin") // Safe to call concurrently
 ```
 
-### With Security Features
+### With Security Features (Enhanced for Concurrency)
 
 ```go
-cache, err := manager.GetCache("secure_sessions",
+secureTokens, err := manager.NewCache[*SecurityToken]("memory",
     WithSecurity(&SecurityConfig{
-        EnableTimingProtection: true,
+        EnableTimingProtection: true,  // Enhanced for concurrent access
         MinProcessingTime:      5*time.Millisecond,
-        SecureCleanup:         true,
+        SecureCleanup:         true,   // Zero memory before deallocation
     }),
     WithHooks(&CacheHooks{
         PreGet: func(ctx context.Context, key string) error {
-            // Validate access permissions
+            // Validate access permissions - called atomically
             return validateAccess(ctx, key)
         },
     }),
+    WithMetrics(metricsRegistry), // Comprehensive go-metrics integration
 )
+
+// All security features work seamlessly with generic interface
+token, err := secureTokens.GetOrSet(ctx, "token:123", func(ctx context.Context) (*SecurityToken, error) {
+    return generateSecureToken(ctx) // Timing protection applied automatically
+}, 15*time.Minute)
 ```
 
 ## Integration with go-auth
@@ -241,25 +294,44 @@ The go-cache module serves as the storage abstraction for go-auth's session mana
 - **Observability**: Detailed metrics for session operations
 - **Cleanup**: Automatic cleanup of expired sessions
 
-**Expected Integration Pattern:**
+**New Integration Pattern (Dramatically Simplified):**
 
 ```go
-// go-auth session manager using go-cache
-type UnifiedSessionManager struct {
-    cache      cache.Cache
-    // ... other fields
+// go-auth session manager - ZERO synchronization primitives
+type SessionManager struct {
+    sessions     Cache[*models.Session]  // Direct generic cache - no wrappers
+    subjectIndex Cache[[]string]         // Thread-safe subject indexing
+    // No mutexes, no channels, no TypedCache wrappers, no race conditions
 }
 
-func (s *UnifiedSessionManager) Create(ctx context.Context, authResult *AuthResult, metadata map[string]any) (*Session, error) {
+func (s *SessionManager) Create(ctx context.Context, authResult *AuthResult, metadata map[string]any) (*Session, error) {
     session := &Session{...}
 
-    // Store session with automatic TTL
-    err := s.cache.Set(ctx, s.sessionKey(session.ID), session, s.defaultTTL)
+    // Atomic session creation - no race conditions possible
+    session, err := s.sessions.GetOrSet(ctx, session.ID, func(ctx context.Context) (*Session, error) {
+        return session, nil // Only executes once even under high concurrency
+    }, s.defaultTTL)
 
-    // Add to user index for bulk operations
-    err = s.cache.AddIndex(ctx, "sessions_by_user", "session:*", s.userIndexKey(session.SubjectID))
+    // Thread-safe index operations - no external locking needed
+    err = s.sessions.AddIndex(ctx, "sessions_by_user", "session:*", session.SubjectID)
 
     return session, err
+}
+
+func (s *SessionManager) UpdateLastAccess(ctx context.Context, sessionID string) (*Session, error) {
+    // Atomic update - no get-modify-set race conditions
+    return s.sessions.Update(ctx, sessionID, func(old *Session, exists bool) (*Session, error) {
+        if !exists {
+            return nil, ErrSessionNotFound
+        }
+        old.LastAccessedAt = time.Now()
+        return old, nil
+    }, s.defaultTTL)
+}
+
+func (s *SessionManager) DeleteAllForUser(ctx context.Context, userID string) error {
+    // Thread-safe bulk operations
+    return s.sessions.DeleteByIndex(ctx, "sessions_by_user", userID)
 }
 ```
 
@@ -341,38 +413,60 @@ Support for pre/post operation hooks enables:
 
 ## Common Patterns and Anti-Patterns
 
-### ✅ Recommended Patterns
+### ✅ Recommended Patterns (NEW - Generic & Atomic)
 
 ```go
-// Use context for cancellation
-value, found, err := cache.Get(ctx, key)
+// Use typed caches for compile-time safety
+sessions := manager.NewCache[*models.Session]("memory")
 
-// Check errors explicitly
-if err != nil {
-    return fmt.Errorf("cache operation failed: %w", err)
-}
+// Use atomic operations instead of manual locking
+session, err := sessions.GetOrSet(ctx, sessionID, loadFromDB, ttl)
 
-// Use TTL consistently
-err = cache.Set(ctx, key, value, cache.DefaultTTL)
+// Leverage Update for atomic modifications
+session, err := sessions.Update(ctx, sessionID, func(old *Session, exists bool) (*Session, error) {
+    if !exists { return nil, ErrNotFound }
+    old.LastAccessed = time.Now()
+    return old, nil
+}, ttl)
 
-// Leverage indexes for complex queries
-keys, err := cache.GetByIndex(ctx, "user_sessions", userID)
+// Use batch operations for performance
+sessionMap, err := sessions.GetMany(ctx, sessionIDs)
+
+// Leverage thread-safe indexing
+keys, err := sessions.GetByIndex(ctx, "sessions_by_user", userID)
 ```
 
-### ❌ Anti-Patterns to Avoid
+### ❌ Anti-Patterns to Avoid (Updated for New Design)
 
 ```go
-// Don't ignore errors
-cache.Set(ctx, key, value, ttl) // Missing error check
+// DON'T: Try to use mutexes or locks with the cache
+var mu sync.Mutex
+mu.Lock() // ❌ WRONG - cache handles all concurrency internally
+session, _ := cache.Get(ctx, key)
+session.Update()
+cache.Set(ctx, key, session, ttl)
+mu.Unlock()
 
-// Don't use empty context
-cache.Get(context.Background(), key) // Use request context
+// DO: Use atomic Update operation instead
+session, err := cache.Update(ctx, key, func(old *Session, exists bool) (*Session, error) {
+    return old.WithUpdate(), nil // ✅ Atomic and thread-safe
+}, ttl)
 
-// Don't bypass TTL without reason
-cache.Set(ctx, key, value, 0) // Use appropriate TTL
+// DON'T: Try to use interface{} or type assertions
+var cache Cache[any] // ❌ Defeats the purpose of generics
+value := cache.Get(ctx, key).(Session) // ❌ Runtime type assertion
 
-// Don't assume key existence
-value := cache.Get(ctx, key).(Session) // Check found boolean
+// DO: Use typed cache
+var cache Cache[*Session] // ✅ Compile-time type safety
+session, found, err := cache.Get(ctx, key) // ✅ Returns *Session directly
+
+// DON'T: Implement your own caching patterns
+if exists := cache.Has(ctx, key); !exists { // ❌ Race condition
+    cache.Set(ctx, key, value, ttl)
+}
+
+// DO: Use atomic GetOrSet
+value, err := cache.GetOrSet(ctx, key, loader, ttl) // ✅ Atomic
 ```
 
 ## Troubleshooting
@@ -398,24 +492,46 @@ value := cache.Get(ctx, key).(Session) // Check found boolean
 - **TTL Tuning**: Balance cache effectiveness with memory usage
 - **Provider Selection**: Choose provider based on deployment architecture
 
-## Future Enhancements
+## Strategic Refactoring Status
 
-### Planned Features
+### Current Implementation Status
 
-1. **Advanced Eviction Policies**: LRU, LFU, custom eviction strategies
-2. **Distributed Locking**: Coordination primitives for distributed scenarios
-3. **Cache Warming**: Proactive loading of frequently accessed data
-4. **Multi-Level Caching**: L1 (memory) + L2 (Redis) hierarchical caching
-5. **Compression Support**: Automatic compression for large values
-6. **Partitioning**: Sharding support for very large datasets
+🚧 **In Progress - Strategic Refactoring** 🚧
 
-### Integration Opportunities
+The go-cache module is undergoing aggressive refactoring to achieve:
+- **Generic-first interfaces** with `Cache[T]` - **BREAKING CHANGES**
+- **Thread-safe atomic operations** eliminating all consumer-side locking  
+- **Performance targets**: >1M ops/sec (memory), >100k ops/sec (Redis)
+- **Enterprise features preserved**: secondary indexing, metrics, security, middleware
 
-- **Prometheus Metrics**: Native Prometheus metrics export
-- **OpenTelemetry**: Distributed tracing support
-- **Health Checks**: Kubernetes-style health endpoints
-- **Configuration Management**: Hot-reload of cache configuration
+### Migration Impact
+
+⚠️ **Breaking Changes Planned** ⚠️
+- **No backward compatibility** - clean design takes priority
+- **Consumer refactoring required** - dramatic simplification expected
+- **Performance improvements**: 5-10x faster concurrent operations
+- **Code complexity reduction**: >50% fewer lines of code in consumers
+
+### Implementation Plan
+
+See: `/improvements/overhaul_improvement_plan.md` for detailed roadmap
+
+**Phase Status:**
+- [ ] Phase 0: Core Interface Design 
+- [ ] Phase 1: Concurrency Architecture & Guarantees
+- [ ] Phase 2: High-Performance In-Memory Provider
+- [ ] Phase 3: Distributed Redis Provider  
+- [ ] Phase 4: Extreme Testing & Performance Validation
+- [ ] Phase 5: Consumer Migration & Optimization
+- [ ] Phase 6: Production Readiness & Observability
+
+### Future Integration Opportunities
+
+- **Advanced Eviction Policies**: LRU, LFU, custom strategies with atomic operations
+- **Multi-Level Caching**: L1 (memory) + L2 (Redis) with consistent generic interfaces
+- **Cache Warming**: Type-safe preloading with batch operations
+- **Distributed Coordination**: Enhanced Redis locks and consensus operations
 
 ---
 
-This module is designed to be the foundational caching layer for complex Go applications, with particular focus on supporting authentication systems, session management, and other security-critical use cases that require both performance and reliability.
+This module is being refactored to be the **fastest, safest, most maintainable** caching layer for Go applications, with particular focus on authentication systems, session management, and high-concurrency use cases that demand both performance and reliability.

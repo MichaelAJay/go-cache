@@ -1,4 +1,4 @@
-package memory
+package memory_test
 
 import (
 	"context"
@@ -6,13 +6,15 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache"
+	"github.com/MichaelAJay/go-cache/interfaces"
+	"github.com/MichaelAJay/go-cache/internal/providers/memory"
 	"github.com/MichaelAJay/go-logger"
 	"github.com/MichaelAJay/go-serializer"
 )
 
 // TestMemoryProviderUnit conducts unit tests for the memory provider
 func TestMemoryProviderUnit(t *testing.T) {
-	provider := NewProvider()
+	provider := memory.NewProvider()
 
 	// Test with nil options - memory provider should handle this gracefully
 	t.Run("NilOptions", func(t *testing.T) {
@@ -27,7 +29,7 @@ func TestMemoryProviderUnit(t *testing.T) {
 
 	// Test with minimal valid options
 	t.Run("MinimalValidOptions", func(t *testing.T) {
-		c, err := provider.Create(&cache.CacheOptions{
+		c, err := provider.Create(&interfaces.CacheOptions{
 			TTL: time.Hour,
 		})
 		if err != nil {
@@ -49,7 +51,7 @@ func TestProvider_Create(t *testing.T) {
 		CleanupInterval: time.Minute,
 	}
 
-	provider := NewProvider()
+	provider := memory.NewProvider()
 	c, err := provider.Create(options)
 	if err != nil {
 		t.Fatalf("Failed to create cache: %v", err)
@@ -88,7 +90,7 @@ func TestProvider_Create(t *testing.T) {
 	defer c.Close()
 
 	// Test with custom serializer format
-	optionsWithSerializer := &cache.CacheOptions{
+	optionsWithSerializer := &interfaces.CacheOptions{
 		TTL:              time.Minute,
 		MaxEntries:       1000,
 		MaxSize:          1024 * 1024 * 10, // 10MB
@@ -126,10 +128,10 @@ func TestProvider_Create(t *testing.T) {
 
 // TestProvider_ZeroValues tests the provider with zero or unspecified values
 func TestProvider_ZeroValues(t *testing.T) {
-	provider := NewProvider()
+	provider := memory.NewProvider()
 
 	// Test with empty options struct
-	c, err := provider.Create(&cache.CacheOptions{})
+	c, err := provider.Create(&interfaces.CacheOptions{})
 	if err != nil {
 		t.Fatalf("Failed to create cache with empty options: %v", err)
 	}
@@ -153,11 +155,11 @@ func TestProvider_ZeroValues(t *testing.T) {
 
 // TestProvider_Limits tests the provider with various limit configurations
 func TestProvider_Limits(t *testing.T) {
-	provider := NewProvider()
+	provider := memory.NewProvider()
 
 	// Test with small max entries
 	t.Run("SmallMaxEntries", func(t *testing.T) {
-		c, err := provider.Create(&cache.CacheOptions{
+		c, err := provider.Create(&interfaces.CacheOptions{
 			MaxEntries: 2,
 		})
 		if err != nil {
@@ -184,7 +186,7 @@ func TestProvider_Limits(t *testing.T) {
 
 	// Test with small max size
 	t.Run("SmallMaxSize", func(t *testing.T) {
-		c, err := provider.Create(&cache.CacheOptions{
+		c, err := provider.Create(&interfaces.CacheOptions{
 			MaxSize: 20, // Very small size limit
 		})
 		if err != nil {

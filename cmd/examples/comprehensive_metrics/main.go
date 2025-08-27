@@ -13,7 +13,6 @@ import (
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-metrics/metric/prometheus"
 	"github.com/MichaelAJay/go-cache"
-	"github.com/MichaelAJay/go-cache/internal/providers/memory"
 )
 
 func main() {
@@ -32,7 +31,7 @@ func main() {
 	)
 
 	// Create cache with comprehensive metrics configuration
-	provider := memory.NewProvider()
+	provider := cache.NewMemoryProvider()
 	c, err := provider.Create(&cache.CacheOptions{
 		TTL:               time.Minute * 10,
 		MaxEntries:        500,

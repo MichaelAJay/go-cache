@@ -1,8 +1,8 @@
-package cache
+package cache_errors
 
 import "errors"
 
-// Common error types
+// Common cache error types
 var (
 	ErrKeyNotFound     = errors.New("cache: key not found")
 	ErrInvalidTTL      = errors.New("cache: invalid TTL")

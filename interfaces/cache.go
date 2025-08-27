@@ -1,7 +1,8 @@
-package cache
+package interfaces
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/MichaelAJay/go-cache/metrics"
@@ -27,7 +28,6 @@ type Cache interface {
 	GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
 	GetManyMetadata(ctx context.Context, keys []string) (map[string]*CacheEntryMetadata, error)
 
-
 	// Atomic operations for counters
 	Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
 	Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
@@ -49,6 +49,35 @@ type Cache interface {
 	// Advanced operations
 	UpdateMetadata(ctx context.Context, key string, updater MetadataUpdater) error
 	GetAndUpdate(ctx context.Context, key string, updater ValueUpdater, ttl time.Duration) (any, error)
+}
+
+// TypedCacheProvider defines an optional interface that cache providers can implement
+// to support direct typed operations with better serialization performance
+type TypedCacheProvider interface {
+	// GetWithTypeInfo allows the serializer to know the target type for deserialization
+	GetWithTypeInfo(ctx context.Context, key string, typeInfo TypeInfo) (any, bool, error)
+	
+	// SetWithTypeInfo allows the serializer to optimize based on the source type
+	SetWithTypeInfo(ctx context.Context, key string, value any, typeInfo TypeInfo, ttl time.Duration) error
+	
+	// GetAndUpdateWithTypeInfo provides atomic operations with full type information
+	GetAndUpdateWithTypeInfo(ctx context.Context, key string, typeInfo TypeInfo, updater func(any) (any, bool), ttl time.Duration) (any, error)
+	
+	// Typed bulk operations for better performance
+	GetManyWithTypeInfo(ctx context.Context, keys []string, typeInfo TypeInfo) (map[string]any, error)
+	SetManyWithTypeInfo(ctx context.Context, items map[string]any, typeInfo TypeInfo, ttl time.Duration) error
+}
+
+// TypeInfo holds runtime type information for the serializer
+type TypeInfo struct {
+	Type     reflect.Type
+	TypeName string
+}
+
+// CacheProvider defines the interface for cache providers
+type CacheProvider interface {
+	// Create creates a new cache instance with the given options
+	Create(options *CacheOptions) (Cache, error)
 }
 
 // MetadataUpdater defines a function type for updating cache entry metadata
@@ -89,19 +118,8 @@ const (
 	CleanupManual  = metrics.CleanupManual
 )
 
-
 // CacheMiddleware defines a function type for cache middleware
 type CacheMiddleware func(next Cache) Cache
 
-
 // EnhancedCacheMetrics is an alias to the metrics package interface to avoid duplication
 type EnhancedCacheMetrics = metrics.EnhancedCacheMetrics
-
-
-// CacheProvider defines the interface for cache providers
-type CacheProvider interface {
-	// Create creates a new cache instance with the given options
-	Create(options *CacheOptions) (Cache, error)
-}
-
-

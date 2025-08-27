@@ -14,7 +14,15 @@ type loggingCache struct {
 	logger logger.Logger
 }
 
-// NewLoggingMiddleware creates a new logging middleware
+// NewLoggingMiddleware creates a new logging middleware.
+// This middleware wraps cache operations with comprehensive logging including:
+// - Operation timing and performance metrics  
+// - Error logging with detailed context
+// - Debug-level logging for cache hits/misses
+// - Operation success/failure tracking
+//
+// Logs are structured with relevant fields (key, duration, error details)
+// to support log analysis and debugging.
 func NewLoggingMiddleware(logger logger.Logger) cache.CacheMiddleware {
 	return func(next cache.Cache) cache.Cache {
 		return &loggingCache{
