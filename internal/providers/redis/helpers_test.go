@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/MichaelAJay/go-cache/interfaces/internal/testenv"
+	"github.com/MichaelAJay/go-cache/internal/testenv"
 	"github.com/MichaelAJay/go-serializer"
 	"github.com/stretchr/testify/require"
 )
@@ -26,13 +26,13 @@ type TestRedisContainer struct {
 // SetupRedisContainer creates a Redis container for testing
 func SetupRedisContainer(t *testing.T) *TestRedisContainer {
 	ctx := context.Background()
-	
+
 	// Create test environment (mode determined by environment variables)
 	testEnv, err := testenv.NewTestEnvironmentFromEnv(ctx)
 	if err != nil {
 		t.Skipf("Test environment unavailable: %v", err)
 	}
-	
+
 	return &TestRedisContainer{
 		testEnv: testEnv,
 		ctx:     ctx,
@@ -72,7 +72,7 @@ func CreateCacheWithOptions[T any](container *TestRedisContainer, customOptions 
 		SerializerFormat: string(serializer.JSON),
 		TTL:              time.Hour,
 	}
-	
+
 	// Override with custom options if provided
 	if customOptions != nil {
 		if customOptions.RedisOptions != nil {
@@ -105,7 +105,7 @@ func CreateCacheWithOptions[T any](container *TestRedisContainer, customOptions 
 			options.EnhancedMetrics = customOptions.EnhancedMetrics
 		}
 	}
-	
+
 	cache, err := NewRedisCache[T](options)
 	require.NoError(container.t, err)
 	return cache
@@ -114,11 +114,11 @@ func CreateCacheWithOptions[T any](container *TestRedisContainer, customOptions 
 // Test data types and generators
 
 type User struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Email    string    `json:"email"`
-	Created  time.Time `json:"created"`
-	Tags     []string  `json:"tags,omitempty"`
+	ID       string                 `json:"id"`
+	Name     string                 `json:"name"`
+	Email    string                 `json:"email"`
+	Created  time.Time              `json:"created"`
+	Tags     []string               `json:"tags,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -131,15 +131,15 @@ type SessionData struct {
 }
 
 type LargeStruct struct {
-	ID          string      `json:"id"`
-	Data        [1024]byte  `json:"data"`  // ~1KB
-	Payload     []byte      `json:"payload"`
-	Timestamps  []time.Time `json:"timestamps"`
+	ID         string      `json:"id"`
+	Data       [1024]byte  `json:"data"` // ~1KB
+	Payload    []byte      `json:"payload"`
+	Timestamps []time.Time `json:"timestamps"`
 }
 
 type HugeStruct struct {
-	ID      string        `json:"id"`
-	Chunks  [100][1024]byte `json:"chunks"` // ~100KB
+	ID       string                 `json:"id"`
+	Chunks   [100][1024]byte        `json:"chunks"` // ~100KB
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
@@ -180,11 +180,11 @@ func GenerateLargeObjects(count int, sizeKB int) []*LargeStruct {
 	objects := make([]*LargeStruct, count)
 	for i := 0; i < count; i++ {
 		obj := &LargeStruct{
-			ID:      fmt.Sprintf("large-%d", i),
-			Payload: make([]byte, sizeKB*1024),
+			ID:         fmt.Sprintf("large-%d", i),
+			Payload:    make([]byte, sizeKB*1024),
 			Timestamps: make([]time.Time, 100),
 		}
-		
+
 		// Fill with test data
 		for j := range obj.Payload {
 			obj.Payload[j] = byte(i % 256)
@@ -192,7 +192,7 @@ func GenerateLargeObjects(count int, sizeKB int) []*LargeStruct {
 		for j := range obj.Timestamps {
 			obj.Timestamps[j] = time.Now().Add(-time.Duration(j) * time.Second)
 		}
-		
+
 		objects[i] = obj
 	}
 	return objects
@@ -231,12 +231,12 @@ func MeasureMemoryUsage(fn func()) (allocBytes int64, gcCount int) {
 	runtime.GC()
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
-	
+
 	fn()
-	
+
 	runtime.GC()
 	runtime.ReadMemStats(&m2)
-	
+
 	return int64(m2.TotalAlloc - m1.TotalAlloc), int(m2.NumGC - m1.NumGC)
 }
 
@@ -244,22 +244,22 @@ func MeasureMemoryUsage(fn func()) (allocBytes int64, gcCount int) {
 func ValidateNoMemoryLeaks(baseline, final runtime.MemStats) bool {
 	// Allow some tolerance for GC timing and small allocations
 	const tolerance = 1024 * 1024 // 1MB tolerance
-	
+
 	allocated := int64(final.Alloc) - int64(baseline.Alloc)
 	return allocated < tolerance
 }
 
 // TestTypes represents all the types we want to test
 type TestTypes struct {
-	String     string
-	Int64      int64
-	Float64    float64
-	Bool       bool
-	User       *User
-	Session    SessionData
-	ByteSlice  []byte
-	Map        map[string]interface{}
-	Large      *LargeStruct
+	String    string
+	Int64     int64
+	Float64   float64
+	Bool      bool
+	User      *User
+	Session   SessionData
+	ByteSlice []byte
+	Map       map[string]interface{}
+	Large     *LargeStruct
 }
 
 // GetTestValues returns sample values for each test type
@@ -270,9 +270,9 @@ func GetTestValues() TestTypes {
 		Float64: 3.14159,
 		Bool:    true,
 		User: &User{
-			ID:    "test-user",
-			Name:  "Test User",
-			Email: "test@example.com",
+			ID:      "test-user",
+			Name:    "Test User",
+			Email:   "test@example.com",
 			Created: time.Now(),
 			Tags:    []string{"test", "user"},
 		},
@@ -299,11 +299,11 @@ func GetTestValues() TestTypes {
 
 // SerializationTestScenario defines a test case for serialization testing
 type SerializationTestScenario[T any] struct {
-	Name           string
-	Value          T
-	ExpectedValue  T
-	Format         string
-	ShouldSucceed  bool
+	Name          string
+	Value         T
+	ExpectedValue T
+	Format        string
+	ShouldSucceed bool
 }
 
 // GetSerializationTestScenarios returns test scenarios for different serialization formats
