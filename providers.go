@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"github.com/MichaelAJay/go-cache/interfaces"
 	memoryprovider "github.com/MichaelAJay/go-cache/internal/providers/memory"
 	redisprovider "github.com/MichaelAJay/go-cache/internal/providers/redis"
 )
@@ -12,7 +13,8 @@ import (
 // - Secondary indexing for complex queries
 // - Comprehensive metrics and observability
 // - Security features like timing attack protection
-func NewMemoryProvider() CacheProvider {
+// - gob serialization
+func NewMemoryProvider() interfaces.CacheProvider {
 	return memoryprovider.NewProvider()
 }
 
@@ -23,6 +25,6 @@ func NewMemoryProvider() CacheProvider {
 // - Pipeline operations for improved performance
 // - Connection pooling and health monitoring
 // - Serialization with multiple format support (MessagePack, JSON, etc.)
-func NewRedisProvider() CacheProvider {
+func NewRedisProvider() interfaces.CacheProvider {
 	return redisprovider.NewProvider()
 }
