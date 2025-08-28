@@ -14,13 +14,19 @@ func NewProvider() interfaces.CacheProvider {
 	return &memoryProvider{}
 }
 
-// Create creates a new memory cache instance with the provided options.
-// If options is nil, default configuration will be used.
-// Returns an error if the cache cannot be initialized (e.g., serializer issues).
-func (p *memoryProvider) Create(options *interfaces.CacheOptions) (interfaces.Cache, error) {
-	if options == nil {
-		options = &interfaces.CacheOptions{}
-	}
+// Name returns the provider name for registration
+func (p *memoryProvider) Name() string {
+	return "memory"
+}
 
-	return NewMemoryCache(options)
+// Validate checks if the provided options are compatible with memory provider
+func (p *memoryProvider) Validate(options *interfaces.CacheOptions) error {
+	// Memory provider accepts all options
+	return nil
+}
+
+// Close cleans up any provider-level resources
+func (p *memoryProvider) Close() error {
+	// Memory provider has no global resources to clean up
+	return nil
 }
