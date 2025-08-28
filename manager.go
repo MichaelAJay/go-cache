@@ -3,43 +3,44 @@ package cache
 import (
 	"fmt"
 	"sync"
+
+	"github.com/MichaelAJay/go-cache/interfaces"
 )
 
-// CacheManager defines the interface for managing cache instances
-type CacheManager interface {
+// CacheManager_OLD defines the legacy interface for managing cache instances
+// This is being replaced by the new generic CacheManager
+type CacheManager_OLD interface {
 	// GetCache returns a named cache instance with specified options
-	GetCache(name string, options ...CacheOption) (Cache, error)
+	GetCache(name string, options ...interfaces.CacheOption) (interfaces.Cache_OLD, error)
 
 	// RegisterProvider registers a new cache provider
-	RegisterProvider(name string, provider CacheProvider)
+	RegisterProvider(name string, provider interfaces.CacheProvider_OLD)
 
 	// GetCaches returns all registered cache instances
-	GetCaches() map[string]Cache
+	GetCaches() map[string]interfaces.Cache_OLD
 
 	// Close closes all managed caches
 	Close() error
 }
 
-// cacheManager implements the CacheManager interface
-type cacheManager struct {
-	providers map[string]CacheProvider
-	caches    map[string]Cache
+// legacyCacheManager implements the CacheManager_OLD interface
+type legacyCacheManager struct {
+	providers map[string]interfaces.CacheProvider_OLD
+	caches    map[string]interfaces.Cache_OLD
 	mu        sync.RWMutex
 }
 
-// NewCacheManager creates a new cache manager instance.
-// The cache manager provides centralized management of multiple cache instances,
-// supporting different providers (memory, Redis) and configurations.
-// It handles provider registration, cache lifecycle, and resource cleanup.
-func NewCacheManager() CacheManager {
-	return &cacheManager{
-		providers: make(map[string]CacheProvider),
-		caches:    make(map[string]Cache),
+// NewLegacyCacheManager creates a legacy cache manager instance.
+// This is being replaced by the new generic CacheManager.
+func NewLegacyCacheManager() CacheManager_OLD {
+	return &legacyCacheManager{
+		providers: make(map[string]interfaces.CacheProvider_OLD),
+		caches:    make(map[string]interfaces.Cache_OLD),
 	}
 }
 
 // GetCache returns a named cache instance with specified options
-func (m *cacheManager) GetCache(name string, options ...CacheOption) (Cache, error) {
+func (m *legacyCacheManager) GetCache(name string, options ...interfaces.CacheOption) (interfaces.Cache_OLD, error) {
 	m.mu.RLock()
 	cache, exists := m.caches[name]
 	m.mu.RUnlock()
@@ -57,7 +58,7 @@ func (m *cacheManager) GetCache(name string, options ...CacheOption) (Cache, err
 	}
 
 	// Create cache options
-	opts := &CacheOptions{}
+	opts := &interfaces.CacheOptions{}
 	for _, opt := range options {
 		opt(opts)
 	}
@@ -79,7 +80,7 @@ func (m *cacheManager) GetCache(name string, options ...CacheOption) (Cache, err
 }
 
 // RegisterProvider registers a new cache provider
-func (m *cacheManager) RegisterProvider(name string, provider CacheProvider) {
+func (m *legacyCacheManager) RegisterProvider(name string, provider interfaces.CacheProvider_OLD) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -87,11 +88,11 @@ func (m *cacheManager) RegisterProvider(name string, provider CacheProvider) {
 }
 
 // GetCaches returns all registered cache instances
-func (m *cacheManager) GetCaches() map[string]Cache {
+func (m *legacyCacheManager) GetCaches() map[string]interfaces.Cache_OLD {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	caches := make(map[string]Cache, len(m.caches))
+	caches := make(map[string]interfaces.Cache_OLD, len(m.caches))
 	for k, v := range m.caches {
 		caches[k] = v
 	}
@@ -99,7 +100,7 @@ func (m *cacheManager) GetCaches() map[string]Cache {
 }
 
 // Close closes all managed caches
-func (m *cacheManager) Close() error {
+func (m *legacyCacheManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
