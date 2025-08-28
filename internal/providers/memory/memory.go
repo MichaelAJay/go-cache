@@ -9,6 +9,7 @@ import (
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/interfaces"
+	"github.com/MichaelAJay/go-cache/internal/config"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
@@ -65,7 +66,7 @@ const (
 type memoryCache struct {
 	items      map[string]*cacheEntry
 	mu         sync.RWMutex
-	options    *interfaces.CacheOptions
+	options    *config.CacheOptions
 	serializer serializer.Serializer
 
 	// Metrics - support both old and new systems
