@@ -2,41 +2,33 @@ package interfaces
 
 import (
 	"context"
-	"reflect"
 	"time"
-
-	"github.com/MichaelAJay/go-cache/metrics"
 )
 
-// Cache defines the interface for all cache implementations
-type Cache interface {
-	// Basic operations
-	Get(ctx context.Context, key string) (any, bool, error)
-	Set(ctx context.Context, key string, value any, ttl time.Duration) error
+// Cache defines the primary generic-first interface for all cache implementations
+// All operations are thread-safe by design - consumers never need synchronization primitives
+type Cache[T any] interface {
+	// Basic operations - thread-safe and generic
+	Get(ctx context.Context, key string) (T, bool, error)
+	Set(ctx context.Context, key string, value T, ttl time.Duration) error
 	Delete(ctx context.Context, key string) error
 	Clear(ctx context.Context) error
 	Has(ctx context.Context, key string) bool
-	GetKeys(ctx context.Context) []string
-	Close() error
 
-	// Bulk operations
-	GetMany(ctx context.Context, keys []string) (map[string]any, error)
-	SetMany(ctx context.Context, items map[string]any, ttl time.Duration) error
+	// Atomic operations (eliminate consumer-side locking)
+	GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error)
+	Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error)
+
+	// Batch operations for performance
+	GetMany(ctx context.Context, keys []string) (map[string]T, error)
+	SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error
 	DeleteMany(ctx context.Context, keys []string) error
 
-	// Metadata operations
-	GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
-	GetManyMetadata(ctx context.Context, keys []string) (map[string]*CacheEntryMetadata, error)
-
-	// Atomic operations for counters
-	Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
-	Decrement(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error)
-
 	// Conditional operations
-	SetIfNotExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error)
-	SetIfExists(ctx context.Context, key string, value any, ttl time.Duration) (bool, error)
+	SetIfNotExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error)
+	SetIfExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error)
 
-	// Secondary indexing
+	// Secondary indexing (thread-safe)
 	AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
 	RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
 	GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error)
@@ -46,80 +38,77 @@ type Cache interface {
 	GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
 	DeleteByPattern(ctx context.Context, pattern string) (int, error)
 
-	// Advanced operations
-	UpdateMetadata(ctx context.Context, key string, updater MetadataUpdater) error
-	GetAndUpdate(ctx context.Context, key string, updater ValueUpdater, ttl time.Duration) (any, error)
+	// Metadata operations
+	GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
+
+	// Lifecycle
+	Close() error
 }
 
-// TypedCacheProvider defines an optional interface that cache providers can implement
-// to support direct typed operations with better serialization performance
-type TypedCacheProvider interface {
-	// GetWithTypeInfo allows the serializer to know the target type for deserialization
-	GetWithTypeInfo(ctx context.Context, key string, typeInfo TypeInfo) (any, bool, error)
-	
-	// SetWithTypeInfo allows the serializer to optimize based on the source type
-	SetWithTypeInfo(ctx context.Context, key string, value any, typeInfo TypeInfo, ttl time.Duration) error
-	
-	// GetAndUpdateWithTypeInfo provides atomic operations with full type information
-	GetAndUpdateWithTypeInfo(ctx context.Context, key string, typeInfo TypeInfo, updater func(any) (any, bool), ttl time.Duration) (any, error)
-	
-	// Typed bulk operations for better performance
-	GetManyWithTypeInfo(ctx context.Context, keys []string, typeInfo TypeInfo) (map[string]any, error)
-	SetManyWithTypeInfo(ctx context.Context, items map[string]any, typeInfo TypeInfo, ttl time.Duration) error
+// Manager interface for basic lifecycle management
+type Manager interface {
+	RegisterProvider(name string, provider CacheProvider)
+	Close() error
 }
 
-// TypeInfo holds runtime type information for the serializer
-type TypeInfo struct {
-	Type     reflect.Type
-	TypeName string
+// CacheManager provides typed cache creation methods
+// This is the concrete type that applications will use
+type CacheManager struct {
+	providers map[string]CacheProvider
+	caches    map[string]any // stores Cache[T] instances with various T types
 }
 
-// CacheProvider defines the interface for cache providers
+// NewCacheManager creates a new cache manager
+func NewCacheManager() *CacheManager {
+	return &CacheManager{
+		providers: make(map[string]CacheProvider),
+		caches:    make(map[string]any),
+	}
+}
+
+// RegisterProvider registers a cache provider
+func (m *CacheManager) RegisterProvider(name string, provider CacheProvider) {
+	m.providers[name] = provider
+}
+
+// Close closes all managed caches
+func (m *CacheManager) Close() error {
+	// Implementation will iterate through caches and close them
+	panic("not implemented in Phase 0 - interface design only")
+}
+
+// NewCache creates a new typed cache instance
+// This is implemented as a package-level generic function rather than a method
+func NewCache[T any](manager *CacheManager, providerName string, opts ...Option) (Cache[T], error) {
+	// This function will be implemented to create and return Cache[T] instances
+	// The implementation will need provider-specific logic
+	panic("not implemented in Phase 0 - interface design only")
+}
+
+// CacheProvider interface for creating cache instances
+// Providers implement factory methods that will be called by the manager
+// The actual cache creation will happen through factory functions
 type CacheProvider interface {
-	// Create creates a new cache instance with the given options
-	Create(options *CacheOptions) (Cache, error)
+	// Name returns the provider name (e.g., "memory", "redis")
+	Name() string
+	
+	// Validate checks if the provided options are valid for this provider
+	Validate(options *CacheOptions) error
+	
+	// Close cleans up any provider-level resources
+	Close() error
 }
 
-// MetadataUpdater defines a function type for updating cache entry metadata
-type MetadataUpdater func(metadata *CacheEntryMetadata) *CacheEntryMetadata
+// Option defines functional options for cache configuration
+// Uses the existing CacheOptions from options.go
+type Option func(*CacheOptions)
 
-// ValueUpdater defines a function type for updating cache entry values
-type ValueUpdater func(currentValue any) (newValue any, shouldUpdate bool)
+// CacheFactory defines the signature for provider-specific cache creation functions
+// Each provider will implement this to create typed caches
+type CacheFactory[T any] func(options *CacheOptions) (Cache[T], error)
 
-// CacheEntryMetadata represents metadata for a cache entry
-type CacheEntryMetadata struct {
-	Key          string
-	CreatedAt    time.Time
-	LastAccessed time.Time
-	AccessCount  int64
-	TTL          time.Duration
-	Size         int64
-	Tags         []string
-}
+// LoaderFunc defines a function type for loading values in GetOrSet operations
+type LoaderFunc[T any] func(ctx context.Context) (T, error)
 
-// CacheEvent represents different types of cache events
-type CacheEvent string
-
-const (
-	CacheHit    CacheEvent = "hit"
-	CacheMiss   CacheEvent = "miss"
-	CacheSet    CacheEvent = "set"
-	CacheDelete CacheEvent = "delete"
-	CacheClear  CacheEvent = "clear"
-)
-
-// CleanupReason represents the reason for cache entry cleanup
-type CleanupReason = metrics.CleanupReason
-
-// CleanupReason constants
-const (
-	CleanupExpired = metrics.CleanupExpired
-	CleanupEvicted = metrics.CleanupEvicted
-	CleanupManual  = metrics.CleanupManual
-)
-
-// CacheMiddleware defines a function type for cache middleware
-type CacheMiddleware func(next Cache) Cache
-
-// EnhancedCacheMetrics is an alias to the metrics package interface to avoid duplication
-type EnhancedCacheMetrics = metrics.EnhancedCacheMetrics
+// UpdaterFunc defines a function type for updating values in Update operations
+type UpdaterFunc[T any] func(old T, exists bool) (T, error)
