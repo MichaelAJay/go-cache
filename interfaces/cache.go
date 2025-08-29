@@ -3,10 +3,6 @@ package interfaces
 import (
 	"context"
 	"time"
-
-	"github.com/MichaelAJay/go-cache/metrics"
-	"github.com/MichaelAJay/go-metrics/metric"
-	"github.com/redis/go-redis/v9"
 )
 
 // Cache defines the primary generic-first interface for all cache implementations
@@ -149,44 +145,3 @@ type CacheEntryMetadata struct {
 	Tags         []string
 }
 
-// SecurityConfig defines security-related options for cache operations
-type SecurityConfig struct {
-	EnableTimingProtection bool
-	MinProcessingTime      time.Duration
-	SecureCleanup         bool
-}
-
-// CacheHooks provides lifecycle hooks for extending cache behavior
-type CacheHooks struct {
-	// Pre-operation hooks (can prevent operation by returning error)
-	PreGet    func(ctx context.Context, key string) error
-	PreSet    func(ctx context.Context, key string, value any) error
-	PreDelete func(ctx context.Context, key string) error
-
-	// Post-operation hooks (for logging, metrics, notifications)
-	PostGet    func(ctx context.Context, key string, found bool, err error)
-	PostSet    func(ctx context.Context, key string, value any, err error)
-	PostDelete func(ctx context.Context, key string, deleted bool, err error)
-}
-
-// CacheOptions contains configuration settings for Redis-only cache implementation.
-type CacheOptions struct {
-	// Core Redis settings
-	RedisClient redis.Cmdable // Injected Redis client
-
-	// Cache behavior
-	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
-	MaxEntries      int           // Maximum number of entries (0 = no limit)
-	CleanupInterval time.Duration // How often to clean expired entries
-
-	// Serialization
-	SerializerFormat string // "json", "gob", "msgpack"
-
-	// Enterprise features
-	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
-	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
-	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
-	Security          *SecurityConfig              // Security-related configuration
-	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
-	Indexes           map[string]string            // Secondary indexes: indexName -> keyPattern
-}

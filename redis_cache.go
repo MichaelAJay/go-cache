@@ -104,6 +104,28 @@ func WithSerializer(format string) Option {
 	}
 }
 
+// WithMaxEntries sets the maximum number of cache entries
+func WithMaxEntries(max int) Option {
+	return func(opts *config.CacheOptions) {
+		opts.MaxEntries = max
+	}
+}
+
+// WithCleanupInterval sets how often expired entries are cleaned
+func WithCleanupInterval(interval time.Duration) Option {
+	return func(opts *config.CacheOptions) {
+		opts.CleanupInterval = interval
+	}
+}
+
+// WithGoMetrics sets go-metrics registry for built-in metrics
+func WithGoMetrics(registry metric.Registry, tags metric.Tags) Option {
+	return func(opts *config.CacheOptions) {
+		opts.GoMetricsRegistry = registry
+		opts.GlobalMetricsTags = tags
+	}
+}
+
 // NewCache creates a new Redis cache instance with functional options
 func NewCache[T any](client redis.Cmdable, opts ...Option) (interfaces.Cache[T], error) {
 	options := config.DefaultOptions()
