@@ -3,6 +3,10 @@ package interfaces
 import (
 	"context"
 	"time"
+
+	"github.com/MichaelAJay/go-cache/metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
+	"github.com/redis/go-redis/v9"
 )
 
 // Cache defines the primary generic-first interface for all cache implementations
@@ -134,7 +138,6 @@ type Cache[T any] interface {
 	Close() error
 }
 
-// @TODO this should live somewhere else
 // CacheEntryMetadata represents metadata for a cache entry
 type CacheEntryMetadata struct {
 	Key          string
@@ -145,3 +148,81 @@ type CacheEntryMetadata struct {
 	Size         int64
 	Tags         []string
 }
+
+// SecurityConfig defines security-related options for cache operations
+type SecurityConfig struct {
+	EnableTimingProtection bool
+	MinProcessingTime      time.Duration
+	SecureCleanup         bool
+}
+
+// CacheHooks provides lifecycle hooks for extending cache behavior
+type CacheHooks struct {
+	// Pre-operation hooks (can prevent operation by returning error)
+	PreGet    func(ctx context.Context, key string) error
+	PreSet    func(ctx context.Context, key string, value any) error
+	PreDelete func(ctx context.Context, key string) error
+
+	// Post-operation hooks (for logging, metrics, notifications)
+	PostGet    func(ctx context.Context, key string, found bool, err error)
+	PostSet    func(ctx context.Context, key string, value any, err error)
+	PostDelete func(ctx context.Context, key string, deleted bool, err error)
+}
+
+// CacheOptions contains configuration settings for Redis-only cache implementation.
+// This is the consolidated configuration that combines Redis-specific and general cache settings.
+type CacheOptions struct {
+	// Core Redis settings (consolidated from RedisOptions)
+	RedisClient redis.Cmdable // Injected Redis client - replaces connection details
+
+	// Cache behavior
+	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
+	MaxEntries      int           // Maximum number of entries (0 = no limit)
+	CleanupInterval time.Duration // How often to clean expired entries
+
+	// Serialization
+	SerializerFormat string // "json", "gob", "msgpack"
+
+	// Enterprise features (preserve all)
+	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
+	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
+	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
+	Security          *SecurityConfig              // Security-related configuration
+	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
+	Indexes           map[string]string            // Secondary indexes: indexName -> keyPattern
+
+	// Legacy/Deprecated - for backwards compatibility during transition
+	RedisOptions *RedisOptions `deprecated:"Use RedisClient instead"`
+	TTL          time.Duration `deprecated:"Use DefaultTTL instead"`
+}
+
+// RedisOptions defines Redis-specific connection settings
+// DEPRECATED: Use CacheOptions.RedisClient instead for Redis-only implementation
+type RedisOptions struct {
+	Address  string // Redis server address (e.g., "localhost:6379")
+	Password string // Redis password (optional)
+	DB       int    // Redis database number (0-15)
+	PoolSize int    // Connection pool size
+}
+
+// Provider interfaces - these are being phased out in favor of direct Redis implementation
+// DEPRECATED: Provider abstraction is being removed in Redis-only refactoring
+
+// CacheProvider defines the interface for cache providers
+// DEPRECATED: Use direct Redis cache creation instead
+type CacheProvider interface {
+	Name() string
+	Validate(options *CacheOptions) error
+	Close() error
+}
+
+// Manager manages cache instances and providers  
+// DEPRECATED: Use direct cache creation instead
+type Manager interface {
+	RegisterProvider(name string, provider CacheProvider)
+	Close() error
+}
+
+// CacheFactory creates cache instances of a specific type
+// DEPRECATED: Use direct constructor instead
+type CacheFactory[T any] func(options *CacheOptions) (Cache[T], error)

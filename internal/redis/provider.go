@@ -20,23 +20,11 @@ func (p *redisProvider) Name() string {
 }
 
 // Validate checks if the provided options are compatible with Redis provider
+// DEPRECATED: Provider validation is being removed in Redis-only refactoring
+// Redis client should be injected directly via CacheOptions.RedisClient
 func (p *redisProvider) Validate(options *interfaces.CacheOptions) error {
-	if options == nil {
-		return nil
-	}
-	
-	if options.RedisOptions == nil {
-		options.RedisOptions = &interfaces.RedisOptions{
-			Address: "localhost:6379",
-			DB:      0,
-		}
-	}
-	
-	// Validate Redis connection parameters
-	if options.RedisOptions.Address == "" {
-		options.RedisOptions.Address = "localhost:6379"
-	}
-	
+	// No-op validation - Redis client is expected to be pre-configured
+	// and injected via options.RedisClient in the new consolidated approach
 	return nil
 }
 

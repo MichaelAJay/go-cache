@@ -6,6 +6,7 @@ import (
 
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
+	"github.com/redis/go-redis/v9"
 )
 
 // SecurityConfig defines security-related options for cache operations
@@ -15,29 +16,27 @@ type SecurityConfig struct {
 	SecureCleanup         bool
 }
 
-// CacheOptions contains configuration settings that apply across all cache providers.
-// Provider-specific settings (like Redis connection details) should be handled
-// at the client creation level, not here.
+// CacheOptions contains configuration settings for Redis-only cache implementation.
+// All enterprise features are preserved while consolidating Redis-specific configuration.
 type CacheOptions struct {
-	// Core cache behavior
+	// Core Redis settings (consolidated from RedisOptions)
+	RedisClient redis.Cmdable // Injected Redis client - replaces connection details
+
+	// Cache behavior
 	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
 	MaxEntries      int           // Maximum number of entries (0 = no limit)
 	CleanupInterval time.Duration // How often to clean expired entries
 
-	// Observability
-	EnhancedMetrics     metrics.EnhancedCacheMetrics // Custom metrics implementation
-	GoMetricsRegistry   metric.Registry              // go-metrics registry for built-in metrics
-	GlobalMetricsTags   metric.Tags                  // Tags applied to all metrics
+	// Serialization
+	SerializerFormat string // "json", "gob", "msgpack"
 
-	// Security
-	Security *SecurityConfig // Security-related configuration
-
-	// Extensibility
-	Hooks   *CacheHooks       // Lifecycle hooks for custom behavior
-	Indexes map[string]string // Secondary indexes: indexName -> keyPattern
-
-	// Serialization (primarily for Redis)
-	SerializerFormat string // "json", "gob", "msgpack" - memory provider ignores this
+	// Enterprise features (preserve all)
+	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
+	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
+	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
+	Security          *SecurityConfig              // Security-related configuration
+	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
+	Indexes           map[string]string            // Secondary indexes: indexName -> keyPattern
 }
 
 // CacheHooks provides lifecycle hooks for extending cache behavior
@@ -53,7 +52,21 @@ type CacheHooks struct {
 	PostDelete func(ctx context.Context, key string, deleted bool, err error)
 }
 
-// DefaultOptions returns sensible defaults for cache options
+// NewCacheOptions creates cache options with the provided Redis client and sensible defaults
+func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
+	return &CacheOptions{
+		RedisClient:       redisClient,
+		DefaultTTL:        0, // No expiration by default
+		MaxEntries:        0, // No limit by default
+		CleanupInterval:   5 * time.Minute,
+		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
+		GlobalMetricsTags: make(metric.Tags),
+		Indexes:           make(map[string]string),
+	}
+}
+
+// DefaultOptions returns sensible defaults for cache options (deprecated: use NewCacheOptions)
+// This function exists for compatibility during refactoring but requires RedisClient to be set
 func DefaultOptions() *CacheOptions {
 	return &CacheOptions{
 		DefaultTTL:        0, // No expiration by default
@@ -121,4 +134,91 @@ func (o *CacheOptions) AddIndex(indexName, keyPattern string) *CacheOptions {
 	}
 	o.Indexes[indexName] = keyPattern
 	return o
+}
+
+// WithRedisClient sets the Redis client (required for cache creation)
+func (o *CacheOptions) WithRedisClient(client redis.Cmdable) *CacheOptions {
+	o.RedisClient = client
+	return o
+}
+
+// Option represents a configuration option for cache creation
+type Option func(*CacheOptions)
+
+// WithTTL sets the default TTL for cache entries
+func WithTTL(ttl time.Duration) Option {
+	return func(o *CacheOptions) {
+		o.DefaultTTL = ttl
+	}
+}
+
+// WithMaxEntries sets the maximum number of cache entries
+func WithMaxEntries(max int) Option {
+	return func(o *CacheOptions) {
+		o.MaxEntries = max
+	}
+}
+
+// WithCleanupInterval sets how often expired entries are cleaned
+func WithCleanupInterval(interval time.Duration) Option {
+	return func(o *CacheOptions) {
+		o.CleanupInterval = interval
+	}
+}
+
+// WithMetrics sets custom metrics implementation
+func WithMetrics(metrics metrics.EnhancedCacheMetrics) Option {
+	return func(o *CacheOptions) {
+		o.EnhancedMetrics = metrics
+	}
+}
+
+// WithGoMetrics sets go-metrics registry for built-in metrics
+func WithGoMetrics(registry metric.Registry, tags metric.Tags) Option {
+	return func(o *CacheOptions) {
+		o.GoMetricsRegistry = registry
+		o.GlobalMetricsTags = tags
+	}
+}
+
+// WithSecurity sets security configuration
+func WithSecurity(config *SecurityConfig) Option {
+	return func(o *CacheOptions) {
+		o.Security = config
+	}
+}
+
+// WithHooks sets lifecycle hooks
+func WithHooks(hooks *CacheHooks) Option {
+	return func(o *CacheOptions) {
+		o.Hooks = hooks
+	}
+}
+
+// WithIndexes sets secondary index configuration
+func WithIndexes(indexes map[string]string) Option {
+	return func(o *CacheOptions) {
+		o.Indexes = indexes
+	}
+}
+
+// WithSerializer sets serialization format
+func WithSerializer(format string) Option {
+	return func(o *CacheOptions) {
+		o.SerializerFormat = format
+	}
+}
+
+// ApplyOptions applies a list of options to CacheOptions
+// This helper function implements the option pattern for Redis cache creation
+func ApplyOptions(baseOptions *CacheOptions, opts ...Option) *CacheOptions {
+	if baseOptions == nil {
+		baseOptions = DefaultOptions()
+	}
+	
+	for _, opt := range opts {
+		opt(baseOptions)
+	}
+	
+	return baseOptions
 }

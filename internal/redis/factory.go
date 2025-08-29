@@ -29,31 +29,18 @@ func NewRedisFactory[T any]() interfaces.CacheFactory[T] {
 }
 
 // ValidateRedisConfiguration validates Redis-specific configuration
+// DEPRECATED: Provider-specific validation is being removed in Redis-only refactoring  
+// Redis client validation should be handled at the client creation level, not here
 func ValidateRedisConfiguration(options *interfaces.CacheOptions) error {
 	if options == nil {
 		return fmt.Errorf("options cannot be nil")
 	}
 	
-	if options.RedisOptions == nil {
-		return fmt.Errorf("RedisOptions cannot be nil for Redis provider")
-	}
-	
-	if options.RedisOptions.Address == "" {
-		return fmt.Errorf("Redis address cannot be empty")
-	}
-	
-	// Validate DB number
-	if options.RedisOptions.DB < 0 || options.RedisOptions.DB > 15 {
-		return fmt.Errorf("Redis DB must be between 0 and 15")
-	}
-	
-	// Validate pool size
-	if options.RedisOptions.PoolSize < 0 {
-		return fmt.Errorf("Redis pool size cannot be negative")
-	}
-	
-	if options.RedisOptions.PoolSize == 0 {
-		options.RedisOptions.PoolSize = 10 // Default pool size
+	// In the new consolidated approach, we expect RedisClient to be pre-configured
+	// Validation of Redis connection should happen when creating the Redis client,
+	// not in the cache configuration validation
+	if options.RedisClient == nil && options.RedisOptions == nil {
+		return fmt.Errorf("either RedisClient or RedisOptions must be provided")
 	}
 	
 	return nil
