@@ -12,6 +12,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
+	"github.com/MichaelAJay/go-cache/config"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
@@ -39,7 +40,7 @@ const (
 type redisCache[T any] struct {
 	client     redis.Cmdable
 	serializer serializer.Serializer
-	options    *interfaces.CacheOptions
+	options    *config.CacheOptions
 	metrics    metrics.EnhancedCacheMetrics
 
 	// Circuit breaker state
@@ -58,48 +59,30 @@ type redisCache[T any] struct {
 	deleteByPatternScript *redis.Script
 }
 
-// NewRedisCache creates a new Redis cache instance with the given options
-func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T], error) {
+// NewRedisCache creates a new Redis cache instance with an injected Redis client
+func NewRedisCache[T any](client redis.Cmdable, options *config.CacheOptions) (interfaces.Cache[T], error) {
+	if client == nil {
+		return nil, fmt.Errorf("Redis client cannot be nil")
+	}
 	if options == nil {
-		options = &interfaces.CacheOptions{}
-	}
-
-	// Apply provider validation
-	provider := NewProvider()
-	if err := provider.Validate(options); err != nil {
-		return nil, fmt.Errorf("invalid Redis options: %w", err)
-	}
-
-	// Create Redis client
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     options.RedisOptions.Address,
-		Password: options.RedisOptions.Password,
-		DB:       options.RedisOptions.DB,
-		PoolSize: options.RedisOptions.PoolSize,
-	})
-
-	// Test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+		options = config.DefaultOptions()
 	}
 
 	// Initialize serializer
 	var ser serializer.Serializer
 	if options.SerializerFormat != "" {
 		switch options.SerializerFormat {
-		case serializer.JSON:
+		case "json":
 			ser = serializer.NewJSONSerializer()
-		case serializer.Binary:
+		case "gob", "binary":
 			ser = serializer.NewGobSerializer()
-		case serializer.Msgpack:
+		case "msgpack":
 			ser = serializer.NewMsgpackSerializer()
 		default:
 			return nil, fmt.Errorf("unsupported serializer format: %s", options.SerializerFormat)
 		}
 	} else {
-		ser = serializer.NewGobSerializer() // Default to Gob for Redis
+		ser = serializer.NewMsgpackSerializer() // Default to msgpack for Redis
 	}
 
 	// Generate unique instance ID for this cache instance
@@ -115,7 +98,7 @@ func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T]
 	}
 
 	cache := &redisCache[T]{
-		client:     rdb,
+		client:     client,
 		serializer: ser,
 		options:    options,
 		metrics:    metricsImpl,
@@ -311,12 +294,6 @@ func (c *redisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		return zero, false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
-	// Apply security timing protection if enabled
-	defer func() {
-		if c.options.Security != nil && c.options.Security.EnableTimingProtection {
-			c.applyTimingProtection("get", start)
-		}
-	}()
 
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
@@ -362,12 +339,6 @@ func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
-	// Apply security timing protection if enabled
-	defer func() {
-		if c.options.Security != nil && c.options.Security.EnableTimingProtection {
-			c.applyTimingProtection("set", start)
-		}
-	}()
 
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
@@ -591,21 +562,6 @@ func (c *redisCache[T]) handleError(operation string, err error) {
 	}
 }
 
-// applyTimingProtection ensures consistent response times for security
-func (c *redisCache[T]) applyTimingProtection(operation string, start time.Time) {
-	if c.options.Security == nil || !c.options.Security.EnableTimingProtection {
-		return
-	}
-
-	elapsed := time.Since(start)
-	minTime := c.options.Security.MinProcessingTime
-
-	if elapsed < minTime {
-		sleepTime := minTime - elapsed
-		time.Sleep(sleepTime)
-		c.metrics.RecordTimingProtection("redis", operation, elapsed, minTime, c.getMetricTags())
-	}
-}
 
 // removeFromIndexes removes a key from all relevant indexes
 func (c *redisCache[T]) removeFromIndexes(ctx context.Context, key string) {

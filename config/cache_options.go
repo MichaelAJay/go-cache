@@ -49,7 +49,7 @@ func DefaultOptions() *CacheOptions {
 		DefaultTTL:        0, // No expiration by default
 		MaxEntries:        0, // No limit by default
 		CleanupInterval:   5 * time.Minute,
-		SerializerFormat:  "gob", // Good default for Redis
+		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
 		GlobalMetricsTags: make(metric.Tags),
 		Indexes:           make(map[string]string),
 	}
