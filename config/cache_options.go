@@ -1,0 +1,114 @@
+package config
+
+import (
+	"context"
+	"time"
+
+	"github.com/MichaelAJay/go-cache/metrics"
+	"github.com/MichaelAJay/go-metrics/metric"
+)
+
+// CacheOptions contains configuration settings that apply across all cache providers.
+// Provider-specific settings (like Redis connection details) should be handled
+// at the client creation level, not here.
+type CacheOptions struct {
+	// Core cache behavior
+	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
+	MaxEntries      int           // Maximum number of entries (0 = no limit)
+	CleanupInterval time.Duration // How often to clean expired entries
+
+	// Observability
+	EnhancedMetrics     metrics.EnhancedCacheMetrics // Custom metrics implementation
+	GoMetricsRegistry   metric.Registry              // go-metrics registry for built-in metrics
+	GlobalMetricsTags   metric.Tags                  // Tags applied to all metrics
+
+	// Extensibility
+	Hooks   *CacheHooks       // Lifecycle hooks for custom behavior
+	Indexes map[string]string // Secondary indexes: indexName -> keyPattern
+
+	// Serialization (primarily for Redis)
+	SerializerFormat string // "json", "gob", "msgpack" - memory provider ignores this
+}
+
+// CacheHooks provides lifecycle hooks for extending cache behavior
+type CacheHooks struct {
+	// Pre-operation hooks (can prevent operation by returning error)
+	PreGet    func(ctx context.Context, key string) error
+	PreSet    func(ctx context.Context, key string, value any) error
+	PreDelete func(ctx context.Context, key string) error
+
+	// Post-operation hooks (for logging, metrics, notifications)
+	PostGet    func(ctx context.Context, key string, found bool, err error)
+	PostSet    func(ctx context.Context, key string, value any, err error)
+	PostDelete func(ctx context.Context, key string, deleted bool, err error)
+}
+
+// DefaultOptions returns sensible defaults for cache options
+func DefaultOptions() *CacheOptions {
+	return &CacheOptions{
+		DefaultTTL:        0, // No expiration by default
+		MaxEntries:        0, // No limit by default
+		CleanupInterval:   5 * time.Minute,
+		SerializerFormat:  "gob", // Good default for Redis
+		GlobalMetricsTags: make(metric.Tags),
+		Indexes:           make(map[string]string),
+	}
+}
+
+// WithTTL sets the default TTL for cache entries
+func (o *CacheOptions) WithTTL(ttl time.Duration) *CacheOptions {
+	o.DefaultTTL = ttl
+	return o
+}
+
+// WithMaxEntries sets the maximum number of cache entries
+func (o *CacheOptions) WithMaxEntries(max int) *CacheOptions {
+	o.MaxEntries = max
+	return o
+}
+
+// WithCleanupInterval sets how often expired entries are cleaned
+func (o *CacheOptions) WithCleanupInterval(interval time.Duration) *CacheOptions {
+	o.CleanupInterval = interval
+	return o
+}
+
+// WithMetrics sets custom metrics implementation
+func (o *CacheOptions) WithMetrics(metrics metrics.EnhancedCacheMetrics) *CacheOptions {
+	o.EnhancedMetrics = metrics
+	return o
+}
+
+// WithGoMetrics sets go-metrics registry for built-in metrics
+func (o *CacheOptions) WithGoMetrics(registry metric.Registry, tags metric.Tags) *CacheOptions {
+	o.GoMetricsRegistry = registry
+	o.GlobalMetricsTags = tags
+	return o
+}
+
+// WithHooks sets lifecycle hooks
+func (o *CacheOptions) WithHooks(hooks *CacheHooks) *CacheOptions {
+	o.Hooks = hooks
+	return o
+}
+
+// WithIndexes sets secondary index configuration
+func (o *CacheOptions) WithIndexes(indexes map[string]string) *CacheOptions {
+	o.Indexes = indexes
+	return o
+}
+
+// WithSerializer sets serialization format (for Redis)
+func (o *CacheOptions) WithSerializer(format string) *CacheOptions {
+	o.SerializerFormat = format
+	return o
+}
+
+// AddIndex adds a single secondary index
+func (o *CacheOptions) AddIndex(indexName, keyPattern string) *CacheOptions {
+	if o.Indexes == nil {
+		o.Indexes = make(map[string]string)
+	}
+	o.Indexes[indexName] = keyPattern
+	return o
+}
