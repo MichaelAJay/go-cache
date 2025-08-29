@@ -133,3 +133,15 @@ type Cache[T any] interface {
 	// MUST wait for ongoing operations to complete where possible
 	Close() error
 }
+
+// @TODO this should live somewhere else
+// CacheEntryMetadata represents metadata for a cache entry
+type CacheEntryMetadata struct {
+	Key          string
+	CreatedAt    time.Time
+	LastAccessed time.Time
+	AccessCount  int64
+	TTL          time.Duration
+	Size         int64
+	Tags         []string
+}

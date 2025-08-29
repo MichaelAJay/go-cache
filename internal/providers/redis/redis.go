@@ -14,22 +14,22 @@ import (
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/metrics"
-	"github.com/MichaelAJay/go-serializer"
 	"github.com/MichaelAJay/go-metrics/metric"
+	"github.com/MichaelAJay/go-serializer"
 )
 
 const (
 	// Redis key prefixes
-	dataPrefix   = "cache:data:"
-	indexPrefix  = "cache:index:"
-	metaPrefix   = "cache:meta:"
-	lockPrefix   = "cache:lock:"
-	
-	// Lock configuration  
+	dataPrefix  = "cache:data:"
+	indexPrefix = "cache:index:"
+	metaPrefix  = "cache:meta:"
+	lockPrefix  = "cache:lock:"
+
+	// Lock configuration
 	defaultLockTimeout = 30 * time.Second
 	lockRetryDelay     = 10 * time.Millisecond
 	lockMaxRetries     = 100
-	
+
 	// Circuit breaker thresholds
 	circuitBreakerThreshold = 10
 	circuitBreakerTimeout   = 60 * time.Second
@@ -40,21 +40,21 @@ type redisCache[T any] struct {
 	client     redis.Cmdable
 	serializer serializer.Serializer
 	options    *interfaces.CacheOptions
-	metrics    interfaces.EnhancedCacheMetrics
-	
+	metrics    metrics.EnhancedCacheMetrics
+
 	// Circuit breaker state
 	mu                 sync.RWMutex
 	circuitBreakerOpen bool
 	lastFailureTime    time.Time
 	failureCount       int
-	
+
 	// Instance identifier for distributed coordination
 	instanceID string
-	
+
 	// Lua scripts for atomic operations
-	getOrSetScript    *redis.Script
-	updateScript      *redis.Script
-	deleteByIndexScript *redis.Script
+	getOrSetScript        *redis.Script
+	updateScript          *redis.Script
+	deleteByIndexScript   *redis.Script
 	deleteByPatternScript *redis.Script
 }
 
@@ -63,13 +63,13 @@ func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T]
 	if options == nil {
 		options = &interfaces.CacheOptions{}
 	}
-	
+
 	// Apply provider validation
 	provider := NewProvider()
 	if err := provider.Validate(options); err != nil {
 		return nil, fmt.Errorf("invalid Redis options: %w", err)
 	}
-	
+
 	// Create Redis client
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     options.RedisOptions.Address,
@@ -77,14 +77,14 @@ func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T]
 		DB:       options.RedisOptions.DB,
 		PoolSize: options.RedisOptions.PoolSize,
 	})
-	
+
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
-	
+
 	// Initialize serializer
 	var ser serializer.Serializer
 	if options.SerializerFormat != "" {
@@ -101,10 +101,10 @@ func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T]
 	} else {
 		ser = serializer.NewGobSerializer() // Default to Gob for Redis
 	}
-	
+
 	// Generate unique instance ID for this cache instance
 	instanceID := generateInstanceID()
-	
+
 	// Initialize metrics
 	metricsImpl := options.EnhancedMetrics
 	if metricsImpl == nil && options.GoMetricsRegistry != nil {
@@ -113,7 +113,7 @@ func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T]
 	if metricsImpl == nil {
 		metricsImpl = metrics.NewNoopEnhancedCacheMetrics()
 	}
-	
+
 	cache := &redisCache[T]{
 		client:     rdb,
 		serializer: ser,
@@ -121,10 +121,10 @@ func NewRedisCache[T any](options *interfaces.CacheOptions) (interfaces.Cache[T]
 		metrics:    metricsImpl,
 		instanceID: instanceID,
 	}
-	
+
 	// Initialize Lua scripts for atomic operations
 	cache.initLuaScripts()
-	
+
 	return cache, nil
 }
 
@@ -185,7 +185,7 @@ func (c *redisCache[T]) initLuaScripts() {
 		
 		return {serializedValue, '0'}
 	`)
-	
+
 	// Update script - atomically update existing value
 	c.updateScript = redis.NewScript(`
 		local key = KEYS[1]
@@ -236,7 +236,7 @@ func (c *redisCache[T]) initLuaScripts() {
 		
 		return {oldValue, exists, newSerializedValue}
 	`)
-	
+
 	// Delete by index script
 	c.deleteByIndexScript = redis.NewScript(`
 		local indexKey = KEYS[1]
@@ -264,7 +264,7 @@ func (c *redisCache[T]) initLuaScripts() {
 		
 		return deletedCount
 	`)
-	
+
 	// Delete by pattern script
 	c.deleteByPatternScript = redis.NewScript(`
 		local pattern = ARGV[1]
@@ -305,49 +305,49 @@ func generateInstanceID() string {
 func (c *redisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	start := time.Now()
 	var zero T
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "get", "circuit_breaker", "availability", c.getMetricTags())
 		return zero, false, cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	// Apply security timing protection if enabled
 	defer func() {
 		if c.options.Security != nil && c.options.Security.EnableTimingProtection {
 			c.applyTimingProtection("get", start)
 		}
 	}()
-	
+
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
-	
+
 	// Get data and update metadata atomically
 	pipe := c.client.TxPipeline()
 	getResult := pipe.Get(ctx, dataKey)
 	pipe.HIncrBy(ctx, metaKey, "access_count", 1)
 	pipe.HSet(ctx, metaKey, "last_accessed", time.Now().Unix())
-	
+
 	_, err := pipe.Exec(ctx)
 	if err != nil && err != redis.Nil {
 		c.handleError("get", err)
 		c.metrics.RecordError("redis", "get", "redis_error", "infrastructure", c.getMetricTags())
 		return zero, false, fmt.Errorf("Redis get error: %w", err)
 	}
-	
+
 	serializedValue := getResult.Val()
 	if serializedValue == "" {
 		c.metrics.RecordMiss("redis", c.getMetricTags())
 		c.metrics.RecordOperation("redis", "get", "miss", time.Since(start), c.getMetricTags())
 		return zero, false, nil
 	}
-	
+
 	// Deserialize value
 	var value T
 	if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
 		c.metrics.RecordError("redis", "get", "serialization_error", "data", c.getMetricTags())
 		return zero, false, fmt.Errorf("deserialization error for key %s: %w", key, err)
 	}
-	
+
 	c.metrics.RecordHit("redis", c.getMetricTags())
 	c.metrics.RecordOperation("redis", "get", "success", time.Since(start), c.getMetricTags())
 	return value, true, nil
@@ -356,39 +356,39 @@ func (c *redisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 // Set stores a value with TTL
 func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
 	start := time.Now()
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "set", "circuit_breaker", "availability", c.getMetricTags())
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	// Apply security timing protection if enabled
 	defer func() {
 		if c.options.Security != nil && c.options.Security.EnableTimingProtection {
 			c.applyTimingProtection("set", start)
 		}
 	}()
-	
+
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
 	if err != nil {
 		c.metrics.RecordError("redis", "set", "serialization_error", "data", c.getMetricTags())
 		return fmt.Errorf("serialization error for key %s: %w", key, err)
 	}
-	
+
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
-	
+
 	// Set data and metadata atomically
 	pipe := c.client.TxPipeline()
-	
+
 	if ttl > 0 {
 		pipe.SetEX(ctx, dataKey, serializedValue, ttl)
 		pipe.Expire(ctx, metaKey, ttl)
 	} else {
 		pipe.Set(ctx, dataKey, serializedValue, 0)
 	}
-	
+
 	// Set metadata
 	now := time.Now().Unix()
 	pipe.HMSet(ctx, metaKey, map[string]interface{}{
@@ -398,14 +398,14 @@ func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 		"ttl":           int64(ttl.Seconds()),
 		"size":          len(serializedValue),
 	})
-	
+
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("set", err)
 		c.metrics.RecordError("redis", "set", "redis_error", "infrastructure", c.getMetricTags())
 		return fmt.Errorf("Redis set error: %w", err)
 	}
-	
+
 	c.metrics.RecordOperation("redis", "set", "success", time.Since(start), c.getMetricTags())
 	return nil
 }
@@ -413,15 +413,15 @@ func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 // Delete removes a key
 func (c *redisCache[T]) Delete(ctx context.Context, key string) error {
 	start := time.Now()
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "delete", "circuit_breaker", "availability", c.getMetricTags())
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
-	
+
 	// Delete data and metadata atomically
 	deleted, err := c.client.Del(ctx, dataKey, metaKey).Result()
 	if err != nil {
@@ -429,29 +429,29 @@ func (c *redisCache[T]) Delete(ctx context.Context, key string) error {
 		c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
 		return fmt.Errorf("Redis delete error: %w", err)
 	}
-	
+
 	// Remove from any indexes
 	c.removeFromIndexes(ctx, key)
-	
+
 	c.metrics.RecordOperation("redis", "delete", "success", time.Since(start), c.getMetricTags())
-	
+
 	// Apply hooks if configured
 	if c.options.Hooks != nil && c.options.Hooks.PostDelete != nil {
 		c.options.Hooks.PostDelete(ctx, key, deleted > 0, nil)
 	}
-	
+
 	return nil
 }
 
 // Clear removes all entries
 func (c *redisCache[T]) Clear(ctx context.Context) error {
 	start := time.Now()
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "clear", "circuit_breaker", "availability", c.getMetricTags())
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	// Get all data keys
 	dataPattern := c.buildDataKey("*")
 	dataKeys, err := c.client.Keys(ctx, dataPattern).Result()
@@ -459,22 +459,22 @@ func (c *redisCache[T]) Clear(ctx context.Context) error {
 		c.handleError("clear", err)
 		return fmt.Errorf("Redis clear error getting keys: %w", err)
 	}
-	
+
 	if len(dataKeys) == 0 {
 		return nil
 	}
-	
+
 	// Also get metadata and index keys to clear
 	metaPattern := c.buildMetaKey("*")
 	metaKeys, _ := c.client.Keys(ctx, metaPattern).Result()
-	
+
 	indexPattern := c.buildIndexKey("*", "*")
 	indexKeys, _ := c.client.Keys(ctx, indexPattern).Result()
-	
+
 	// Combine all keys to delete
 	allKeys := append(dataKeys, metaKeys...)
 	allKeys = append(allKeys, indexKeys...)
-	
+
 	// Delete in batches to avoid blocking Redis
 	batchSize := 100
 	for i := 0; i < len(allKeys); i += batchSize {
@@ -482,13 +482,13 @@ func (c *redisCache[T]) Clear(ctx context.Context) error {
 		if end > len(allKeys) {
 			end = len(allKeys)
 		}
-		
+
 		if err := c.client.Del(ctx, allKeys[i:end]...).Err(); err != nil {
 			c.handleError("clear", err)
 			return fmt.Errorf("Redis clear error deleting batch: %w", err)
 		}
 	}
-	
+
 	c.metrics.RecordOperation("redis", "clear", "success", time.Since(start), c.getMetricTags())
 	return nil
 }
@@ -496,12 +496,12 @@ func (c *redisCache[T]) Clear(ctx context.Context) error {
 // Has checks if key exists without retrieving value
 func (c *redisCache[T]) Has(ctx context.Context, key string) bool {
 	start := time.Now()
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "has", "circuit_breaker", "availability", c.getMetricTags())
 		return false
 	}
-	
+
 	dataKey := c.buildDataKey(key)
 	exists, err := c.client.Exists(ctx, dataKey).Result()
 	if err != nil {
@@ -509,7 +509,7 @@ func (c *redisCache[T]) Has(ctx context.Context, key string) bool {
 		c.metrics.RecordError("redis", "has", "redis_error", "infrastructure", c.getMetricTags())
 		return false
 	}
-	
+
 	c.metrics.RecordOperation("redis", "has", "success", time.Since(start), c.getMetricTags())
 	return exists > 0
 }
@@ -558,11 +558,11 @@ func (c *redisCache[T]) getMetricTags() metric.Tags {
 func (c *redisCache[T]) isCircuitBreakerOpen() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	if !c.circuitBreakerOpen {
 		return false
 	}
-	
+
 	// Check if timeout has passed
 	if time.Since(c.lastFailureTime) > circuitBreakerTimeout {
 		c.mu.RUnlock()
@@ -573,7 +573,7 @@ func (c *redisCache[T]) isCircuitBreakerOpen() bool {
 		c.mu.RLock()
 		return false
 	}
-	
+
 	return true
 }
 
@@ -581,10 +581,10 @@ func (c *redisCache[T]) isCircuitBreakerOpen() bool {
 func (c *redisCache[T]) handleError(operation string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.failureCount++
 	c.lastFailureTime = time.Now()
-	
+
 	if c.failureCount >= circuitBreakerThreshold {
 		c.circuitBreakerOpen = true
 		c.metrics.RecordSecurityEvent("redis", "circuit_breaker_opened", "warning", c.getMetricTags())
@@ -596,10 +596,10 @@ func (c *redisCache[T]) applyTimingProtection(operation string, start time.Time)
 	if c.options.Security == nil || !c.options.Security.EnableTimingProtection {
 		return
 	}
-	
+
 	elapsed := time.Since(start)
 	minTime := c.options.Security.MinProcessingTime
-	
+
 	if elapsed < minTime {
 		sleepTime := minTime - elapsed
 		time.Sleep(sleepTime)
@@ -619,7 +619,7 @@ func (c *redisCache[T]) removeFromIndexes(ctx context.Context, key string) {
 				// In a full implementation, we'd maintain reverse indexes
 				indexPattern := c.buildIndexKey(indexName, "*")
 				indexKeys, _ := c.client.Keys(ctx, indexPattern).Result()
-				
+
 				for _, indexKey := range indexKeys {
 					c.client.SRem(ctx, indexKey, key)
 				}
