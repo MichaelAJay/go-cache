@@ -8,6 +8,13 @@ import (
 	"github.com/MichaelAJay/go-metrics/metric"
 )
 
+// SecurityConfig defines security-related options for cache operations
+type SecurityConfig struct {
+	EnableTimingProtection bool
+	MinProcessingTime      time.Duration
+	SecureCleanup         bool
+}
+
 // CacheOptions contains configuration settings that apply across all cache providers.
 // Provider-specific settings (like Redis connection details) should be handled
 // at the client creation level, not here.
@@ -21,6 +28,9 @@ type CacheOptions struct {
 	EnhancedMetrics     metrics.EnhancedCacheMetrics // Custom metrics implementation
 	GoMetricsRegistry   metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags   metric.Tags                  // Tags applied to all metrics
+
+	// Security
+	Security *SecurityConfig // Security-related configuration
 
 	// Extensibility
 	Hooks   *CacheHooks       // Lifecycle hooks for custom behavior
