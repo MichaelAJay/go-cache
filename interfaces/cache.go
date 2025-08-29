@@ -170,10 +170,9 @@ type CacheHooks struct {
 }
 
 // CacheOptions contains configuration settings for Redis-only cache implementation.
-// This is the consolidated configuration that combines Redis-specific and general cache settings.
 type CacheOptions struct {
-	// Core Redis settings (consolidated from RedisOptions)
-	RedisClient redis.Cmdable // Injected Redis client - replaces connection details
+	// Core Redis settings
+	RedisClient redis.Cmdable // Injected Redis client
 
 	// Cache behavior
 	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
@@ -183,46 +182,11 @@ type CacheOptions struct {
 	// Serialization
 	SerializerFormat string // "json", "gob", "msgpack"
 
-	// Enterprise features (preserve all)
+	// Enterprise features
 	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
 	Security          *SecurityConfig              // Security-related configuration
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
 	Indexes           map[string]string            // Secondary indexes: indexName -> keyPattern
-
-	// Legacy/Deprecated - for backwards compatibility during transition
-	RedisOptions *RedisOptions `deprecated:"Use RedisClient instead"`
-	TTL          time.Duration `deprecated:"Use DefaultTTL instead"`
 }
-
-// RedisOptions defines Redis-specific connection settings
-// DEPRECATED: Use CacheOptions.RedisClient instead for Redis-only implementation
-type RedisOptions struct {
-	Address  string // Redis server address (e.g., "localhost:6379")
-	Password string // Redis password (optional)
-	DB       int    // Redis database number (0-15)
-	PoolSize int    // Connection pool size
-}
-
-// Provider interfaces - these are being phased out in favor of direct Redis implementation
-// DEPRECATED: Provider abstraction is being removed in Redis-only refactoring
-
-// CacheProvider defines the interface for cache providers
-// DEPRECATED: Use direct Redis cache creation instead
-type CacheProvider interface {
-	Name() string
-	Validate(options *CacheOptions) error
-	Close() error
-}
-
-// Manager manages cache instances and providers  
-// DEPRECATED: Use direct cache creation instead
-type Manager interface {
-	RegisterProvider(name string, provider CacheProvider)
-	Close() error
-}
-
-// CacheFactory creates cache instances of a specific type
-// DEPRECATED: Use direct constructor instead
-type CacheFactory[T any] func(options *CacheOptions) (Cache[T], error)

@@ -17,10 +17,9 @@ type SecurityConfig struct {
 }
 
 // CacheOptions contains configuration settings for Redis-only cache implementation.
-// All enterprise features are preserved while consolidating Redis-specific configuration.
 type CacheOptions struct {
-	// Core Redis settings (consolidated from RedisOptions)
-	RedisClient redis.Cmdable // Injected Redis client - replaces connection details
+	// Core Redis settings
+	RedisClient redis.Cmdable // Injected Redis client
 
 	// Cache behavior
 	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
@@ -30,7 +29,7 @@ type CacheOptions struct {
 	// Serialization
 	SerializerFormat string // "json", "gob", "msgpack"
 
-	// Enterprise features (preserve all)
+	// Enterprise features
 	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
@@ -65,8 +64,7 @@ func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
 	}
 }
 
-// DefaultOptions returns sensible defaults for cache options (deprecated: use NewCacheOptions)
-// This function exists for compatibility during refactoring but requires RedisClient to be set
+// DefaultOptions returns sensible defaults for cache options
 func DefaultOptions() *CacheOptions {
 	return &CacheOptions{
 		DefaultTTL:        0, // No expiration by default
