@@ -152,6 +152,60 @@ redisCache, err := manager.GetCache("redis",
 - Lua script execution for atomic operations
 - Multiple serialization formats (JSON, MessagePack, Gob)
 - Pipeline operations for batch processing
+- **Built-in Circuit Breaker**: Automatic failure detection and recovery
+
+#### Circuit Breaker Protection
+
+The Redis provider includes a circuit breaker pattern that protects your application from cascading failures when Redis becomes unavailable:
+
+**How it works:**
+- **Failure Threshold**: Opens circuit after 10 consecutive Redis failures
+- **Recovery Timeout**: Stays open for 60 seconds before attempting recovery
+- **Fast Fail**: While open, all operations immediately return `ErrCircuitBreakerOpen`
+
+**Configuration:**
+```go
+// Circuit breaker constants (currently hardcoded)
+const (
+    circuitBreakerThreshold = 10              // Open after 10 failures
+    circuitBreakerTimeout   = 60 * time.Second // Stay open for 60 seconds
+)
+```
+
+**⚠️ Important for Consumers:**
+
+When the circuit breaker opens, your application must have a fallback strategy:
+
+```go
+type SessionStore struct {
+    redisCache   Cache        // Primary Redis cache
+    fallbackDB   SessionDB    // Database fallback
+}
+
+func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*Session, error) {
+    // Try Redis first
+    session, found, err := s.redisCache.Get(ctx, sessionID)
+    if err == nil && found {
+        return session, nil
+    }
+    
+    // Circuit breaker is open - fallback to database
+    if errors.Is(err, cacheErrors.ErrCircuitBreakerOpen) {
+        s.metrics.RecordFallback("redis_circuit_open")
+        return s.fallbackDB.GetSession(ctx, sessionID) // Slower but functional
+    }
+    
+    return nil, err
+}
+```
+
+**Fallback Strategies:**
+1. **Database Fallback**: Query database directly (slower but reliable)
+2. **Memory Cache Backup**: Use in-memory cache as secondary tier
+3. **Graceful Degradation**: Return default/anonymous sessions
+4. **Fail Fast**: Return errors and let application handle appropriately
+
+Since the Redis cache receives a pre-configured Redis client, it **cannot repair connections itself**. The circuit breaker only prevents cascading failures - your application layer must handle reconnection logic and choose appropriate fallback strategies.
 
 See the [Redis Provider Documentation](https://godoc.org/github.com/MichaelAJay/go-cache#RedisProvider) for detailed examples and advanced configuration.
 

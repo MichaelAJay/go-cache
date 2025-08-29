@@ -294,7 +294,6 @@ func (c *redisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		return zero, false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
-
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
@@ -338,7 +337,6 @@ func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 		c.metrics.RecordError("redis", "set", "circuit_breaker", "availability", c.getMetricTags())
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-
 
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
@@ -561,7 +559,6 @@ func (c *redisCache[T]) handleError(operation string, err error) {
 		c.metrics.RecordSecurityEvent("redis", "circuit_breaker_opened", "warning", c.getMetricTags())
 	}
 }
-
 
 // removeFromIndexes removes a key from all relevant indexes
 func (c *redisCache[T]) removeFromIndexes(ctx context.Context, key string) {
