@@ -1,5 +1,18 @@
 # Redis-Only Cache Refactoring Plan
 
+## 🚨 CRITICAL WARNING FOR AI AGENTS 🚨
+
+**BACKWARDS COMPATIBILITY MUST NOT BE CONSIDERED**
+
+This is a "burn the boats" refactoring. DO NOT attempt to maintain backwards compatibility with the existing multi-provider system. The goal is to make the system right moving forward, not to preserve old APIs or patterns.
+
+- **BREAK ALL EXISTING APIs** - Create the best possible Redis-only interface
+- **DELETE OLD CODE** - Do not keep deprecated functions or compatibility layers  
+- **IGNORE MIGRATION CONCERNS** - Focus on the optimal future design
+- **EMBRACE BREAKING CHANGES** - This is a complete architectural overhaul
+
+Any AI agent implementing this plan should prioritize clean, optimal design over backwards compatibility.
+
 ## Executive Summary
 
 This document outlines the comprehensive refactoring plan to transition the go-cache module from a flexible multi-provider architecture to a Redis-only system while preserving all enterprise features ("bells and whistles").
@@ -218,10 +231,11 @@ This document outlines the comprehensive refactoring plan to transition the go-c
 
 ## Risk Mitigation
 
-### Backward Compatibility
-- **Breaking changes expected:** Documented in migration guide
-- **Interface preservation:** Consumer code changes minimal
-- **Feature completeness:** No functionality lost
+### Breaking Changes Strategy
+- **NO BACKWARDS COMPATIBILITY:** Complete API overhaul expected and desired
+- **BURN THE BOATS APPROACH:** Delete old patterns completely, build optimal new system
+- **CLEAN SLATE DESIGN:** Create the best possible Redis-only interface without legacy constraints
+- **Feature completeness:** No functionality lost, but delivered through completely new APIs
 
 ### Testing Strategy
 - **Comprehensive validation:** All existing tests adapted
