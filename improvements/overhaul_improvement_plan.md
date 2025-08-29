@@ -39,7 +39,6 @@
 
 - **Secondary Indexing System**: Enhanced with thread-safe operations and batch support
 - **Comprehensive Metrics**: Existing go-metrics/Prometheus integration with new concurrency metrics
-- **Security Features**: Timing attack protection, secure cleanup, enhanced for concurrent access
 - **Middleware System**: Preserved chainable middleware with new generic interface support
 - **Configuration System**: Rich functional options pattern maintained and extended
 
@@ -111,7 +110,8 @@ type Manager interface {
 ### Provider Architecture
 - **Rewritten providers** - built from existing foundation but with optimal thread-safe design
 - **Provider-specific serialization** - memory uses native types, Redis uses optimal encoding
-- **Enterprise features integrated** - indexing, metrics, security built into provider layer
+- **Enterprise features integrated** - indexing, metrics built into provider layer
+- **Dependency injection** - providers accept pre-configured external clients (Redis client, etc.)
 - **Factory pattern enhanced** - `Manager` creates typed caches with rich configuration options
 
 ### Definition of Done
@@ -176,7 +176,6 @@ type Manager interface {
 - **Preserve current serialization system** - already handles multiple formats (gob, JSON, msgpack)
 - **Enhance existing secondary indexing** - make thread-safe and add batch operations  
 - **Integrate current metrics system** - comprehensive go-metrics/Prometheus support
-- **Keep security features** - timing protection, secure cleanup already implemented
 
 **Ultra-optimized concurrent data structure:**
 - **Lock-free where possible**: Use atomic operations for simple types
@@ -197,6 +196,7 @@ type Manager interface {
 3. **Atomic operations**: Add GetOrSet, Update operations with singleflight and atomic guarantees
 4. **Enhanced metrics integration**: Extend current metrics to track concurrency and performance
 5. **Serialization optimization**: Improve existing multi-format serialization for type safety
+6. **Clean provider interface**: Accept external dependencies (no internal client creation)
 
 ### Definition of Done
 
@@ -205,7 +205,7 @@ type Manager interface {
 - [ ] Race detector passes under extreme concurrent load (10k+ goroutines)
 - [ ] GetOrSet loader executes exactly once per key under contention
 - [ ] Update operations are atomic with no lost updates
-- [ ] All existing metrics, security, middleware features preserved and enhanced
+- [ ] All existing metrics, middleware features preserved and enhanced
 - [ ] Performance matches or exceeds current implementation
 - [ ] Comprehensive test coverage including existing edge cases
 
@@ -216,14 +216,14 @@ type Manager interface {
 ### Strategic Refactoring Approach
 
 **Build on existing Redis foundation:**
-- **Preserve current Redis integration** - connection pooling, error handling already implemented
+- **Accept pre-configured Redis client** - no internal connection management or client creation
 - **Enhance existing serialization** - JSON, msgpack, gob formats already supported
-- **Leverage current configuration** - Redis options, environment loading, validation
+- **Focus on cache-specific configuration** - TTL, indexing, metrics (not connection details)
 - **Build on existing pipeline support** - batch operations infrastructure exists
 
 **High-performance distributed caching:**
 - **Enhanced pipelined operations** - optimize existing batch request handling
-- **Improved connection management** - add circuit breakers to existing pooling
+- **Circuit breakers for fault tolerance** - add resilience patterns to injected client usage
 - **Advanced concurrency patterns** - distributed locks with retry strategies
 - **Lua scripts for atomicity** - implement complex multi-operation transactions
 
@@ -235,15 +235,15 @@ type Manager interface {
 **Enterprise features integration:**
 - **Secondary indexing in Redis** - distributed index operations with existing patterns
 - **Metrics integration** - extend current go-metrics system for Redis-specific metrics
-- **Security features** - apply timing protection and secure patterns to Redis operations
 
 ### Implementation Strategy
 
 1. **Generic interface implementation**: Refactor existing Redis provider for `Cache[T]` interface
-2. **Enhanced connection management**: Add circuit breakers to existing connection pooling
-3. **Distributed atomic operations**: Implement GetOrSet, Update with Redis locks and Lua scripts
-4. **Secondary indexing**: Extend current patterns for distributed index operations
-5. **Enterprise feature integration**: Metrics, security, middleware with Redis-specific optimizations
+2. **Client dependency injection**: Accept pre-configured Redis client, eliminate internal client creation
+3. **Circuit breaker patterns**: Add resilience around injected client operations
+4. **Distributed atomic operations**: Implement GetOrSet, Update with Redis locks and Lua scripts
+5. **Secondary indexing**: Extend current patterns for distributed index operations
+6. **Enterprise feature integration**: Metrics, middleware with Redis-specific optimizations
 
 ### Definition of Done
 
@@ -251,11 +251,11 @@ type Manager interface {
 - [x] Secondary indexing works correctly in distributed Redis environment
 - [x] GetOrSet loader executes once globally across all processes
 - [x] Update operations maintain consistency under high concurrency
-- [x] All existing Redis features preserved (connection pooling, pipelines, error handling)
-- [x] Enhanced with circuit breakers and improved failover
+- [x] Accepts pre-configured Redis client - no internal connection management
+- [x] Enhanced with circuit breakers and improved fault tolerance around injected client
 - [x] Cross-provider consistency with memory provider maintained
 - [x] Performance matches or exceeds current Redis implementation
-- [x] Enterprise features (metrics, security, middleware) work seamlessly
+- [x] Enterprise features (metrics, middleware) work seamlessly
 
 ### **✅ PHASE 3 COMPLETE - Redis Provider Implementation**
 
@@ -263,8 +263,8 @@ type Manager interface {
 - **Full Generic Interface**: Complete `Cache[T]` implementation with zero `interface{}` usage
 - **Distributed Atomic Operations**: Lua script-based GetOrSet/Update with distributed locks
 - **Secondary Indexing**: Redis SET-based distributed indexing with consistency maintenance
-- **Enterprise Features**: Circuit breaker, metrics, security, serialization support
-- **High-Performance**: Pipeline operations, connection pooling, optimized batch operations
+- **Enterprise Features**: Circuit breaker, metrics, serialization support
+- **High-Performance**: Pipeline operations, optimized batch operations with injected client
 - **Thread-Safe**: All operations goroutine-safe without external synchronization
 
 **Key Files Implemented:**
@@ -281,7 +281,7 @@ type Manager interface {
 - Distributed coordination via Redis locks and Lua scripts
 - Circuit breaker for fault tolerance (10 failures trigger open state, 60s timeout)
 - Pipeline operations for batch efficiency
-- Configurable connection pooling
+- Uses injected Redis client (consumer manages connection pooling/configuration)
 - Multi-format serialization (JSON, Binary/Gob, MessagePack)
 
 ---
