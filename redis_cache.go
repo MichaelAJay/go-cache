@@ -43,6 +43,9 @@ type redisCache[T any] struct {
 	options    *config.CacheOptions
 	metrics    metrics.EnhancedCacheMetrics
 
+	// Key extraction for indexing (BURN THE BOATS: new approach)
+	extractor *interfaces.IndexExtractor[T] // nil if no indexing
+
 	// Circuit breaker state
 	mu                 sync.RWMutex
 	circuitBreakerOpen bool
@@ -60,87 +63,105 @@ type redisCache[T any] struct {
 }
 
 // Option defines a functional option for configuring cache behavior
-type Option func(*config.CacheOptions)
+// BURN THE BOATS: Generic option pattern for IndexExtractor support
+type Option[T any] func(*redisCache[T])
+
+// WithIndexExtractor enables owner-based indexing with key extraction
+// BURN THE BOATS: New approach - automatic indexing via extractors
+func WithIndexExtractor[T any](extractor interfaces.IndexExtractor[T]) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.extractor = &extractor
+	}
+}
 
 // WithTTL sets the default TTL for cache entries
-func WithTTL(ttl time.Duration) Option {
-	return func(opts *config.CacheOptions) {
-		opts.DefaultTTL = ttl
+func WithTTL[T any](ttl time.Duration) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.DefaultTTL = ttl
 	}
 }
 
 // WithMetrics sets custom metrics implementation
-func WithMetrics(metrics metrics.EnhancedCacheMetrics) Option {
-	return func(opts *config.CacheOptions) {
-		opts.EnhancedMetrics = metrics
+func WithMetrics[T any](metrics metrics.EnhancedCacheMetrics) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.EnhancedMetrics = metrics
+		cache.metrics = metrics
 	}
 }
 
 // WithHooks sets lifecycle hooks
-func WithHooks(hooks *config.CacheHooks) Option {
-	return func(opts *config.CacheOptions) {
-		opts.Hooks = hooks
+func WithHooks[T any](hooks *config.CacheHooks) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.Hooks = hooks
 	}
 }
 
-// WithIndexes sets secondary index configuration
-func WithIndexes(indexes map[string]string) Option {
-	return func(opts *config.CacheOptions) {
-		opts.Indexes = indexes
-	}
-}
+// REMOVED: WithIndexes - replaced with WithIndexExtractor for owner-based indexing
+// BURN THE BOATS: No backwards compatibility with manual index management
 
 // WithSerializer sets serialization format
-func WithSerializer(format string) Option {
-	return func(opts *config.CacheOptions) {
-		opts.SerializerFormat = format
+func WithSerializer[T any](format string) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.SerializerFormat = format
 	}
 }
 
 // WithMaxEntries sets the maximum number of cache entries
-func WithMaxEntries(max int) Option {
-	return func(opts *config.CacheOptions) {
-		opts.MaxEntries = max
+func WithMaxEntries[T any](max int) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.MaxEntries = max
 	}
 }
 
 // WithCleanupInterval sets how often expired entries are cleaned
-func WithCleanupInterval(interval time.Duration) Option {
-	return func(opts *config.CacheOptions) {
-		opts.CleanupInterval = interval
+func WithCleanupInterval[T any](interval time.Duration) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.CleanupInterval = interval
 	}
 }
 
 // WithGoMetrics sets go-metrics registry for built-in metrics
-func WithGoMetrics(registry metric.Registry, tags metric.Tags) Option {
-	return func(opts *config.CacheOptions) {
-		opts.GoMetricsRegistry = registry
-		opts.GlobalMetricsTags = tags
+func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] {
+	return func(cache *redisCache[T]) {
+		cache.options.GoMetricsRegistry = registry
+		cache.options.GlobalMetricsTags = tags
 	}
 }
 
 // NewCache creates a new Redis cache instance with functional options
-func NewCache[T any](client redis.Cmdable, opts ...Option) (interfaces.Cache[T], error) {
-	options := config.DefaultOptions()
-	for _, opt := range opts {
-		opt(options)
-	}
-	return NewRedisCache[T](client, options)
-}
-
-// NewRedisCache creates a new Redis cache instance with an injected Redis client (legacy function)
-func NewRedisCache[T any](client redis.Cmdable, options *config.CacheOptions) (interfaces.Cache[T], error) {
+// NewCache creates a new Redis cache instance with the new generic option pattern
+// BURN THE BOATS: Complete API redesign for owner-based indexing
+func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[T], error) {
 	if client == nil {
 		return nil, fmt.Errorf("Redis client cannot be nil")
 	}
-	if options == nil {
-		options = config.DefaultOptions()
+
+	// Create cache instance with defaults
+	cache := &redisCache[T]{
+		client:     client,
+		options:    config.DefaultOptions(),
+		instanceID: generateInstanceID(),
 	}
 
+	// Apply generic options
+	for _, opt := range opts {
+		opt(cache)
+	}
+
+	// Initialize the cache (serializer, metrics, scripts, etc.)
+	if err := cache.initialize(); err != nil {
+		return nil, fmt.Errorf("failed to initialize cache: %w", err)
+	}
+
+	return cache, nil
+}
+
+// initialize sets up the cache instance with serializer, metrics, and Lua scripts
+func (c *redisCache[T]) initialize() error {
 	// Initialize serializer
 	var ser serializer.Serializer
-	if options.SerializerFormat != "" {
-		switch options.SerializerFormat {
+	if c.options.SerializerFormat != "" {
+		switch c.options.SerializerFormat {
 		case "json":
 			ser = serializer.NewJSONSerializer()
 		case "gob", "binary":
@@ -148,37 +169,32 @@ func NewRedisCache[T any](client redis.Cmdable, options *config.CacheOptions) (i
 		case "msgpack":
 			ser = serializer.NewMsgpackSerializer()
 		default:
-			return nil, fmt.Errorf("unsupported serializer format: %s", options.SerializerFormat)
+			return fmt.Errorf("unsupported serializer format: %s", c.options.SerializerFormat)
 		}
 	} else {
 		ser = serializer.NewMsgpackSerializer() // Default to msgpack for Redis
 	}
-
-	// Generate unique instance ID for this cache instance
-	instanceID := generateInstanceID()
+	c.serializer = ser
 
 	// Initialize metrics
-	metricsImpl := options.EnhancedMetrics
-	if metricsImpl == nil && options.GoMetricsRegistry != nil {
-		metricsImpl = metrics.NewEnhancedCacheMetrics(options.GoMetricsRegistry, options.GlobalMetricsTags)
-	}
-	if metricsImpl == nil {
-		metricsImpl = metrics.NewNoopEnhancedCacheMetrics()
-	}
-
-	cache := &redisCache[T]{
-		client:     client,
-		serializer: ser,
-		options:    options,
-		metrics:    metricsImpl,
-		instanceID: instanceID,
+	if c.metrics == nil {
+		if c.options.EnhancedMetrics != nil {
+			c.metrics = c.options.EnhancedMetrics
+		} else if c.options.GoMetricsRegistry != nil {
+			c.metrics = metrics.NewEnhancedCacheMetrics(c.options.GoMetricsRegistry, c.options.GlobalMetricsTags)
+		} else {
+			c.metrics = metrics.NewNoopEnhancedCacheMetrics()
+		}
 	}
 
 	// Initialize Lua scripts for atomic operations
-	cache.initLuaScripts()
+	c.initLuaScripts()
 
-	return cache, nil
+	return nil
 }
+
+// REMOVED: NewRedisCache - replaced with NewCache[T any](client, opts ...Option[T])
+// BURN THE BOATS: No backwards compatibility with old constructor patterns
 
 // initLuaScripts initializes Lua scripts for atomic operations
 func (c *redisCache[T]) initLuaScripts() {
