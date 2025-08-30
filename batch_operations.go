@@ -12,23 +12,16 @@ import (
 func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
 	start := time.Now()
 	result := make(map[string]T)
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "getmany", "circuit_breaker", "availability", c.getMetricTags())
 		return result, cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	if len(keys) == 0 {
 		return result, nil
 	}
-	
-	// Apply security timing protection if enabled
-	defer func() {
-		if c.options.Security != nil && c.options.Security.EnableTimingProtection {
-			c.applyTimingProtection("getmany", start)
-		}
-	}()
-	
+
 	// Build Redis keys for pipeline
 	dataKeys := make([]string, len(keys))
 	metaKeys := make([]string, len(keys))
@@ -36,22 +29,22 @@ func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		dataKeys[i] = c.buildDataKey(key)
 		metaKeys[i] = c.buildMetaKey(key)
 	}
-	
+
 	// Use pipeline for efficient batch retrieval
 	pipe := c.client.TxPipeline()
-	
+
 	// Get all data values
 	dataResults := make([]interface{}, len(keys))
 	for i, dataKey := range dataKeys {
 		dataResults[i] = pipe.Get(ctx, dataKey)
 	}
-	
+
 	// Update metadata for accessed keys (increment access count, update last accessed)
 	for _, metaKey := range metaKeys {
 		pipe.HIncrBy(ctx, metaKey, "access_count", 1)
 		pipe.HSet(ctx, metaKey, "last_accessed", time.Now().Unix())
 	}
-	
+
 	// Execute pipeline
 	_, err := pipe.Exec(ctx)
 	if err != nil && err.Error() != "redis: nil" {
@@ -59,13 +52,16 @@ func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		c.metrics.RecordError("redis", "getmany", "redis_error", "infrastructure", c.getMetricTags())
 		return result, fmt.Errorf("Redis GetMany error: %w", err)
 	}
-	
+
 	// Process results
 	hits := 0
 	misses := 0
-	
+
 	for i, key := range keys {
-		if cmdResult, ok := dataResults[i].(interface{ Val() string; Err() error }); ok {
+		if cmdResult, ok := dataResults[i].(interface {
+			Val() string
+			Err() error
+		}); ok {
 			serializedValue := cmdResult.Val()
 			if cmdResult.Err() == nil && serializedValue != "" {
 				// Deserialize value
@@ -75,7 +71,7 @@ func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 					// Log the error but continue processing other keys
 					continue
 				}
-				
+
 				result[key] = value
 				hits++
 			} else {
@@ -85,10 +81,10 @@ func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 			misses++
 		}
 	}
-	
+
 	// Record metrics
 	c.metrics.RecordBatchOperation("redis", "getmany", len(keys), time.Since(start), c.getMetricTags())
-	
+
 	// Record individual hits/misses for accurate statistics
 	for i := 0; i < hits; i++ {
 		c.metrics.RecordHit("redis", c.getMetricTags())
@@ -96,34 +92,27 @@ func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	for i := 0; i < misses; i++ {
 		c.metrics.RecordMiss("redis", c.getMetricTags())
 	}
-	
+
 	return result, nil
 }
 
 // SetMany stores multiple key-value pairs with same TTL
 func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error {
 	start := time.Now()
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "setmany", "circuit_breaker", "availability", c.getMetricTags())
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	if len(items) == 0 {
 		return nil
 	}
-	
-	// Apply security timing protection if enabled
-	defer func() {
-		if c.options.Security != nil && c.options.Security.EnableTimingProtection {
-			c.applyTimingProtection("setmany", start)
-		}
-	}()
-	
+
 	// Use pipeline for efficient batch setting
 	pipe := c.client.TxPipeline()
 	now := time.Now().Unix()
-	
+
 	// Process all items
 	for key, value := range items {
 		// Serialize value
@@ -132,10 +121,10 @@ func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 			c.metrics.RecordError("redis", "setmany", "serialization_error", "data", c.getMetricTags())
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
 		}
-		
+
 		dataKey := c.buildDataKey(key)
 		metaKey := c.buildMetaKey(key)
-		
+
 		// Set data
 		if ttl > 0 {
 			pipe.SetEX(ctx, dataKey, serializedValue, ttl)
@@ -143,7 +132,7 @@ func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 		} else {
 			pipe.Set(ctx, dataKey, serializedValue, 0)
 		}
-		
+
 		// Set metadata
 		pipe.HMSet(ctx, metaKey, map[string]interface{}{
 			"created_at":    now,
@@ -153,7 +142,7 @@ func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 			"size":          len(serializedValue),
 		})
 	}
-	
+
 	// Execute pipeline
 	_, err := pipe.Exec(ctx)
 	if err != nil {
@@ -161,7 +150,7 @@ func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 		c.metrics.RecordError("redis", "setmany", "redis_error", "infrastructure", c.getMetricTags())
 		return fmt.Errorf("Redis SetMany error: %w", err)
 	}
-	
+
 	c.metrics.RecordBatchOperation("redis", "setmany", len(items), time.Since(start), c.getMetricTags())
 	return nil
 }
@@ -169,16 +158,16 @@ func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 // DeleteMany removes multiple keys
 func (c *redisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	start := time.Now()
-	
+
 	if c.isCircuitBreakerOpen() {
 		c.metrics.RecordError("redis", "deletemany", "circuit_breaker", "availability", c.getMetricTags())
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-	
+
 	if len(keys) == 0 {
 		return nil
 	}
-	
+
 	// Build Redis keys
 	allKeys := make([]string, 0, len(keys)*2)
 	for _, key := range keys {
@@ -186,7 +175,7 @@ func (c *redisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		metaKey := c.buildMetaKey(key)
 		allKeys = append(allKeys, dataKey, metaKey)
 	}
-	
+
 	// Delete in batches to avoid blocking Redis
 	batchSize := 100
 	for i := 0; i < len(allKeys); i += batchSize {
@@ -194,27 +183,27 @@ func (c *redisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		if end > len(allKeys) {
 			end = len(allKeys)
 		}
-		
+
 		if err := c.client.Del(ctx, allKeys[i:end]...).Err(); err != nil {
 			c.handleError("deletemany", err)
 			c.metrics.RecordError("redis", "deletemany", "redis_error", "infrastructure", c.getMetricTags())
 			return fmt.Errorf("Redis DeleteMany error: %w", err)
 		}
 	}
-	
+
 	// Remove from indexes
 	for _, key := range keys {
 		c.removeFromIndexes(ctx, key)
 	}
-	
+
 	c.metrics.RecordBatchOperation("redis", "deletemany", len(keys), time.Since(start), c.getMetricTags())
-	
+
 	// Apply hooks if configured
 	if c.options.Hooks != nil && c.options.Hooks.PostDelete != nil {
 		for _, key := range keys {
 			c.options.Hooks.PostDelete(ctx, key, true, nil) // Assume all were deleted
 		}
 	}
-	
+
 	return nil
 }

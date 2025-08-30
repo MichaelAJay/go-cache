@@ -76,13 +76,6 @@ func WithMetrics(metrics metrics.EnhancedCacheMetrics) Option {
 	}
 }
 
-// WithSecurity sets security configuration
-func WithSecurity(securityConfig *config.SecurityConfig) Option {
-	return func(opts *config.CacheOptions) {
-		opts.Security = securityConfig
-	}
-}
-
 // WithHooks sets lifecycle hooks
 func WithHooks(hooks *config.CacheHooks) Option {
 	return func(opts *config.CacheOptions) {
@@ -655,11 +648,6 @@ func (c *redisCache[T]) removeFromIndexes(ctx context.Context, key string) {
 			}
 		}
 	}
-}
-
-// applyTimingProtection applies timing protection using the external function
-func (c *redisCache[T]) applyTimingProtection(operation string, startTime time.Time) {
-	ApplyTimingProtection(c.options.Security, startTime)
 }
 
 // Lifecycle management

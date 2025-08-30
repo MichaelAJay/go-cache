@@ -9,13 +9,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// SecurityConfig defines security-related options for cache operations
-type SecurityConfig struct {
-	EnableTimingProtection bool
-	MinProcessingTime      time.Duration
-	SecureCleanup         bool
-}
-
 // CacheOptions contains configuration settings for Redis-only cache implementation.
 type CacheOptions struct {
 	// Core Redis settings
@@ -33,7 +26,6 @@ type CacheOptions struct {
 	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
-	Security          *SecurityConfig              // Security-related configuration
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
 	Indexes           map[string]string            // Secondary indexes: indexName -> keyPattern
 }
@@ -139,4 +131,3 @@ func (o *CacheOptions) WithRedisClient(client redis.Cmdable) *CacheOptions {
 	o.RedisClient = client
 	return o
 }
-
