@@ -123,10 +123,6 @@ type Cache[T any] interface {
 	// MUST be goroutine-safe and return consistent snapshot
 	GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
 
-	// DeleteByPattern removes all entries with keys matching pattern
-	// MUST be goroutine-safe and return count of deleted entries
-	// MUST clean up indexes for all deleted entries
-	DeleteByPattern(ctx context.Context, pattern string) (deletedCount int, err error)
 
 	// Metadata operations
 	// IMPLEMENTATION REQUIREMENT: Must provide consistent metadata view
