@@ -234,7 +234,7 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 		now := time.Now().Unix()
 		pipe := c.client.TxPipeline()
 		
-		pipe.HMSet(ctx, metaKey, map[string]interface{}{
+		pipe.HSet(ctx, metaKey, map[string]interface{}{
 			"created_at":    now,
 			"last_accessed": now,
 			"access_count":  1,
@@ -305,7 +305,7 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 		
 		pipe.HIncrBy(ctx, metaKey, "access_count", 1)
 		
-		pipe.HMSet(ctx, metaKey, map[string]interface{}{
+		pipe.HSet(ctx, metaKey, map[string]interface{}{
 			"last_accessed": now,
 			"ttl":           int64(ttl.Seconds()),
 			"size":          len(serializedValue),

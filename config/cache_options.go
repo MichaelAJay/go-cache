@@ -27,6 +27,7 @@ type CacheOptions struct {
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
+	Indexes           map[string]string            // Secondary index configuration (legacy, use IndexExtractor for new implementations)
 }
 
 // CacheHooks provides lifecycle hooks for extending cache behavior

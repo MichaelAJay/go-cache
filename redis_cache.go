@@ -67,11 +67,12 @@ type RedisCache[T any] struct {
 	// Instance identifier for distributed coordination
 	instanceID string
 
-	// Lua scripts for atomic operations
-	getOrSetScript        *redis.Script
-	updateScript          *redis.Script
-	deleteByIndexScript   *redis.Script
-	deleteByPatternScript *redis.Script
+	// Lua scripts for atomic operations (updated to use vetted scripts)
+	getOrSetScript      *redis.Script
+	updateScript        *redis.Script
+	deleteByIndexScript *redis.Script
+	deleteByEntryScript *redis.Script
+	// REMOVED: deleteByPatternScript - PERFORMANCE FIX: Eliminate KEYS usage
 }
 
 // Option defines a functional option for configuring cache behavior
@@ -213,168 +214,158 @@ func (c *RedisCache[T]) initialize() error {
 	return nil
 }
 
-// initLuaScripts initializes Lua scripts for atomic operations
+// initLuaScripts initializes Lua scripts for atomic operations using vetted scripts
 func (c *RedisCache[T]) initLuaScripts() {
-	// GetOrSet script - atomically get existing value or execute loader
+	// GetOrSet script - secure version from feedback_scripts/get_or_set.lua
 	c.getOrSetScript = redis.NewScript(`
-		local key = KEYS[1]
-		local lockKey = KEYS[2] 
-		local dataKey = KEYS[3]
-		local metaKey = KEYS[4]
-		local lockValue = ARGV[1]
-		local ttl = tonumber(ARGV[2])
-		local serializedValue = ARGV[3]
-		local lockTimeout = tonumber(ARGV[4])
-		
-		-- Try to get existing value first
-		local existingValue = redis.call('GET', dataKey)
-		if existingValue then
-			return {existingValue, '0'} -- Value exists, no need to set
+		local lockKey       = KEYS[1]
+		local dataKey       = KEYS[2]
+		local metaKey       = KEYS[3]
+		local lockValue     = ARGV[1]
+		local ttl           = tonumber(ARGV[2])
+		local serializedVal = ARGV[3]
+		local lockTimeout   = tonumber(ARGV[4])
+
+		-- Fast path: already present
+		local existing = redis.call('GET', dataKey)
+		if existing then
+			return {existing, '0'}  -- found, no write
 		end
-		
-		-- Try to acquire lock
-		local lockAcquired = redis.call('SET', lockKey, lockValue, 'EX', lockTimeout, 'NX')
-		if not lockAcquired then
-			-- Lock not acquired, check again for value (in case another process set it)
-			existingValue = redis.call('GET', dataKey)
-			if existingValue then
-				return {existingValue, '0'}
+
+		-- Acquire lock
+		local ok = redis.call('SET', lockKey, lockValue, 'EX', lockTimeout, 'NX')
+		if not ok then
+			-- Someone else is loading; check again
+			existing = redis.call('GET', dataKey)
+			if existing then
+				return {existing, '0'}
 			end
-			return {nil, '1'} -- Signal to retry
+			return {false, '1'} -- signal retry
 		end
-		
-		-- Lock acquired, set the value
-		if ttl > 0 then
-			redis.call('SETEX', dataKey, ttl, serializedValue)
+
+		-- Set value
+		if ttl and ttl > 0 then
+			redis.call('SETEX', dataKey, ttl, serializedVal)
 		else
-			redis.call('SET', dataKey, serializedValue)
+			redis.call('SET', dataKey, serializedVal)
 		end
-		
-		-- Set metadata
+
+		-- Metadata
 		local now = redis.call('TIME')
-		local timestamp = now[1]
-		redis.call('HMSET', metaKey, 
-			'created_at', timestamp,
-			'last_accessed', timestamp,
+		local ts  = now[1]
+		redis.call('HSET', metaKey,
+			'created_at', ts,
+			'last_accessed', ts,
 			'access_count', '1',
-			'ttl', ttl,
-			'size', string.len(serializedValue)
+			'ttl', tostring(ttl or 0),
+			'size', tostring(string.len(serializedVal))
 		)
-		
-		if ttl > 0 then
+		if ttl and ttl > 0 then
 			redis.call('EXPIRE', metaKey, ttl)
 		end
-		
-		-- Release lock
-		redis.call('DEL', lockKey)
-		
-		return {serializedValue, '0'}
+
+		-- Release lock if we own it
+		if redis.call('GET', lockKey) == lockValue then
+			redis.call('DEL', lockKey)
+		end
+
+		return {serializedVal, '0'}
 	`)
 
-	// Update script - atomically update existing value
+	// Update script
 	c.updateScript = redis.NewScript(`
-		local key = KEYS[1]
-		local lockKey = KEYS[2]
-		local dataKey = KEYS[3] 
-		local metaKey = KEYS[4]
+		local lockKey   = KEYS[1]
+		local dataKey   = KEYS[2]
+		local metaKey   = KEYS[3]
 		local lockValue = ARGV[1]
-		local ttl = tonumber(ARGV[2])
-		local newSerializedValue = ARGV[3]
-		local lockTimeout = tonumber(ARGV[4])
-		
-		-- Try to acquire lock
-		local lockAcquired = redis.call('SET', lockKey, lockValue, 'EX', lockTimeout, 'NX')
-		if not lockAcquired then
-			return {nil, '1'} -- Signal to retry
+		local ttl       = tonumber(ARGV[2])
+		local newVal    = ARGV[3]
+		local lockTout  = tonumber(ARGV[4])
+
+		local ok = redis.call('SET', lockKey, lockValue, 'EX', lockTout, 'NX')
+		if not ok then
+			return {false, '1'} -- signal retry
 		end
-		
-		-- Get existing value
-		local oldValue = redis.call('GET', dataKey)
-		local exists = oldValue and '1' or '0'
-		
-		-- Set new value
-		if ttl > 0 then
-			redis.call('SETEX', dataKey, ttl, newSerializedValue)
+
+		local oldVal = redis.call('GET', dataKey)
+		local existed = oldVal and '1' or '0'
+
+		if ttl and ttl > 0 then
+			redis.call('SETEX', dataKey, ttl, newVal)
 		else
-			redis.call('SET', dataKey, newSerializedValue)
+			redis.call('SET', dataKey, newVal)
 		end
-		
-		-- Update metadata
+
 		local now = redis.call('TIME')
-		local timestamp = now[1]
-		local accessCount = redis.call('HGET', metaKey, 'access_count') or '0'
-		accessCount = tostring(tonumber(accessCount) + 1)
-		
-		redis.call('HMSET', metaKey,
-			'last_accessed', timestamp,
-			'access_count', accessCount,
-			'ttl', ttl,
-			'size', string.len(newSerializedValue)
+		local ts  = now[1]
+		local acc = redis.call('HGET', metaKey, 'access_count') or '0'
+		acc = tostring((tonumber(acc) or 0) + 1)
+
+		redis.call('HSET', metaKey,
+			'last_accessed', ts,
+			'access_count', acc,
+			'ttl', tostring(ttl or 0),
+			'size', tostring(string.len(newVal))
 		)
-		
-		if ttl > 0 then
+		if ttl and ttl > 0 then
 			redis.call('EXPIRE', metaKey, ttl)
 		end
-		
-		-- Release lock
-		redis.call('DEL', lockKey)
-		
-		return {oldValue, exists, newSerializedValue}
+
+		-- Rlease only if we still own it
+		if redis.call('GET', lockKey) == lockValue then
+			redis.call('DEL', lockKey)
+		end
+
+		return {oldVal, existed, newVal}
 	`)
 
 	// Delete by index script
 	c.deleteByIndexScript = redis.NewScript(`
-		local indexKey = KEYS[1]
-		local dataPrefix = ARGV[1]
-		local metaPrefix = ARGV[2]
-		
-		-- Get all keys from index
-		local keys = redis.call('SMEMBERS', indexKey)
-		local deletedCount = 0
-		
-		for i = 1, #keys do
-			local key = keys[i]
-			local dataKey = dataPrefix .. key
-			local metaKey = metaPrefix .. key
-			
-			-- Delete data and metadata
-			local deleted = redis.call('DEL', dataKey, metaKey)
-			if deleted > 0 then
-				deletedCount = deletedCount + 1
-			end
+		local subjIdxKey   = KEYS[1]
+		local dataPref     = ARGV[1]
+		local metaPref     = ARGV[2]
+		local sessIdxPref  = ARGV[3]
+
+		local sids = redis.call('SMEMBERS', subjIdxKey)
+		local total = 0
+
+		for i = 1, #sids do
+			local sid = sids[i]
+			total = total + redis.call('DEL', dataPref .. sid)
+			total = total + redis.call('DEL', metaPref .. sid)
+			total = total + redis.call('DEL', sessIdxPref .. sid)
 		end
-		
-		-- Clear the index
-		redis.call('DEL', indexKey)
-		
-		return deletedCount
+
+		total = total + redis.call('DEL', subjIdxKey)
+		return total
 	`)
 
-	// Delete by pattern script
-	c.deleteByPatternScript = redis.NewScript(`
-		local pattern = ARGV[1]
-		local dataPrefix = ARGV[2]
-		local metaPrefix = ARGV[3]
-		
-		-- Get all matching keys
-		local keys = redis.call('KEYS', pattern)
-		local deletedCount = 0
-		
-		for i = 1, #keys do
-			local fullKey = keys[i]
-			-- Extract the actual cache key (remove prefix)
-			local key = string.sub(fullKey, string.len(dataPrefix) + 1)
-			local metaKey = metaPrefix .. key
-			
-			-- Delete data and metadata
-			local deleted = redis.call('DEL', fullKey, metaKey)
-			if deleted > 0 then
-				deletedCount = deletedCount + 1
+	// Individual delete script for single cache entry cleanup
+	c.deleteByEntryScript = redis.NewScript(`
+		local dataKey      = KEYS[1]
+		local metaKey      = KEYS[2]
+		local sessionIdx   = KEYS[3]
+		local subjIdxPref  = ARGV[1]
+
+		local subjectID = redis.call('GET', sessionIdx)
+		local removed = 0
+
+		if subjectID then
+			local subjectIdxKey = subjIdxPref .. subjectID
+			local sid = string.sub(dataKey, string.len('data:session:') + 1) -- extract <sid>
+			if sid and #sid > 0 then
+				redis.call('SREM', subjectIdxKey, sid)
 			end
 		end
-		
-		return deletedCount
+
+		removed = removed + redis.call('DEL', dataKey)
+		removed = removed + redis.call('DEL', metaKey)
+		removed = removed + redis.call('DEL', sessionIdx)
+
+		return removed
 	`)
+
+	// REMOVED: deleteByPatternScript - PERFORMANCE FIX: Eliminate KEYS usage completely
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
@@ -467,7 +458,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 
 	// Set metadata
 	now := time.Now().Unix()
-	pipe.HMSet(ctx, metaKey, map[string]interface{}{
+	pipe.HSet(ctx, metaKey, map[string]any{
 		"created_at":    now,
 		"last_accessed": now,
 		"access_count":  1,
@@ -535,28 +526,34 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
-	// Get all data keys
+	// Use SCAN to iteratively find keys instead of KEYS command
+	var allKeys []string
+
+	// Scan for data keys
 	dataPattern := c.buildDataKey("*")
-	dataKeys, err := c.client.Keys(ctx, dataPattern).Result()
-	if err != nil {
+	if err := c.scanAndCollectKeys(ctx, dataPattern, &allKeys); err != nil {
 		c.handleError("clear", err)
-		return fmt.Errorf("Redis clear error getting keys: %w", err)
+		return fmt.Errorf("redis clear error scanning data keys: %w", err)
 	}
 
-	if len(dataKeys) == 0 {
+	// Scan for metadata keys
+	metaPattern := c.buildMetaKey("*")
+	if err := c.scanAndCollectKeys(ctx, metaPattern, &allKeys); err != nil {
+		c.handleError("clear", err)
+		return fmt.Errorf("redis clear error scanning meta keys: %w", err)
+	}
+
+	// Scan for index keys
+	indexPattern := c.buildIndexKey("*", "*")
+	if err := c.scanAndCollectKeys(ctx, indexPattern, &allKeys); err != nil {
+		c.handleError("clear", err)
+		return fmt.Errorf("Redis clear error scanning index keys: %w", err)
+	}
+
+	if len(allKeys) == 0 {
+		c.metrics.RecordOperation("redis", "clear", "empty", time.Since(start), c.getMetricTags())
 		return nil
 	}
-
-	// Also get metadata and index keys to clear
-	metaPattern := c.buildMetaKey("*")
-	metaKeys, _ := c.client.Keys(ctx, metaPattern).Result()
-
-	indexPattern := c.buildIndexKey("*", "*")
-	indexKeys, _ := c.client.Keys(ctx, indexPattern).Result()
-
-	// Combine all keys to delete
-	allKeys := append(dataKeys, metaKeys...)
-	allKeys = append(allKeys, indexKeys...)
 
 	// Delete in batches to avoid blocking Redis
 	batchSize := 100
@@ -574,6 +571,15 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 
 	c.metrics.RecordOperation("redis", "clear", "success", time.Since(start), c.getMetricTags())
 	return nil
+}
+
+// scanAndCollectKeys uses SCAN to collect keys matching pattern (instead of KEYS)
+func (c *RedisCache[T]) scanAndCollectKeys(ctx context.Context, pattern string, keys *[]string) error {
+	iter := c.client.Scan(ctx, 0, pattern, 1000).Iterator()
+	for iter.Next(ctx) {
+		*keys = append(*keys, iter.Val())
+	}
+	return iter.Err()
 }
 
 // Has checks if key exists without retrieving value
@@ -597,6 +603,8 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	return exists > 0
 }
 
+// Atomic Operations - NOTE: GetOrSet and Update are implemented in atomic_operations.go
+
 // Owner-based operations
 
 // GetByOwner retrieves all entries for a given owner key
@@ -615,7 +623,7 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 	}
 
 	indexKey := c.buildIndexKey("owner", ownerKey)
-	
+
 	// Get all entry keys for this owner
 	entryKeys, err := c.client.SMembers(ctx, indexKey).Result()
 	if err != nil {
@@ -661,11 +669,11 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	}
 
 	indexKey := c.buildIndexKey("owner", ownerKey)
-	
+
 	// Use Lua script for atomic operation
-	result, err := c.deleteByIndexScript.Run(ctx, c.client, []string{indexKey}, 
+	result, err := c.deleteByIndexScript.Run(ctx, c.client, []string{indexKey},
 		c.buildDataKey(""), c.buildMetaKey("")).Result()
-	
+
 	if err != nil {
 		c.handleError("deletebyowner", err)
 		c.metrics.RecordError("redis", "deletebyowner", "redis_error", "infrastructure", c.getMetricTags())
@@ -679,7 +687,7 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 
 // Pattern operations
 
-// GetKeysByPattern returns entry keys matching pattern
+// GetKeysByPattern returns entry keys matching pattern - PERFORMANCE FIX: Uses SCAN instead of KEYS
 func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
 	start := time.Now()
 
@@ -690,9 +698,9 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 	// Build the full pattern with data prefix
 	dataPattern := c.buildDataKey(pattern)
-	
-	keys, err := c.client.Keys(ctx, dataPattern).Result()
-	if err != nil {
+
+	var keys []string
+	if err := c.scanAndCollectKeys(ctx, dataPattern, &keys); err != nil {
 		c.handleError("getkeysbypattern", err)
 		c.metrics.RecordError("redis", "getkeysbypattern", "redis_error", "infrastructure", c.getMetricTags())
 		return nil, fmt.Errorf("Redis GetKeysByPattern error: %w", err)
@@ -711,31 +719,6 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 	c.metrics.RecordOperation("redis", "getkeysbypattern", "success", time.Since(start), c.getMetricTags())
 	return result, nil
-}
-
-// DeleteByPattern removes all entries with keys matching pattern
-func (c *RedisCache[T]) DeleteByPattern(ctx context.Context, pattern string) (deletedCount int, err error) {
-	start := time.Now()
-
-	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "deletebypattern", "circuit_breaker", "availability", c.getMetricTags())
-		return 0, cacheErrors.ErrCircuitBreakerOpen
-	}
-
-	// Use Lua script for atomic operation
-	dataPattern := c.buildDataKey(pattern)
-	result, err := c.deleteByPatternScript.Run(ctx, c.client, []string{}, 
-		dataPattern, c.buildDataKey(""), c.buildMetaKey("")).Result()
-	
-	if err != nil {
-		c.handleError("deletebypattern", err)
-		c.metrics.RecordError("redis", "deletebypattern", "redis_error", "infrastructure", c.getMetricTags())
-		return 0, fmt.Errorf("Redis DeleteByPattern error: %w", err)
-	}
-
-	deletedCount = int(result.(int64))
-	c.metrics.RecordOperation("redis", "deletebypattern", "success", time.Since(start), c.getMetricTags())
-	return deletedCount, nil
 }
 
 // Helper methods
