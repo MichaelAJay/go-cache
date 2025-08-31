@@ -27,7 +27,6 @@ type CacheOptions struct {
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
-	Indexes           map[string]string            // Secondary index configuration (legacy, use IndexExtractor for new implementations)
 }
 
 // CacheHooks provides lifecycle hooks for extending cache behavior
@@ -52,7 +51,6 @@ func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
 		CleanupInterval:   5 * time.Minute,
 		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
 		GlobalMetricsTags: make(metric.Tags),
-		Indexes:           make(map[string]string),
 	}
 }
 
@@ -64,7 +62,6 @@ func DefaultOptions() *CacheOptions {
 		CleanupInterval:   5 * time.Minute,
 		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
 		GlobalMetricsTags: make(metric.Tags),
-		Indexes:           make(map[string]string),
 	}
 }
 
@@ -105,11 +102,6 @@ func (o *CacheOptions) WithHooks(hooks *CacheHooks) *CacheOptions {
 	return o
 }
 
-// WithIndexes sets secondary index configuration
-func (o *CacheOptions) WithIndexes(indexes map[string]string) *CacheOptions {
-	o.Indexes = indexes
-	return o
-}
 
 // WithSerializer sets serialization format (for Redis)
 func (o *CacheOptions) WithSerializer(format string) *CacheOptions {
@@ -117,14 +109,6 @@ func (o *CacheOptions) WithSerializer(format string) *CacheOptions {
 	return o
 }
 
-// AddIndex adds a single secondary index
-func (o *CacheOptions) AddIndex(indexName, keyPattern string) *CacheOptions {
-	if o.Indexes == nil {
-		o.Indexes = make(map[string]string)
-	}
-	o.Indexes[indexName] = keyPattern
-	return o
-}
 
 // WithRedisClient sets the Redis client (required for cache creation)
 func (o *CacheOptions) WithRedisClient(client redis.Cmdable) *CacheOptions {
