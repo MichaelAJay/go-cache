@@ -68,6 +68,7 @@ type RedisCache[T any] struct {
 	instanceID string
 
 	// Lua scripts for atomic operations
+	getScript           *redis.Script
 	getOrSetScript      *redis.Script
 	updateScript        *redis.Script
 	deleteByIndexScript *redis.Script
@@ -237,6 +238,26 @@ func (c *RedisCache[T]) initialize() error {
 
 // initLuaScripts initializes Lua scripts for atomic operations using vetted scripts
 func (c *RedisCache[T]) initLuaScripts() {
+	// Get script
+	c.getScript = redis.NewScript(`
+		local dataKey = KEYS[1]
+		local metaKey = KEYS[2]
+
+		-- Get the value
+		local value = redis.call('GET', dataKey)
+		if not value then
+			return {nil, '0'}  -- not found
+		end
+
+		-- Update metadata atomically
+		local now = redis.call('TIME')
+		local ts = now[1]
+		redis.call('HINCRBY', metaKey, 'access_count', 1)
+		redis.call('HSET', metaKey, 'last_accessed', ts)
+
+		return {value, '1'}  -- found
+	`)
+
 	// GetOrSet script
 	c.getOrSetScript = redis.NewScript(`
 		local lockKey       = KEYS[1]
@@ -418,21 +439,23 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
-	// Get data and update metadata atomically
-	pipe := c.client.TxPipeline()
-	getResult := pipe.Get(ctx, dataKey)
-	pipe.HIncrBy(ctx, metaKey, "access_count", 1)
-	pipe.HSet(ctx, metaKey, "last_accessed", time.Now().Unix())
-
-	_, err := pipe.Exec(ctx)
-	if err != nil && err != redis.Nil {
+	// Use Lua script for atomic get and metadata update
+	result, err := c.getScript.Run(ctx, c.client, []string{dataKey, metaKey}).Result()
+	if err != nil {
 		c.handleError("get", err)
 		c.metrics.RecordError("redis", "get", "redis_error", "infrastructure", c.getMetricTags())
-		return zero, false, fmt.Errorf("Redis get error: %w", err)
+		return zero, false, fmt.Errorf("redis get error: %w", err)
 	}
 
-	serializedValue := getResult.Val()
-	if serializedValue == "" {
+	resultSlice, ok := result.([]any)
+	if !ok || len(resultSlice) < 2 {
+		return zero, false, fmt.Errorf("unexpected script result format")
+	}
+
+	serializedValue := resultSlice[0]
+	found := resultSlice[1].(string) == "1"
+
+	if !found {
 		c.metrics.RecordMiss("redis", c.getMetricTags())
 		c.metrics.RecordOperation("redis", "get", "miss", time.Since(start), c.getMetricTags())
 		return zero, false, nil
@@ -440,7 +463,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	// Deserialize value
 	var value T
-	if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
+	if err := c.serializer.Deserialize([]byte(serializedValue.(string)), &value); err != nil {
 		c.metrics.RecordError("redis", "get", "serialization_error", "data", c.getMetricTags())
 		return zero, false, fmt.Errorf("deserialization error for key %s: %w", key, err)
 	}
