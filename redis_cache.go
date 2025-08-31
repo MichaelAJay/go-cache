@@ -52,7 +52,6 @@ type RedisCache[T any] struct {
 	options    *config.CacheOptions
 	metrics    metrics.EnhancedCacheMetrics
 
-	// Key extraction for indexing (BURN THE BOATS: new approach)
 	extractor IndexExtractor[T] // nil if no indexing
 
 	// Redis-specific options
@@ -67,20 +66,17 @@ type RedisCache[T any] struct {
 	// Instance identifier for distributed coordination
 	instanceID string
 
-	// Lua scripts for atomic operations (updated to use vetted scripts)
+	// Lua scripts for atomic operations
 	getOrSetScript      *redis.Script
 	updateScript        *redis.Script
 	deleteByIndexScript *redis.Script
 	deleteByEntryScript *redis.Script
-	// REMOVED: deleteByPatternScript - PERFORMANCE FIX: Eliminate KEYS usage
 }
 
 // Option defines a functional option for configuring cache behavior
-// BURN THE BOATS: Generic option pattern for IndexExtractor support
 type Option[T any] func(*RedisCache[T])
 
 // WithIndexExtractor enables owner-based indexing with key extraction
-// BURN THE BOATS: New approach - automatic indexing via extractors
 func WithIndexExtractor[T any](extractor IndexExtractor[T]) Option[T] {
 	return func(cache *RedisCache[T]) {
 		cache.extractor = extractor
@@ -116,9 +112,6 @@ func WithHooks[T any](hooks *config.CacheHooks) Option[T] {
 	}
 }
 
-// REMOVED: WithIndexes - replaced with WithIndexExtractor for owner-based indexing
-// BURN THE BOATS: No backwards compatibility with manual index management
-
 // WithSerializer sets serialization format
 func WithSerializer[T any](format string) Option[T] {
 	return func(cache *RedisCache[T]) {
@@ -150,10 +143,9 @@ func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] 
 
 // NewCache creates a new Redis cache instance with functional options
 // NewCache creates a new Redis cache instance with the new generic option pattern
-// BURN THE BOATS: Complete API redesign for owner-based indexing
 func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[T], error) {
 	if client == nil {
-		return nil, fmt.Errorf("Redis client cannot be nil")
+		return nil, fmt.Errorf("redis client cannot be nil")
 	}
 
 	// Create cache instance with defaults
@@ -161,7 +153,7 @@ func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[
 		client:       client,
 		options:      config.DefaultOptions(),
 		instanceID:   generateInstanceID(),
-		redisOptions: nil, // Will be set by WithRedisOptions if provided
+		redisOptions: nil,
 	}
 
 	// Apply generic options
@@ -193,7 +185,7 @@ func (c *RedisCache[T]) initialize() error {
 			return fmt.Errorf("unsupported serializer format: %s", c.options.SerializerFormat)
 		}
 	} else {
-		ser = serializer.NewMsgpackSerializer() // Default to msgpack for Redis
+		ser = serializer.NewMsgpackSerializer()
 	}
 	c.serializer = ser
 
@@ -216,7 +208,7 @@ func (c *RedisCache[T]) initialize() error {
 
 // initLuaScripts initializes Lua scripts for atomic operations using vetted scripts
 func (c *RedisCache[T]) initLuaScripts() {
-	// GetOrSet script - secure version from feedback_scripts/get_or_set.lua
+	// GetOrSet script
 	c.getOrSetScript = redis.NewScript(`
 		local lockKey       = KEYS[1]
 		local dataKey       = KEYS[2]
@@ -364,8 +356,6 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		return removed
 	`)
-
-	// REMOVED: deleteByPatternScript - PERFORMANCE FIX: Eliminate KEYS usage completely
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
