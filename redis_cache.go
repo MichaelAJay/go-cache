@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -75,6 +76,8 @@ type RedisCache[T any] struct {
 	updateScript        *redis.Script
 	deleteByIndexScript *redis.Script
 	deleteByEntryScript *redis.Script
+	getByOwnerScript      *redis.Script
+	deleteByOwnerScript   *redis.Script
 }
 
 // Option defines a functional option for configuring cache behavior
@@ -490,6 +493,75 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		return removed
 	`)
+
+	// GetByOwner script - atomic fetch of all entries for an owner
+	c.getByOwnerScript = redis.NewScript(`
+		local indexKey = KEYS[1]
+		local dataPrefix = ARGV[1]
+		local metaPrefix = ARGV[2]
+
+		-- Get all entry keys for this owner
+		local entryKeys = redis.call('SMEMBERS', indexKey)
+		if #entryKeys == 0 then
+			return {}
+		end
+
+		local results = {}
+		local now = redis.call('TIME')
+		local ts = now[1]
+
+		-- Fetch each entry's data and update access metadata atomically
+		for i = 1, #entryKeys do
+			local entryKey = entryKeys[i]
+			local dataKey = dataPrefix .. entryKey
+			local metaKey = metaPrefix .. entryKey
+			
+			local value = redis.call('GET', dataKey)
+			if value then
+				-- Update access metadata atomically
+				redis.call('HINCRBY', metaKey, 'access_count', 1)
+				redis.call('HSET', metaKey, 'last_accessed', ts)
+				
+				-- Include both key and value in results
+				table.insert(results, {entryKey, value})
+			end
+		end
+
+		return results
+	`)
+
+	// DeleteByOwner script - atomic deletion of all entries for an owner
+	c.deleteByOwnerScript = redis.NewScript(`
+		local indexKey = KEYS[1]
+		local dataPrefix = ARGV[1]
+		local metaPrefix = ARGV[2]
+		local reversePrefix = ARGV[3]
+
+		-- Get all entry keys for this owner
+		local entryKeys = redis.call('SMEMBERS', indexKey)
+		if #entryKeys == 0 then
+			return 0
+		end
+
+		local totalDeleted = 0
+
+		-- Delete each entry's data, metadata, and reverse index atomically
+		for i = 1, #entryKeys do
+			local entryKey = entryKeys[i]
+			local dataKey = dataPrefix .. entryKey
+			local metaKey = metaPrefix .. entryKey
+			local reverseKey = reversePrefix .. entryKey
+			
+			totalDeleted = totalDeleted + redis.call('DEL', dataKey)
+			totalDeleted = totalDeleted + redis.call('DEL', metaKey)
+			totalDeleted = totalDeleted + redis.call('DEL', reverseKey)
+		end
+
+		-- Delete the owner index itself
+		totalDeleted = totalDeleted + redis.call('DEL', indexKey)
+
+		return totalDeleted
+	`)
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
@@ -751,7 +823,7 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 
 // Owner-based operations
 
-// GetByOwner retrieves all entries for a given owner key
+// GetByOwner retrieves all entries for a given owner key using atomic Lua script
 func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, error) {
 	start := time.Now()
 	result := make([]T, 0)
@@ -767,38 +839,63 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 	}
 
 	indexKey := c.buildIndexKey("owner", ownerKey)
+	dataPrefix := c.buildDataKey("")
+	metaPrefix := c.buildMetaKey("")
 
-	// Get all entry keys for this owner
-	entryKeys, err := c.client.SMembers(ctx, indexKey).Result()
+	// Use atomic Lua script to get all entries and update access metadata
+	scriptResult, err := c.getByOwnerScript.Run(ctx, c.client,
+		[]string{indexKey},
+		dataPrefix, metaPrefix).Result()
+
 	if err != nil {
 		c.handleError("getbyowner", err)
 		c.metrics.RecordError("redis", "getbyowner", "redis_error", "infrastructure", c.getMetricTags())
 		return result, fmt.Errorf("redis GetByOwner error: %w", err)
 	}
 
-	if len(entryKeys) == 0 {
+	// Handle empty result
+	resultSlice, ok := scriptResult.([]any)
+	if !ok || len(resultSlice) == 0 {
 		c.metrics.RecordOperation("redis", "getbyowner", "empty", time.Since(start), c.getMetricTags())
 		return result, nil
 	}
 
-	// Get all values for the entry keys using GetMany
-	valueMap, err := c.GetMany(ctx, entryKeys)
-	if err != nil {
-		return result, err
-	}
-
-	// Convert map to slice
-	for _, entryKey := range entryKeys {
-		if value, exists := valueMap[entryKey]; exists {
-			result = append(result, value)
+	// Process script results - each entry is [entryKey, serializedValue]
+	for _, entry := range resultSlice {
+		entryData, ok := entry.([]any)
+		if !ok || len(entryData) < 2 {
+			continue // Skip malformed entries
 		}
+
+		serializedValue, ok := entryData[1].(string)
+		if !ok {
+			continue // Skip if value is not a string
+		}
+
+		// Deserialize the value
+		var value T
+		if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
+			c.metrics.RecordError("redis", "getbyowner", "serialization_error", "data", c.getMetricTags())
+			// Continue processing other entries instead of failing completely
+			continue
+		}
+
+		result = append(result, value)
 	}
 
-	c.metrics.RecordOperation("redis", "getbyowner", "success", time.Since(start), c.getMetricTags())
+	// Record appropriate metrics
+	if len(result) > 0 {
+		c.metrics.RecordHit("redis", c.getMetricTags())
+		c.metrics.RecordOperation("redis", "getbyowner", "success", time.Since(start), c.getMetricTags())
+	} else {
+		c.metrics.RecordMiss("redis", c.getMetricTags())
+		c.metrics.RecordOperation("redis", "getbyowner", "empty", time.Since(start), c.getMetricTags())
+	}
+
 	return result, nil
 }
 
-// DeleteByOwner removes all entries for a given owner key
+// DeleteByOwner removes all entries for a given owner key using atomic Lua script
 func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error) {
 	start := time.Now()
 
@@ -813,10 +910,14 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	}
 
 	indexKey := c.buildIndexKey("owner", ownerKey)
+	dataPrefix := c.buildDataKey("")
+	metaPrefix := c.buildMetaKey("")
+	reversePrefix := c.buildReverseIndexKey("")
 
-	// Use Lua script for atomic operation
-	result, err := c.deleteByIndexScript.Run(ctx, c.client, []string{indexKey},
-		c.buildDataKey(""), c.buildMetaKey("")).Result()
+	// Use atomic Lua script for complete deletion
+	result, err := c.deleteByOwnerScript.Run(ctx, c.client, 
+		[]string{indexKey},
+		dataPrefix, metaPrefix, reversePrefix).Result()
 
 	if err != nil {
 		c.handleError("deletebyowner", err)
@@ -913,9 +1014,7 @@ func (c *RedisCache[T]) buildLockKey(key string) string {
 func (c *RedisCache[T]) getMetricTags() metric.Tags {
 	tags := make(metric.Tags)
 	if c.options.GlobalMetricsTags != nil {
-		for k, v := range c.options.GlobalMetricsTags {
-			tags[k] = v
-		}
+		maps.Copy(tags, c.options.GlobalMetricsTags)
 	}
 	tags["provider"] = "redis"
 	tags["instance_id"] = c.instanceID
