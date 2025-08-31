@@ -26,7 +26,7 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 
 	// Retry logic for distributed coordination
 	maxRetries := lockMaxRetries
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for range maxRetries {
 		// Try the Lua script for atomic GetOrSet
 		result, err := c.getOrSetScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
 			lockValue, int64(ttl.Seconds()), "", int64(defaultLockTimeout.Seconds())).Result()
@@ -34,21 +34,31 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 		if err != nil {
 			c.handleError("getorset", err)
 			c.metrics.RecordError("redis", "getorset", "redis_error", "infrastructure", c.getMetricTags())
-			return zero, fmt.Errorf("Redis GetOrSet error: %w", err)
+			return zero, fmt.Errorf("redis GetOrSet error: %w", err)
 		}
 
-		resultSlice, ok := result.([]interface{})
+		resultSlice, ok := result.([]any)
 		if !ok || len(resultSlice) < 2 {
 			return zero, fmt.Errorf("unexpected script result format")
 		}
 
 		existingValue := resultSlice[0]
-		shouldRetry := resultSlice[1].(string) == "1"
+		resultCode := resultSlice[1].(string)
+
+		shouldRetry := resultCode == "1"
+		noDataAvailable := resultCode == "2"
 
 		if shouldRetry {
 			// Another process is holding the lock, wait and retry
 			time.Sleep(lockRetryDelay)
 			continue
+		}
+
+		if noDataAvailable {
+			// Cache miss and no backup data source configured
+			c.metrics.RecordMiss("redis", c.getMetricTags())
+			c.metrics.RecordError("redis", "getorset", "no_backup_source", "configuration", c.getMetricTags())
+			return zero, fmt.Errorf("cache miss for key %s and no backup data source available", key)
 		}
 
 		if existingValue != nil && existingValue != "" {
@@ -233,7 +243,7 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 		// Set metadata and indexes
 		now := time.Now().Unix()
 		pipe := c.client.TxPipeline()
-		
+
 		pipe.HSet(ctx, metaKey, map[string]interface{}{
 			"created_at":    now,
 			"last_accessed": now,
@@ -302,9 +312,9 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 		// Update metadata and indexes
 		now := time.Now().Unix()
 		pipe := c.client.TxPipeline()
-		
+
 		pipe.HIncrBy(ctx, metaKey, "access_count", 1)
-		
+
 		pipe.HSet(ctx, metaKey, map[string]interface{}{
 			"last_accessed": now,
 			"ttl":           int64(ttl.Seconds()),

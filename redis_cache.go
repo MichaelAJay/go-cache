@@ -77,7 +77,6 @@ type RedisCache[T any] struct {
 // Option defines a functional option for configuring cache behavior
 type Option[T any] func(*RedisCache[T])
 
-
 // WithRedisOptions sets Redis-specific configuration
 func WithRedisOptions[T any](redisOpts *RedisOptions) Option[T] {
 	return func(cache *RedisCache[T]) {
@@ -263,6 +262,15 @@ func (c *RedisCache[T]) initLuaScripts() {
 				return {existing, '0'}
 			end
 			return {false, '1'} -- signal retry
+		end
+
+		-- Validate we have actual data to set
+		if serializedVal == nil or serializedVal == "" then
+			-- Release lock and return miss signal - no data to set
+			if redis.call('GET', lockKey) == lockValue then
+				redis.call('DEL', lockKey)
+			end
+			return {nil, '2'}  -- Signal: miss + no data available
 		end
 
 		-- Set value
