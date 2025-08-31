@@ -189,7 +189,12 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 }
 
 // SetIfNotExists atomically sets value only if key doesn't exist
-func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error) {
+func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {
+	// Extract key from value using configured extractor
+	if c.extractor.GetEntryKey == nil {
+		return false, fmt.Errorf("IndexExtractor.GetEntryKey is required for SetIfNotExists operation")
+	}
+	key := c.extractor.GetEntryKey(value)
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -225,9 +230,11 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, key string, value T,
 	}
 
 	if wasSet {
-		// Set metadata
+		// Set metadata and indexes
 		now := time.Now().Unix()
-		c.client.HMSet(ctx, metaKey, map[string]interface{}{
+		pipe := c.client.TxPipeline()
+		
+		pipe.HMSet(ctx, metaKey, map[string]interface{}{
 			"created_at":    now,
 			"last_accessed": now,
 			"access_count":  1,
@@ -236,8 +243,20 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, key string, value T,
 		})
 
 		if ttl > 0 {
-			c.client.Expire(ctx, metaKey, ttl)
+			pipe.Expire(ctx, metaKey, ttl)
 		}
+
+		// Update indexes if configured
+		if c.extractor.GetOwnerKey != nil {
+			ownerKey := c.extractor.GetOwnerKey(value)
+			indexKey := c.buildIndexKey("owner", ownerKey)
+			pipe.SAdd(ctx, indexKey, key)
+			if ttl > 0 {
+				pipe.Expire(ctx, indexKey, ttl)
+			}
+		}
+
+		pipe.Exec(ctx)
 	}
 
 	c.metrics.RecordOperation("redis", "setifnotexists", "success", time.Since(start), c.getMetricTags())
@@ -245,7 +264,12 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, key string, value T,
 }
 
 // SetIfExists atomically sets value only if key exists
-func (c *RedisCache[T]) SetIfExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error) {
+func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {
+	// Extract key from value using configured extractor
+	if c.extractor.GetEntryKey == nil {
+		return false, fmt.Errorf("IndexExtractor.GetEntryKey is required for SetIfExists operation")
+	}
+	key := c.extractor.GetEntryKey(value)
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -275,20 +299,33 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, key string, value T, tt
 	wasSet := result == "OK"
 
 	if wasSet {
-		// Update metadata
+		// Update metadata and indexes
 		now := time.Now().Unix()
-		accessCount, _ := c.client.HIncrBy(ctx, metaKey, "access_count", 1).Result()
-
-		c.client.HMSet(ctx, metaKey, map[string]interface{}{
+		pipe := c.client.TxPipeline()
+		
+		pipe.HIncrBy(ctx, metaKey, "access_count", 1)
+		
+		pipe.HMSet(ctx, metaKey, map[string]interface{}{
 			"last_accessed": now,
-			"access_count":  accessCount,
 			"ttl":           int64(ttl.Seconds()),
 			"size":          len(serializedValue),
 		})
 
 		if ttl > 0 {
-			c.client.Expire(ctx, metaKey, ttl)
+			pipe.Expire(ctx, metaKey, ttl)
 		}
+
+		// Update indexes if configured (for existing entries)
+		if c.extractor.GetOwnerKey != nil {
+			ownerKey := c.extractor.GetOwnerKey(value)
+			indexKey := c.buildIndexKey("owner", ownerKey)
+			pipe.SAdd(ctx, indexKey, key)
+			if ttl > 0 {
+				pipe.Expire(ctx, indexKey, ttl)
+			}
+		}
+
+		pipe.Exec(ctx)
 	}
 
 	c.metrics.RecordOperation("redis", "setifexists", "success", time.Since(start), c.getMetricTags())

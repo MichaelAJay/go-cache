@@ -96,8 +96,8 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	return result, nil
 }
 
-// SetMany stores multiple key-value pairs with same TTL
-func (c *RedisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error {
+// SetMany stores multiple values with same TTL, using extractors for keys
+func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Duration) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -105,16 +105,22 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
-	if len(items) == 0 {
+	if len(values) == 0 {
 		return nil
+	}
+
+	// Require key extractor for SetMany
+	if c.extractor.GetEntryKey == nil {
+		return fmt.Errorf("IndexExtractor.GetEntryKey is required for SetMany operation")
 	}
 
 	// Use pipeline for efficient batch setting
 	pipe := c.client.TxPipeline()
 	now := time.Now().Unix()
 
-	// Process all items
-	for key, value := range items {
+	// Process all values
+	for _, value := range values {
+		key := c.extractor.GetEntryKey(value)
 		// Serialize value
 		serializedValue, err := c.serializer.Serialize(value)
 		if err != nil {
@@ -141,6 +147,16 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 			"ttl":           int64(ttl.Seconds()),
 			"size":          len(serializedValue),
 		})
+
+		// Update indexes if configured
+		if c.extractor.GetOwnerKey != nil {
+			ownerKey := c.extractor.GetOwnerKey(value)
+			indexKey := c.buildIndexKey("owner", ownerKey)
+			pipe.SAdd(ctx, indexKey, key)
+			if ttl > 0 {
+				pipe.Expire(ctx, indexKey, ttl)
+			}
+		}
 	}
 
 	// Execute pipeline
@@ -151,7 +167,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 		return fmt.Errorf("Redis SetMany error: %w", err)
 	}
 
-	c.metrics.RecordBatchOperation("redis", "setmany", len(items), time.Since(start), c.getMetricTags())
+	c.metrics.RecordBatchOperation("redis", "setmany", len(values), time.Since(start), c.getMetricTags())
 	return nil
 }
 

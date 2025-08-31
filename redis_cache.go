@@ -431,8 +431,13 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	return value, true, nil
 }
 
-// Set stores a value with TTL
-func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
+// Set stores a value with TTL, using configured extractors to determine storage key
+func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) error {
+	// Extract key from value using configured extractor
+	if c.extractor.GetEntryKey == nil {
+		return fmt.Errorf("IndexExtractor.GetEntryKey is required for Set operation")
+	}
+	key := c.extractor.GetEntryKey(value)
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -469,6 +474,16 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 		"ttl":           int64(ttl.Seconds()),
 		"size":          len(serializedValue),
 	})
+
+	// Update indexes if configured
+	if c.extractor.GetOwnerKey != nil {
+		ownerKey := c.extractor.GetOwnerKey(value)
+		indexKey := c.buildIndexKey("owner", ownerKey)
+		pipe.SAdd(ctx, indexKey, key)
+		if ttl > 0 {
+			pipe.Expire(ctx, indexKey, ttl)
+		}
+	}
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
@@ -582,8 +597,146 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	return exists > 0
 }
 
-// Atomic Operations Implementation continues...
-// (Due to length limits, I'll continue with the remaining methods in the next part)
+// Owner-based operations
+
+// GetByOwner retrieves all entries for a given owner key
+func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, error) {
+	start := time.Now()
+	result := make([]T, 0)
+
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "getbyowner", "circuit_breaker", "availability", c.getMetricTags())
+		return result, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Require indexing to be enabled
+	if c.extractor.GetOwnerKey == nil {
+		return result, fmt.Errorf("owner-based operations require IndexExtractor.GetOwnerKey to be configured")
+	}
+
+	indexKey := c.buildIndexKey("owner", ownerKey)
+	
+	// Get all entry keys for this owner
+	entryKeys, err := c.client.SMembers(ctx, indexKey).Result()
+	if err != nil {
+		c.handleError("getbyowner", err)
+		c.metrics.RecordError("redis", "getbyowner", "redis_error", "infrastructure", c.getMetricTags())
+		return result, fmt.Errorf("Redis GetByOwner error: %w", err)
+	}
+
+	if len(entryKeys) == 0 {
+		c.metrics.RecordOperation("redis", "getbyowner", "empty", time.Since(start), c.getMetricTags())
+		return result, nil
+	}
+
+	// Get all values for the entry keys using GetMany
+	valueMap, err := c.GetMany(ctx, entryKeys)
+	if err != nil {
+		return result, err
+	}
+
+	// Convert map to slice
+	for _, entryKey := range entryKeys {
+		if value, exists := valueMap[entryKey]; exists {
+			result = append(result, value)
+		}
+	}
+
+	c.metrics.RecordOperation("redis", "getbyowner", "success", time.Since(start), c.getMetricTags())
+	return result, nil
+}
+
+// DeleteByOwner removes all entries for a given owner key
+func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error) {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "deletebyowner", "circuit_breaker", "availability", c.getMetricTags())
+		return 0, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Require indexing to be enabled
+	if c.extractor.GetOwnerKey == nil {
+		return 0, fmt.Errorf("owner-based operations require IndexExtractor.GetOwnerKey to be configured")
+	}
+
+	indexKey := c.buildIndexKey("owner", ownerKey)
+	
+	// Use Lua script for atomic operation
+	result, err := c.deleteByIndexScript.Run(ctx, c.client, []string{indexKey}, 
+		c.buildDataKey(""), c.buildMetaKey("")).Result()
+	
+	if err != nil {
+		c.handleError("deletebyowner", err)
+		c.metrics.RecordError("redis", "deletebyowner", "redis_error", "infrastructure", c.getMetricTags())
+		return 0, fmt.Errorf("Redis DeleteByOwner error: %w", err)
+	}
+
+	deletedCount = int(result.(int64))
+	c.metrics.RecordOperation("redis", "deletebyowner", "success", time.Since(start), c.getMetricTags())
+	return deletedCount, nil
+}
+
+// Pattern operations
+
+// GetKeysByPattern returns entry keys matching pattern
+func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "getkeysbypattern", "circuit_breaker", "availability", c.getMetricTags())
+		return nil, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Build the full pattern with data prefix
+	dataPattern := c.buildDataKey(pattern)
+	
+	keys, err := c.client.Keys(ctx, dataPattern).Result()
+	if err != nil {
+		c.handleError("getkeysbypattern", err)
+		c.metrics.RecordError("redis", "getkeysbypattern", "redis_error", "infrastructure", c.getMetricTags())
+		return nil, fmt.Errorf("Redis GetKeysByPattern error: %w", err)
+	}
+
+	// Remove data prefix from keys to return clean keys
+	result := make([]string, len(keys))
+	dataPrefix := c.buildDataKey("")
+	for i, fullKey := range keys {
+		if len(fullKey) > len(dataPrefix) {
+			result[i] = fullKey[len(dataPrefix):]
+		} else {
+			result[i] = fullKey
+		}
+	}
+
+	c.metrics.RecordOperation("redis", "getkeysbypattern", "success", time.Since(start), c.getMetricTags())
+	return result, nil
+}
+
+// DeleteByPattern removes all entries with keys matching pattern
+func (c *RedisCache[T]) DeleteByPattern(ctx context.Context, pattern string) (deletedCount int, err error) {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "deletebypattern", "circuit_breaker", "availability", c.getMetricTags())
+		return 0, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Use Lua script for atomic operation
+	dataPattern := c.buildDataKey(pattern)
+	result, err := c.deleteByPatternScript.Run(ctx, c.client, []string{}, 
+		dataPattern, c.buildDataKey(""), c.buildMetaKey("")).Result()
+	
+	if err != nil {
+		c.handleError("deletebypattern", err)
+		c.metrics.RecordError("redis", "deletebypattern", "redis_error", "infrastructure", c.getMetricTags())
+		return 0, fmt.Errorf("Redis DeleteByPattern error: %w", err)
+	}
+
+	deletedCount = int(result.(int64))
+	c.metrics.RecordOperation("redis", "deletebypattern", "success", time.Since(start), c.getMetricTags())
+	return deletedCount, nil
+}
 
 // Helper methods
 
