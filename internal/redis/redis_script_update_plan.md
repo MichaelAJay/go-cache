@@ -4,13 +4,13 @@ Redis Cache Delete Handling Plan
 
 Current delete logic uses KEYS queries (redis.call("KEYS", ...)) → not scalable in production, risk of blocking the server.
 
-Indexes for relationships (e.g., subjectID → sessionIDs) are currently held outside Redis, creating consistency problems when multiple processes interact.
+Indexes for relationships (e.g., ownerID → entryIDs) are currently held outside Redis, creating consistency problems when multiple processes interact.
 
 Need bi-directional indexes for efficient deletes:
 
-subjectID → sessionIDs (all sessions for a subject).
+ownerID → entryIDs (all cache entries for an owner).
 
-sessionID → subjectID (find subject when deleting a session).
+entryID → ownerID (find owner when deleting a cache entry).
 
 2. Corrected Design
 
@@ -18,53 +18,53 @@ Store all indexes inside Redis (no in-process only state).
 
 Use Redis Sets:
 
-subject:{subjectID}:sessions → set of sessionIDs for a subject.
+owner:{ownerID}:entries → set of entryIDs for an owner.
 
-session:{sessionID}:subject → single subjectID for a session.
+entry:{entryID}:owner → single ownerID for a cache entry.
 
 Deletes use these indexes:
 
-DeleteSession(sessionID):
+DeleteEntry(entryID):
 
-Lookup subjectID via session:{sessionID}:subject.
+Lookup ownerID via entry:{entryID}:owner.
 
-Remove sessionID from subject:{subjectID}:sessions.
+Remove entryID from owner:{ownerID}:entries.
 
-Delete the session key itself.
+Delete the cache entry key itself.
 
-Delete session:{sessionID}:subject.
+Delete entry:{entryID}:owner.
 
-DeleteSubjectSessions(subjectID):
+DeleteOwnerEntries(ownerID):
 
-Lookup all sessionIDs via subject:{subjectID}:sessions.
+Lookup all entryIDs via owner:{ownerID}:entries.
 
-Delete all session keys + session:{sessionID}:subject entries.
+Delete all cache entry keys + entry:{entryID}:owner entries.
 
-Delete subject:{subjectID}:sessions.
+Delete owner:{ownerID}:entries.
 
-DeleteSession.lua
--- KEYS[1] = session:{sessionID}:subject
--- KEYS[2] = subject:{subjectID}:sessions
--- KEYS[3] = session:{sessionID} (actual session data)
+DeleteEntry.lua
+-- KEYS[1] = entry:{entryID}:owner
+-- KEYS[2] = owner:{ownerID}:entries
+-- KEYS[3] = entry:{entryID} (actual cache entry data)
 
-local subjectID = redis.call("GET", KEYS[1])
-if not subjectID then
+local ownerID = redis.call("GET", KEYS[1])
+if not ownerID then
 return 0
 end
 
-redis.call("SREM", "subject:" .. subjectID .. ":sessions", ARGV[1])
+redis.call("SREM", "owner:" .. ownerID .. ":entries", ARGV[1])
 redis.call("DEL", KEYS[1], KEYS[3])
 return 1
 
-DeleteSubjectSessions.lua
--- KEYS[1] = subject:{subjectID}:sessions
+DeleteOwnerEntries.lua
+-- KEYS[1] = owner:{ownerID}:entries
 
-local sessions = redis.call("SMEMBERS", KEYS[1])
-for \_, sid in ipairs(sessions) do
-redis.call("DEL", "session:" .. sid, "session:" .. sid .. ":subject")
+local entries = redis.call("SMEMBERS", KEYS[1])
+for \_, eid in ipairs(entries) do
+redis.call("DEL", "entry:" .. eid, "entry:" .. eid .. ":owner")
 end
 redis.call("DEL", KEYS[1])
-return #sessions
+return #entries
 
 Go Helper Wrappers
 package cache
@@ -74,33 +74,33 @@ import (
 "github.com/redis/go-redis/v9"
 )
 
-type SessionCache struct {
+type EntryCache struct {
 rdb \*redis.Client
 ctx context.Context
 }
 
-// NewSessionCache constructor
-func NewSessionCache(rdb *redis.Client) *SessionCache {
-return &SessionCache{
+// NewEntryCache constructor
+func NewEntryCache(rdb *redis.Client) *EntryCache {
+return &EntryCache{
 rdb: rdb,
 ctx: context.Background(),
 }
 }
 
-// Delete a single session
-func (c \*SessionCache) DeleteSession(sessionID string) (bool, error) {
+// Delete a single cache entry
+func (c \*EntryCache) DeleteEntry(entryID string) (bool, error) {
 keys := []string{
-"session:" + sessionID + ":subject", // KEYS[1]
-"", // placeholder (subject set resolved in script)
-"session:" + sessionID, // KEYS[3]
+"entry:" + entryID + ":owner", // KEYS[1]
+"", // placeholder (owner set resolved in script)
+"entry:" + entryID, // KEYS[3]
 }
-return c.rdb.EvalSha(c.ctx, deleteSessionSha, keys, sessionID).Bool()
+return c.rdb.EvalSha(c.ctx, deleteEntrySha, keys, entryID).Bool()
 }
 
-// Delete all sessions for a subject
-func (c \*SessionCache) DeleteSubjectSessions(subjectID string) (int64, error) {
+// Delete all cache entries for an owner
+func (c \*EntryCache) DeleteOwnerEntries(ownerID string) (int64, error) {
 keys := []string{
-"subject:" + subjectID + ":sessions", // KEYS[1]
+"owner:" + ownerID + ":entries", // KEYS[1]
 }
-return c.rdb.EvalSha(c.ctx, deleteSubjectSessionsSha, keys).Int64()
+return c.rdb.EvalSha(c.ctx, deleteOwnerEntriesSha, keys).Int64()
 }

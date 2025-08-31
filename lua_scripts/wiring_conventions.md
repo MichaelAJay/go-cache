@@ -1,21 +1,21 @@
 Key schema (recommended):
 
-data:session:<sid>
+data:entry:<entryID>
 
-meta:session:<sid>
+meta:entry:<entryID>
 
-index:session:<sid> → <subjectID> (string)
+index:entry:<entryID> → <ownerID> (string)
 
-index:subject:<subjectID> → Set<sid>
+index:owner:<ownerID> → Set<entryID>
 
 Writes:
 
-On create/update: set data:_, meta:_, SET index:session:<sid> <subjectID>, SADD index:subject:<subjectID> <sid>.
+On create/update: set data:_, meta:_, SET index:entry:<entryID> <ownerID>, SADD index:owner:<ownerID> <entryID>.
 
 Deletes:
 
-By session: run deleteBySessionIDScript.
+By entry: run deleteByEntryIDScript.
 
-By subject (small sets): deleteAllSessionsForSubjectScript.
+By owner (small sets): deleteAllEntriesForOwnerScript.
 
-By subject (large sets): loop deleteSessionsForSubjectChunkedScript.
+By owner (large sets): loop deleteEntriesForOwnerChunkedScript.

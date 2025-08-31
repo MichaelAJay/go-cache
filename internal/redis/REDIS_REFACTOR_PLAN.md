@@ -100,16 +100,16 @@ redis.call('HSET', metaKey, ...)
 
 **NEW INDEX ARCHITECTURE:**
 ```
-data:session:<sid>              → Serialized session data
-meta:session:<sid>              → Session metadata hash
-index:session:<sid>             → <subjectID> (string mapping)
-index:subject:<subjectID>       → Set<sid> (set of session IDs)
+data:entry:<entryID>            → Serialized cache entry data
+meta:entry:<entryID>            → Cache entry metadata hash
+index:entry:<entryID>           → <ownerID> (reverse lookup mapping)
+index:owner:<ownerID>           → Set<entryID> (forward lookup set)
 ```
 
 **Implementation Steps:**
 1. **DEFINE** new key builders for bidirectional indexes
-2. **CREATE** index:session:<key> → indexValue mapping helpers
-3. **CREATE** index:indexName:<indexValue> → Set<keys> helpers
+2. **CREATE** index:entry:<key> → ownerID mapping helpers
+3. **CREATE** index:owner:<ownerID> → Set<entryID> helpers
 4. **DESIGN** atomic index maintenance operations
 5. **IMPLEMENT** reverse index cleanup on deletes
 
@@ -137,15 +137,15 @@ index:subject:<subjectID>       → Set<sid> (set of session IDs)
 **SCRIPT REPLACEMENTS:**
 1. **getOrSetScript** → Use `feedback_scripts/get_or_set.lua`
 2. **updateScript** → Use `feedback_scripts/update.lua`
-3. **deleteByIndexScript** → Use `feedback_scripts/delete_all_for_subject_single_shot.lua`
-4. **NEW: deleteBySessionScript** → Use `feedback_scripts/delete_by_session_id.lua`
+3. **deleteByIndexScript** → Use `feedback_scripts/delete_all_for_owner_single_shot.lua`
+4. **NEW: deleteByEntryScript** → Use `feedback_scripts/delete_by_entry_id.lua`
 5. **REMOVE: deleteByPatternScript** → Delete completely (replaced by index operations)
 
 **Implementation Steps:**
 1. **REPLACE** getOrSetScript with safe lock version
 2. **REPLACE** updateScript with safe lock version
-3. **ADD** deleteBySessionScript for individual session cleanup
-4. **ADD** deleteAllForSubjectScript for bulk subject cleanup
+3. **ADD** deleteByEntryScript for individual cache entry cleanup
+4. **ADD** deleteAllForOwnerScript for bulk owner cleanup
 5. **REMOVE** all pattern-based deletion scripts
 6. **UPDATE** script invocation signatures
 
