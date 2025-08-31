@@ -52,7 +52,8 @@ type RedisCache[T any] struct {
 	options    *config.CacheOptions
 	metrics    metrics.EnhancedCacheMetrics
 
-	extractor IndexExtractor[T] // nil if no indexing
+	extractor    *IndexExtractor[T] // nil = no indexing
+	indexingMode bool               // derived from extractor != nil
 
 	// Redis-specific options
 	redisOptions *RedisOptions
@@ -76,12 +77,6 @@ type RedisCache[T any] struct {
 // Option defines a functional option for configuring cache behavior
 type Option[T any] func(*RedisCache[T])
 
-// WithIndexExtractor enables owner-based indexing with key extraction
-func WithIndexExtractor[T any](extractor IndexExtractor[T]) Option[T] {
-	return func(cache *RedisCache[T]) {
-		cache.extractor = extractor
-	}
-}
 
 // WithRedisOptions sets Redis-specific configuration
 func WithRedisOptions[T any](redisOpts *RedisOptions) Option[T] {
@@ -141,9 +136,13 @@ func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] 
 	}
 }
 
-// NewCache creates a new Redis cache instance with functional options
-// NewCache creates a new Redis cache instance with the new generic option pattern
-func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[T], error) {
+// NewCache creates a new Redis cache instance with clean abstraction
+// indexingMode explicitly controls whether indexing features are enabled
+// extractor provides key extraction functions when indexing is enabled
+// Valid combinations:
+//   - indexingMode=false, extractor=nil (basic caching)
+//   - indexingMode=true, extractor with valid GetEntryKey & GetOwnerKey (indexed caching)
+func NewCache[T any](client redis.Cmdable, indexingMode bool, extractor *IndexExtractor[T], opts ...Option[T]) (interfaces.Cache[T], error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis client cannot be nil")
 	}
@@ -151,6 +150,8 @@ func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[
 	// Create cache instance with defaults
 	cache := &RedisCache[T]{
 		client:       client,
+		extractor:    extractor,
+		indexingMode: indexingMode,
 		options:      config.DefaultOptions(),
 		instanceID:   generateInstanceID(),
 		redisOptions: nil,
@@ -161,12 +162,41 @@ func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[
 		opt(cache)
 	}
 
+	// CRITICAL: Validate indexing configuration at initialization
+	if err := cache.validateIndexingConfig(); err != nil {
+		return nil, fmt.Errorf("indexing configuration error: %w", err)
+	}
+
 	// Initialize the cache (serializer, metrics, scripts, etc.)
 	if err := cache.initialize(); err != nil {
 		return nil, fmt.Errorf("failed to initialize cache: %w", err)
 	}
 
 	return cache, nil
+}
+
+// validateIndexingConfig validates indexing configuration at initialization time
+func (c *RedisCache[T]) validateIndexingConfig() error {
+	if !c.indexingMode {
+		// Basic mode - extractor should be nil
+		if c.extractor != nil {
+			return fmt.Errorf("indexingMode=false but extractor is not nil - pass nil extractor for basic caching")
+		}
+		return nil
+	}
+
+	// Indexing mode - validate extractor is properly configured
+	if c.extractor == nil {
+		return fmt.Errorf("indexingMode=true but extractor is nil - provide valid IndexExtractor for indexed caching")
+	}
+	if c.extractor.GetEntryKey == nil {
+		return fmt.Errorf("indexingMode=true but IndexExtractor.GetEntryKey is nil")
+	}
+	if c.extractor.GetOwnerKey == nil {
+		return fmt.Errorf("indexingMode=true but IndexExtractor.GetOwnerKey is nil")
+	}
+
+	return nil
 }
 
 // initialize sets up the cache instance with serializer, metrics, and Lua scripts
@@ -415,7 +445,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 // Set stores a value with TTL, using configured extractors to determine storage key
 func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) error {
 	// Extract key from value using configured extractor
-	if c.extractor.GetEntryKey == nil {
+	if c.extractor == nil || c.extractor.GetEntryKey == nil {
 		return fmt.Errorf("IndexExtractor.GetEntryKey is required for Set operation")
 	}
 	key := c.extractor.GetEntryKey(value)
@@ -457,7 +487,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	})
 
 	// Update indexes if configured
-	if c.extractor.GetOwnerKey != nil {
+	if c.indexingMode && c.extractor.GetOwnerKey != nil {
 		ownerKey := c.extractor.GetOwnerKey(value)
 		indexKey := c.buildIndexKey("owner", ownerKey)
 		pipe.SAdd(ctx, indexKey, key)
@@ -608,8 +638,8 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 	}
 
 	// Require indexing to be enabled
-	if c.extractor.GetOwnerKey == nil {
-		return result, fmt.Errorf("owner-based operations require IndexExtractor.GetOwnerKey to be configured")
+	if !c.indexingMode {
+		return result, fmt.Errorf("GetByOwner requires indexing to be enabled")
 	}
 
 	indexKey := c.buildIndexKey("owner", ownerKey)
@@ -654,8 +684,8 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	}
 
 	// Require indexing to be enabled
-	if c.extractor.GetOwnerKey == nil {
-		return 0, fmt.Errorf("owner-based operations require IndexExtractor.GetOwnerKey to be configured")
+	if !c.indexingMode {
+		return 0, fmt.Errorf("DeleteByOwner requires indexing to be enabled")
 	}
 
 	indexKey := c.buildIndexKey("owner", ownerKey)
