@@ -18,21 +18,23 @@ import (
 	"github.com/MichaelAJay/go-serializer"
 )
 
+// RedisOptions configures Redis-specific cache behavior
+type RedisOptions struct {
+	DataPrefix  string // Prefix for data keys (e.g., "sessions:data:")
+	IndexPrefix string // Prefix for index keys (e.g., "sessions:index:")
+	MetaPrefix  string // Prefix for metadata keys (e.g., "sessions:meta:")
+	LockPrefix  string // Prefix for lock keys (e.g., "sessions:lock:")
+}
+
 // IndexExtractor defines how to extract keys from values for indexing
-// GetKey extracts the primary storage key (e.g., SessionID from Session)
-// GetReverseKey extracts the owner/grouping key (e.g., UserID from Session)
+// GetEntryKey extracts the primary cache entry key (e.g., SessionID from Session)
+// GetOwnerKey extracts the owner/grouping key (e.g., UserID from Session)
 type IndexExtractor[T any] struct {
-	GetKey        func(T) string // Required: extracts primary storage key
-	GetReverseKey func(T) string // Optional: enables owner-based indexing if provided
+	GetEntryKey func(T) string // Required: extracts primary cache entry key
+	GetOwnerKey func(T) string // Required: extracts primary index key for cache entry
 }
 
 const (
-	// Redis key prefixes
-	dataPrefix  = "cache:data:"
-	indexPrefix = "cache:index:"
-	metaPrefix  = "cache:meta:"
-	lockPrefix  = "cache:lock:"
-
 	// Lock configuration
 	defaultLockTimeout = 30 * time.Second
 	lockRetryDelay     = 10 * time.Millisecond
@@ -52,6 +54,9 @@ type RedisCache[T any] struct {
 
 	// Key extraction for indexing (BURN THE BOATS: new approach)
 	extractor IndexExtractor[T] // nil if no indexing
+
+	// Redis-specific options
+	redisOptions *RedisOptions
 
 	// Circuit breaker state
 	mu                 sync.RWMutex
@@ -78,6 +83,13 @@ type Option[T any] func(*RedisCache[T])
 func WithIndexExtractor[T any](extractor IndexExtractor[T]) Option[T] {
 	return func(cache *RedisCache[T]) {
 		cache.extractor = extractor
+	}
+}
+
+// WithRedisOptions sets Redis-specific configuration
+func WithRedisOptions[T any](redisOpts *RedisOptions) Option[T] {
+	return func(cache *RedisCache[T]) {
+		cache.redisOptions = redisOpts
 	}
 }
 
@@ -145,9 +157,10 @@ func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[
 
 	// Create cache instance with defaults
 	cache := &RedisCache[T]{
-		client:     client,
-		options:    config.DefaultOptions(),
-		instanceID: generateInstanceID(),
+		client:       client,
+		options:      config.DefaultOptions(),
+		instanceID:   generateInstanceID(),
+		redisOptions: nil, // Will be set by WithRedisOptions if provided
 	}
 
 	// Apply generic options
@@ -576,22 +589,35 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 
 // buildDataKey constructs the Redis key for data storage
 func (c *RedisCache[T]) buildDataKey(key string) string {
-	return dataPrefix + key
+	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
+		return c.redisOptions.DataPrefix + key
+	}
+	return "cache:data:" + key
 }
 
 // buildMetaKey constructs the Redis key for metadata storage
 func (c *RedisCache[T]) buildMetaKey(key string) string {
-	return metaPrefix + key
+	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
+		return c.redisOptions.MetaPrefix + key
+	}
+	return "cache:meta:" + key
 }
 
 // buildIndexKey constructs the Redis key for index storage
 func (c *RedisCache[T]) buildIndexKey(indexName, indexKey string) string {
-	return fmt.Sprintf("%s%s:%s", indexPrefix, indexName, indexKey)
+	prefix := "cache:index:"
+	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+		prefix = c.redisOptions.IndexPrefix
+	}
+	return fmt.Sprintf("%s%s:%s", prefix, indexName, indexKey)
 }
 
 // buildLockKey constructs the Redis key for distributed locks
 func (c *RedisCache[T]) buildLockKey(key string) string {
-	return lockPrefix + key
+	if c.redisOptions != nil && c.redisOptions.LockPrefix != "" {
+		return c.redisOptions.LockPrefix + key
+	}
+	return "cache:lock:" + key
 }
 
 // getMetricTags returns metric tags for this cache instance
