@@ -290,15 +290,16 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local indexKey = KEYS[3]
+		local reverseKey = KEYS[4]
 		local serializedVal = ARGV[1]
 		local ttl = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
+		local ownerKey = ARGV[4]
 
 		-- Set value
+		redis.call('SET', dataKey, serializedVal)
 		if ttl and ttl > 0 then
-			redis.call('SETEX', dataKey, ttl, serializedVal)
-		else
-			redis.call('SET', dataKey, serializedVal)
+			redis.call('EXPIRE', dataKey, ttl)
 		end
 
 		-- Set metadata
@@ -315,10 +316,16 @@ func (c *RedisCache[T]) initLuaScripts() {
 			redis.call('EXPIRE', metaKey, ttl)
 		end
 
-		-- Update index (add entry to owner's set)
+		-- Update forward index (owner -> entry keys)
 		redis.call('SADD', indexKey, entryKey)
 		if ttl and ttl > 0 then
 			redis.call('EXPIRE', indexKey, ttl)
+		end
+
+		-- Update reverse index (entry -> owner key)
+		redis.call('SET', reverseKey, ownerKey)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', reverseKey, ttl)
 		end
 
 		return 'OK'
@@ -457,27 +464,29 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return total
 	`)
 
-	// Individual delete script for single cache entry cleanup
+	// Delete with index cleanup script
 	c.deleteByEntryScript = redis.NewScript(`
-		local dataKey      = KEYS[1]
-		local metaKey      = KEYS[2]
-		local sessionIdx   = KEYS[3]
-		local subjIdxPref  = ARGV[1]
+		local dataKey = KEYS[1]
+		local metaKey = KEYS[2]
+		local reverseKey = KEYS[3]
+		local entryKey = ARGV[1]
+		local indexPrefix = ARGV[2]
 
-		local subjectID = redis.call('GET', sessionIdx)
 		local removed = 0
 
-		if subjectID then
-			local subjectIdxKey = subjIdxPref .. subjectID
-			local sid = string.sub(dataKey, string.len('data:session:') + 1) -- extract <sid>
-			if sid and #sid > 0 then
-				redis.call('SREM', subjectIdxKey, sid)
-			end
+		-- Get the owner key from reverse index
+		local ownerKey = redis.call('GET', reverseKey)
+		
+		if ownerKey then
+			-- Remove entry from forward index
+			local forwardIndexKey = indexPrefix .. 'owner:' .. ownerKey
+			redis.call('SREM', forwardIndexKey, entryKey)
 		end
 
+		-- Delete main keys
 		removed = removed + redis.call('DEL', dataKey)
 		removed = removed + redis.call('DEL', metaKey)
-		removed = removed + redis.call('DEL', sessionIdx)
+		removed = removed + redis.call('DEL', reverseKey)
 
 		return removed
 	`)
@@ -572,10 +581,11 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 		}
 		ownerKey := c.extractor.GetOwnerKey(value)
 		indexKey := c.buildIndexKey("owner", ownerKey)
+		reverseKey := c.buildReverseIndexKey(key)
 
 		result, err = c.setWithIndexScript.Run(ctx, c.client,
-			[]string{dataKey, metaKey, indexKey},
-			string(serializedValue), int64(ttl.Seconds()), key).Result()
+			[]string{dataKey, metaKey, indexKey, reverseKey},
+			string(serializedValue), int64(ttl.Seconds()), key, ownerKey).Result()
 	} else {
 		// No indexing - use simple SET script
 		result, err = c.setScript.Run(ctx, c.client,
@@ -610,12 +620,35 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
-	// Delete data and metadata atomically
-	deleted, err := c.client.Del(ctx, dataKey, metaKey).Result()
-	if err != nil {
-		c.handleError("delete", err)
-		c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
-		return fmt.Errorf("Redis delete error: %w", err)
+	var deleted int64
+	var err error
+
+	if c.indexingMode {
+		// Use atomic script to clean up indexes
+		reverseKey := c.buildReverseIndexKey(key)
+		indexPrefix := "cache:index:"
+		if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+			indexPrefix = c.redisOptions.IndexPrefix
+		}
+
+		result, scriptErr := c.deleteByEntryScript.Run(ctx, c.client,
+			[]string{dataKey, metaKey, reverseKey},
+			key, indexPrefix).Result()
+
+		if scriptErr != nil {
+			c.handleError("delete", scriptErr)
+			c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
+			return fmt.Errorf("redis delete error: %w", scriptErr)
+		}
+		deleted = result.(int64)
+	} else {
+		// Simple delete without index cleanup
+		deleted, err = c.client.Del(ctx, dataKey, metaKey).Result()
+		if err != nil {
+			c.handleError("delete", err)
+			c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
+			return fmt.Errorf("redis delete error: %w", err)
+		}
 	}
 
 	c.metrics.RecordOperation("redis", "delete", "success", time.Since(start), c.getMetricTags())
@@ -658,7 +691,7 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	indexPattern := c.buildIndexKey("*", "*")
 	if err := c.scanAndCollectKeys(ctx, indexPattern, &allKeys); err != nil {
 		c.handleError("clear", err)
-		return fmt.Errorf("Redis clear error scanning index keys: %w", err)
+		return fmt.Errorf("redis clear error scanning index keys: %w", err)
 	}
 
 	if len(allKeys) == 0 {
@@ -676,7 +709,7 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 
 		if err := c.client.Del(ctx, allKeys[i:end]...).Err(); err != nil {
 			c.handleError("clear", err)
-			return fmt.Errorf("Redis clear error deleting batch: %w", err)
+			return fmt.Errorf("redis clear error deleting batch: %w", err)
 		}
 	}
 
@@ -740,7 +773,7 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 	if err != nil {
 		c.handleError("getbyowner", err)
 		c.metrics.RecordError("redis", "getbyowner", "redis_error", "infrastructure", c.getMetricTags())
-		return result, fmt.Errorf("Redis GetByOwner error: %w", err)
+		return result, fmt.Errorf("redis GetByOwner error: %w", err)
 	}
 
 	if len(entryKeys) == 0 {
@@ -788,7 +821,7 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	if err != nil {
 		c.handleError("deletebyowner", err)
 		c.metrics.RecordError("redis", "deletebyowner", "redis_error", "infrastructure", c.getMetricTags())
-		return 0, fmt.Errorf("Redis DeleteByOwner error: %w", err)
+		return 0, fmt.Errorf("redis DeleteByOwner error: %w", err)
 	}
 
 	deletedCount = int(result.(int64))
@@ -814,7 +847,7 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 	if err := c.scanAndCollectKeys(ctx, dataPattern, &keys); err != nil {
 		c.handleError("getkeysbypattern", err)
 		c.metrics.RecordError("redis", "getkeysbypattern", "redis_error", "infrastructure", c.getMetricTags())
-		return nil, fmt.Errorf("Redis GetKeysByPattern error: %w", err)
+		return nil, fmt.Errorf("redis GetKeysByPattern error: %w", err)
 	}
 
 	// Remove data prefix from keys to return clean keys
@@ -857,6 +890,15 @@ func (c *RedisCache[T]) buildIndexKey(indexName, indexKey string) string {
 		prefix = c.redisOptions.IndexPrefix
 	}
 	return fmt.Sprintf("%s%s:%s", prefix, indexName, indexKey)
+}
+
+// buildReverseIndexKey constructs the Redis key for reverse indexing (entry -> owner)
+func (c *RedisCache[T]) buildReverseIndexKey(entryKey string) string {
+	prefix := "cache:reverse:"
+	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+		prefix = c.redisOptions.IndexPrefix + "reverse:"
+	}
+	return prefix + entryKey
 }
 
 // buildLockKey constructs the Redis key for distributed locks
