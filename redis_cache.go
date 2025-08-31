@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,6 +17,14 @@ import (
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
 )
+
+// IndexExtractor defines how to extract keys from values for indexing
+// GetKey extracts the primary storage key (e.g., SessionID from Session)
+// GetReverseKey extracts the owner/grouping key (e.g., UserID from Session)
+type IndexExtractor[T any] struct {
+	GetKey        func(T) string // Required: extracts primary storage key
+	GetReverseKey func(T) string // Optional: enables owner-based indexing if provided
+}
 
 const (
 	// Redis key prefixes
@@ -36,15 +43,15 @@ const (
 	circuitBreakerTimeout   = 60 * time.Second
 )
 
-// redisCache implements the Cache[T] interface with distributed Redis backend
-type redisCache[T any] struct {
+// RedisCache implements the Cache[T] interface with distributed Redis backend
+type RedisCache[T any] struct {
 	client     redis.Cmdable
 	serializer serializer.Serializer
 	options    *config.CacheOptions
 	metrics    metrics.EnhancedCacheMetrics
 
 	// Key extraction for indexing (BURN THE BOATS: new approach)
-	extractor *interfaces.IndexExtractor[T] // nil if no indexing
+	extractor IndexExtractor[T] // nil if no indexing
 
 	// Circuit breaker state
 	mu                 sync.RWMutex
@@ -64,26 +71,26 @@ type redisCache[T any] struct {
 
 // Option defines a functional option for configuring cache behavior
 // BURN THE BOATS: Generic option pattern for IndexExtractor support
-type Option[T any] func(*redisCache[T])
+type Option[T any] func(*RedisCache[T])
 
 // WithIndexExtractor enables owner-based indexing with key extraction
 // BURN THE BOATS: New approach - automatic indexing via extractors
-func WithIndexExtractor[T any](extractor interfaces.IndexExtractor[T]) Option[T] {
-	return func(cache *redisCache[T]) {
-		cache.extractor = &extractor
+func WithIndexExtractor[T any](extractor IndexExtractor[T]) Option[T] {
+	return func(cache *RedisCache[T]) {
+		cache.extractor = extractor
 	}
 }
 
 // WithTTL sets the default TTL for cache entries
 func WithTTL[T any](ttl time.Duration) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.DefaultTTL = ttl
 	}
 }
 
 // WithMetrics sets custom metrics implementation
 func WithMetrics[T any](metrics metrics.EnhancedCacheMetrics) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.EnhancedMetrics = metrics
 		cache.metrics = metrics
 	}
@@ -91,7 +98,7 @@ func WithMetrics[T any](metrics metrics.EnhancedCacheMetrics) Option[T] {
 
 // WithHooks sets lifecycle hooks
 func WithHooks[T any](hooks *config.CacheHooks) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.Hooks = hooks
 	}
 }
@@ -101,28 +108,28 @@ func WithHooks[T any](hooks *config.CacheHooks) Option[T] {
 
 // WithSerializer sets serialization format
 func WithSerializer[T any](format string) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.SerializerFormat = format
 	}
 }
 
 // WithMaxEntries sets the maximum number of cache entries
 func WithMaxEntries[T any](max int) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.MaxEntries = max
 	}
 }
 
 // WithCleanupInterval sets how often expired entries are cleaned
 func WithCleanupInterval[T any](interval time.Duration) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.CleanupInterval = interval
 	}
 }
 
 // WithGoMetrics sets go-metrics registry for built-in metrics
 func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] {
-	return func(cache *redisCache[T]) {
+	return func(cache *RedisCache[T]) {
 		cache.options.GoMetricsRegistry = registry
 		cache.options.GlobalMetricsTags = tags
 	}
@@ -137,7 +144,7 @@ func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[
 	}
 
 	// Create cache instance with defaults
-	cache := &redisCache[T]{
+	cache := &RedisCache[T]{
 		client:     client,
 		options:    config.DefaultOptions(),
 		instanceID: generateInstanceID(),
@@ -157,7 +164,7 @@ func NewCache[T any](client redis.Cmdable, opts ...Option[T]) (interfaces.Cache[
 }
 
 // initialize sets up the cache instance with serializer, metrics, and Lua scripts
-func (c *redisCache[T]) initialize() error {
+func (c *RedisCache[T]) initialize() error {
 	// Initialize serializer
 	var ser serializer.Serializer
 	if c.options.SerializerFormat != "" {
@@ -193,11 +200,8 @@ func (c *redisCache[T]) initialize() error {
 	return nil
 }
 
-// REMOVED: NewRedisCache - replaced with NewCache[T any](client, opts ...Option[T])
-// BURN THE BOATS: No backwards compatibility with old constructor patterns
-
 // initLuaScripts initializes Lua scripts for atomic operations
-func (c *redisCache[T]) initLuaScripts() {
+func (c *RedisCache[T]) initLuaScripts() {
 	// GetOrSet script - atomically get existing value or execute loader
 	c.getOrSetScript = redis.NewScript(`
 		local key = KEYS[1]
@@ -370,7 +374,7 @@ func generateInstanceID() string {
 // Basic Operations
 
 // Get retrieves a value by key
-func (c *redisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
+func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	start := time.Now()
 	var zero T
 
@@ -415,7 +419,7 @@ func (c *redisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 }
 
 // Set stores a value with TTL
-func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
+func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -465,7 +469,7 @@ func (c *redisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 }
 
 // Delete removes a key
-func (c *redisCache[T]) Delete(ctx context.Context, key string) error {
+func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -484,9 +488,6 @@ func (c *redisCache[T]) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("Redis delete error: %w", err)
 	}
 
-	// Remove from any indexes
-	c.removeFromIndexes(ctx, key)
-
 	c.metrics.RecordOperation("redis", "delete", "success", time.Since(start), c.getMetricTags())
 
 	// Apply hooks if configured
@@ -498,7 +499,7 @@ func (c *redisCache[T]) Delete(ctx context.Context, key string) error {
 }
 
 // Clear removes all entries
-func (c *redisCache[T]) Clear(ctx context.Context) error {
+func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -548,7 +549,7 @@ func (c *redisCache[T]) Clear(ctx context.Context) error {
 }
 
 // Has checks if key exists without retrieving value
-func (c *redisCache[T]) Has(ctx context.Context, key string) bool {
+func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -574,27 +575,27 @@ func (c *redisCache[T]) Has(ctx context.Context, key string) bool {
 // Helper methods
 
 // buildDataKey constructs the Redis key for data storage
-func (c *redisCache[T]) buildDataKey(key string) string {
+func (c *RedisCache[T]) buildDataKey(key string) string {
 	return dataPrefix + key
 }
 
 // buildMetaKey constructs the Redis key for metadata storage
-func (c *redisCache[T]) buildMetaKey(key string) string {
+func (c *RedisCache[T]) buildMetaKey(key string) string {
 	return metaPrefix + key
 }
 
 // buildIndexKey constructs the Redis key for index storage
-func (c *redisCache[T]) buildIndexKey(indexName, indexKey string) string {
+func (c *RedisCache[T]) buildIndexKey(indexName, indexKey string) string {
 	return fmt.Sprintf("%s%s:%s", indexPrefix, indexName, indexKey)
 }
 
 // buildLockKey constructs the Redis key for distributed locks
-func (c *redisCache[T]) buildLockKey(key string) string {
+func (c *RedisCache[T]) buildLockKey(key string) string {
 	return lockPrefix + key
 }
 
 // getMetricTags returns metric tags for this cache instance
-func (c *redisCache[T]) getMetricTags() metric.Tags {
+func (c *RedisCache[T]) getMetricTags() metric.Tags {
 	tags := make(metric.Tags)
 	if c.options.GlobalMetricsTags != nil {
 		for k, v := range c.options.GlobalMetricsTags {
@@ -609,7 +610,7 @@ func (c *redisCache[T]) getMetricTags() metric.Tags {
 // Circuit breaker implementation
 
 // isCircuitBreakerOpen checks if the circuit breaker is open
-func (c *redisCache[T]) isCircuitBreakerOpen() bool {
+func (c *RedisCache[T]) isCircuitBreakerOpen() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -632,7 +633,7 @@ func (c *redisCache[T]) isCircuitBreakerOpen() bool {
 }
 
 // handleError processes errors and manages circuit breaker state
-func (c *redisCache[T]) handleError(operation string, err error) {
+func (c *RedisCache[T]) handleError(operation string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -645,31 +646,10 @@ func (c *redisCache[T]) handleError(operation string, err error) {
 	}
 }
 
-// removeFromIndexes removes a key from all relevant indexes
-func (c *redisCache[T]) removeFromIndexes(ctx context.Context, key string) {
-	// This is a simplified version - in a full implementation,
-	// we would track which indexes contain which keys
-	if c.options.Indexes != nil {
-		for indexName, keyPattern := range c.options.Indexes {
-			// Check if key matches pattern
-			if matched, _ := filepath.Match(keyPattern, key); matched {
-				// Remove from all index keys (this is inefficient but correct)
-				// In a full implementation, we'd maintain reverse indexes
-				indexPattern := c.buildIndexKey(indexName, "*")
-				indexKeys, _ := c.client.Keys(ctx, indexPattern).Result()
-
-				for _, indexKey := range indexKeys {
-					c.client.SRem(ctx, indexKey, key)
-				}
-			}
-		}
-	}
-}
-
 // Lifecycle management
 
 // Close shuts down the cache and cleans up resources
-func (c *redisCache[T]) Close() error {
+func (c *RedisCache[T]) Close() error {
 	if rdb, ok := c.client.(*redis.Client); ok {
 		return rdb.Close()
 	}

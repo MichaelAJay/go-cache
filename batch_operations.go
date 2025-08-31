@@ -9,7 +9,7 @@ import (
 )
 
 // GetMany retrieves multiple keys in a single operation
-func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
+func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
 	start := time.Now()
 	result := make(map[string]T)
 
@@ -97,7 +97,7 @@ func (c *redisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 }
 
 // SetMany stores multiple key-value pairs with same TTL
-func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error {
+func (c *RedisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -156,7 +156,7 @@ func (c *redisCache[T]) SetMany(ctx context.Context, items map[string]T, ttl tim
 }
 
 // DeleteMany removes multiple keys
-func (c *redisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
+func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {

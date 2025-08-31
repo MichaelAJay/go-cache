@@ -10,7 +10,7 @@ import (
 )
 
 // GetOrSet atomically gets existing value or sets new value from loader
-func (c *redisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error) {
+func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error) {
 	start := time.Now()
 	var zero T
 
@@ -98,7 +98,7 @@ func (c *redisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 }
 
 // Update atomically updates existing value or creates new value
-func (c *redisCache[T]) Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error) {
+func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error) {
 	start := time.Now()
 	var zero T
 
@@ -189,7 +189,7 @@ func (c *redisCache[T]) Update(ctx context.Context, key string, updater func(old
 }
 
 // SetIfNotExists atomically sets value only if key doesn't exist
-func (c *redisCache[T]) SetIfNotExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error) {
+func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error) {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -245,7 +245,7 @@ func (c *redisCache[T]) SetIfNotExists(ctx context.Context, key string, value T,
 }
 
 // SetIfExists atomically sets value only if key exists
-func (c *redisCache[T]) SetIfExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error) {
+func (c *RedisCache[T]) SetIfExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error) {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {

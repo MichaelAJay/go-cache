@@ -11,7 +11,7 @@ import (
 )
 
 // GetMetadata returns metadata for a cache entry
-func (c *redisCache[T]) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
+func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interfaces.CacheEntryMetadata, error) {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
@@ -109,7 +109,7 @@ func (c *redisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 }
 
 // setMetadata creates or updates metadata for a cache entry
-func (c *redisCache[T]) setMetadata(ctx context.Context, key string, ttl time.Duration, size int64) error {
+func (c *RedisCache[T]) setMetadata(ctx context.Context, key string, ttl time.Duration, size int64) error {
 	metaKey := c.buildMetaKey(key)
 	now := time.Now().Unix()
 
@@ -157,7 +157,7 @@ func (c *redisCache[T]) setMetadata(ctx context.Context, key string, ttl time.Du
 }
 
 // updateMetadataOnAccess updates metadata when a key is accessed
-func (c *redisCache[T]) updateMetadataOnAccess(ctx context.Context, key string) error {
+func (c *RedisCache[T]) updateMetadataOnAccess(ctx context.Context, key string) error {
 	metaKey := c.buildMetaKey(key)
 	now := time.Now().Unix()
 
@@ -170,14 +170,14 @@ func (c *redisCache[T]) updateMetadataOnAccess(ctx context.Context, key string) 
 }
 
 // deleteMetadata removes metadata for a cache entry
-func (c *redisCache[T]) deleteMetadata(ctx context.Context, key string) error {
+func (c *RedisCache[T]) deleteMetadata(ctx context.Context, key string) error {
 	metaKey := c.buildMetaKey(key)
 	return c.client.Del(ctx, metaKey).Err()
 }
 
 // getMetadataStats returns aggregated statistics about cache metadata
 // This is an internal helper method for monitoring and diagnostics
-func (c *redisCache[T]) getMetadataStats(ctx context.Context) (map[string]interface{}, error) {
+func (c *RedisCache[T]) getMetadataStats(ctx context.Context) (map[string]interface{}, error) {
 	// Get all metadata keys
 	metaPattern := c.buildMetaKey("*")
 	metaKeys, err := c.client.Keys(ctx, metaPattern).Result()
