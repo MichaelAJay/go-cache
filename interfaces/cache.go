@@ -13,25 +13,32 @@ import (
 // mutexes, channels, or any synchronization primitives when using this interface.
 //
 // KEY EXTRACTION BEHAVIOR:
-// If indexing is enabled, the cache uses configured extractors to automatically
-// extract element keys and owner keys from values. This enables automatic indexing
-// without requiring consumers to manually manage keys or indexes.
+// If indexing is enabled, the cache uses configured IndexExtractor with two required functions:
+// - GetEntryKey(T) string: Extracts the primary cache entry key (e.g., SessionID from Session)
+// - GetOwnerKey(T) string: Extracts the owner/grouping key (e.g., UserID from Session)
+// 
+// This creates a primary index mapping: Owner -> []EntryKey (e.g., "user123" -> ["session1", "session2"])
+// Both functions are required because:
+// - GetEntryKey provides the entry identifier to add to the Owner's entry list
+// - GetOwnerKey provides the index key under which to store the entry list
+//
+// This enables automatic Owner -> Entries indexing without manual index management.
 type Cache[T any] interface {
 	// Basic operations - key extraction based
 	// IMPLEMENTATION REQUIREMENT: All basic operations must be goroutine-safe
 
 	// Set stores a value with TTL, using configured extractors to determine storage key
-	// If indexing enabled: extracts key and reverseKey from value, updates indexes
-	// If indexing disabled: uses key extractor for storage key only
+	// If indexing enabled: extracts entryKey and ownerKey from value, updates Owner -> Entries index
+	// If indexing disabled: uses entry key extractor for storage key only
 	// MUST be goroutine-safe and atomic across value storage and index updates
 	Set(ctx context.Context, value T, ttl time.Duration) error
 
-	// Get retrieves a value by element key
+	// Get retrieves a value by entry key
 	// MUST return zero value of T if key doesn't exist (found=false)
 	// MUST be goroutine-safe for concurrent access
 	Get(ctx context.Context, key string) (value T, found bool, err error)
 
-	// Delete removes an element by key and cleans up all associated indexes
+	// Delete removes an entry by key and cleans up all associated indexes
 	// MUST be goroutine-safe and idempotent (no error if key doesn't exist)
 	Delete(ctx context.Context, key string) error
 
@@ -46,15 +53,17 @@ type Cache[T any] interface {
 	// Owner-based operations (requires indexing to be enabled)
 	// IMPLEMENTATION REQUIREMENT: These methods require IndexExtractor configuration
 
-	// GetByOwner retrieves all elements for a given owner
-	// MUST return empty slice (not error) if owner has no elements
+	// GetByOwner retrieves all entries for a given owner key
+	// Uses Owner -> Entries index to find all entries belonging to the owner
+	// MUST return empty slice (not error) if owner has no entries
 	// MUST be goroutine-safe for concurrent access
-	GetByOwner(ctx context.Context, key string) ([]T, error)
+	GetByOwner(ctx context.Context, ownerKey string) ([]T, error)
 
-	// DeleteByOwner removes all elements for a given owner
-	// MUST return count of deleted elements
+	// DeleteByOwner removes all entries for a given owner key
+	// Uses Owner -> Entries index to delete all entries belonging to the owner
+	// MUST return count of deleted entries
 	// MUST be goroutine-safe and atomic across all deletions
-	DeleteByOwner(ctx context.Context, key string) (deletedCount int, err error)
+	DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error)
 
 	// Atomic operations with key extraction
 	// IMPLEMENTATION REQUIREMENT: These operations MUST be atomic - no race conditions
@@ -110,13 +119,13 @@ type Cache[T any] interface {
 	// Pattern operations (for advanced use cases)
 	// IMPLEMENTATION REQUIREMENT: Must be goroutine-safe and provide consistent results
 
-	// GetKeysByPattern returns element keys matching pattern (e.g., "session:*")
+	// GetKeysByPattern returns entry keys matching pattern (e.g., "session:*")
 	// MUST be goroutine-safe and return consistent snapshot
 	GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
 
-	// DeleteByPattern removes all elements with keys matching pattern
-	// MUST be goroutine-safe and return count of deleted elements
-	// MUST clean up indexes for all deleted elements
+	// DeleteByPattern removes all entries with keys matching pattern
+	// MUST be goroutine-safe and return count of deleted entries
+	// MUST clean up indexes for all deleted entries
 	DeleteByPattern(ctx context.Context, pattern string) (deletedCount int, err error)
 
 	// Metadata operations
