@@ -191,11 +191,6 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		}
 	}
 
-	// Remove from indexes
-	for _, key := range keys {
-		c.removeFromIndexes(ctx, key)
-	}
-
 	c.metrics.RecordBatchOperation("redis", "deletemany", len(keys), time.Since(start), c.getMetricTags())
 
 	// Apply hooks if configured
