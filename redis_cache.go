@@ -69,6 +69,8 @@ type RedisCache[T any] struct {
 
 	// Lua scripts for atomic operations
 	getScript           *redis.Script
+	setScript           *redis.Script
+	setWithIndexScript  *redis.Script
 	getOrSetScript      *redis.Script
 	updateScript        *redis.Script
 	deleteByIndexScript *redis.Script
@@ -138,10 +140,10 @@ func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] 
 
 // NewCache creates a new Redis cache instance with clean abstraction
 // indexingMode explicitly controls whether indexing features are enabled
-// extractor provides key extraction functions when indexing is enabled
+// extractor provides key extraction functions - GetEntryKey always required, GetOwnerKey only when indexing enabled
 // Valid combinations:
-//   - indexingMode=false, extractor=nil (basic caching)
-//   - indexingMode=true, extractor with valid GetEntryKey & GetOwnerKey (indexed caching)
+//   - indexingMode=false, extractor with GetEntryKey (basic caching)
+//   - indexingMode=true, extractor with GetEntryKey & GetOwnerKey (indexed caching)
 func NewCache[T any](client redis.Cmdable, indexingMode bool, extractor *IndexExtractor[T], opts ...Option[T]) (interfaces.Cache[T], error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis client cannot be nil")
@@ -177,23 +179,17 @@ func NewCache[T any](client redis.Cmdable, indexingMode bool, extractor *IndexEx
 
 // validateIndexingConfig validates indexing configuration at initialization time
 func (c *RedisCache[T]) validateIndexingConfig() error {
-	if !c.indexingMode {
-		// Basic mode - extractor should be nil
-		if c.extractor != nil {
-			return fmt.Errorf("indexingMode=false but extractor is not nil - pass nil extractor for basic caching")
-		}
-		return nil
-	}
-
-	// Indexing mode - validate extractor is properly configured
+	// GetEntryKey is ALWAYS required to determine storage key from value
 	if c.extractor == nil {
-		return fmt.Errorf("indexingMode=true but extractor is nil - provide valid IndexExtractor for indexed caching")
+		return fmt.Errorf("extractor is required - provide valid IndexExtractor with GetEntryKey")
 	}
 	if c.extractor.GetEntryKey == nil {
-		return fmt.Errorf("indexingMode=true but IndexExtractor.GetEntryKey is nil")
+		return fmt.Errorf("IndexExtractor.GetEntryKey is required to determine storage key from value")
 	}
-	if c.extractor.GetOwnerKey == nil {
-		return fmt.Errorf("indexingMode=true but IndexExtractor.GetOwnerKey is nil")
+
+	// GetOwnerKey is only required when indexing is enabled
+	if c.indexingMode && c.extractor.GetOwnerKey == nil {
+		return fmt.Errorf("indexingMode=true but IndexExtractor.GetOwnerKey is nil - required for owner-to-entries indexing")
 	}
 
 	return nil
@@ -256,6 +252,76 @@ func (c *RedisCache[T]) initLuaScripts() {
 		redis.call('HSET', metaKey, 'last_accessed', ts)
 
 		return {value, '1'}  -- found
+	`)
+
+	// Simple SET script (no indexing)
+	c.setScript = redis.NewScript(`
+		local dataKey = KEYS[1]
+		local metaKey = KEYS[2]
+		local serializedVal = ARGV[1]
+		local ttl = tonumber(ARGV[2])
+
+		-- Set value
+		if ttl and ttl > 0 then
+			redis.call('SETEX', dataKey, ttl, serializedVal)
+		else
+			redis.call('SET', dataKey, serializedVal)
+		end
+
+		-- Set metadata
+		local now = redis.call('TIME')
+		local ts = now[1]
+		redis.call('HSET', metaKey,
+			'created_at', ts,
+			'last_accessed', ts,
+			'access_count', '1',
+			'ttl', tostring(ttl or 0),
+			'size', tostring(string.len(serializedVal))
+		)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', metaKey, ttl)
+		end
+
+		return 'OK'
+	`)
+
+	// SET script with indexing support
+	c.setWithIndexScript = redis.NewScript(`
+		local dataKey = KEYS[1]
+		local metaKey = KEYS[2]
+		local indexKey = KEYS[3]
+		local serializedVal = ARGV[1]
+		local ttl = tonumber(ARGV[2])
+		local entryKey = ARGV[3]
+
+		-- Set value
+		if ttl and ttl > 0 then
+			redis.call('SETEX', dataKey, ttl, serializedVal)
+		else
+			redis.call('SET', dataKey, serializedVal)
+		end
+
+		-- Set metadata
+		local now = redis.call('TIME')
+		local ts = now[1]
+		redis.call('HSET', metaKey,
+			'created_at', ts,
+			'last_accessed', ts,
+			'access_count', '1',
+			'ttl', tostring(ttl or 0),
+			'size', tostring(string.len(serializedVal))
+		)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', metaKey, ttl)
+		end
+
+		-- Update index (add entry to owner's set)
+		redis.call('SADD', indexKey, entryKey)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', indexKey, ttl)
+		end
+
+		return 'OK'
 	`)
 
 	// GetOrSet script
@@ -497,41 +563,35 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
-	// Set data and metadata atomically
-	pipe := c.client.TxPipeline()
-
-	if ttl > 0 {
-		pipe.SetEX(ctx, dataKey, serializedValue, ttl)
-		pipe.Expire(ctx, metaKey, ttl)
-	} else {
-		pipe.Set(ctx, dataKey, serializedValue, 0)
-	}
-
-	// Set metadata
-	now := time.Now().Unix()
-	pipe.HSet(ctx, metaKey, map[string]any{
-		"created_at":    now,
-		"last_accessed": now,
-		"access_count":  1,
-		"ttl":           int64(ttl.Seconds()),
-		"size":          len(serializedValue),
-	})
-
-	// Update indexes if configured
-	if c.indexingMode && c.extractor.GetOwnerKey != nil {
+	// Use appropriate atomic Lua script based on indexing mode
+	var result any
+	if c.indexingMode {
+		// Indexing enabled - use indexed SET script
+		if c.extractor.GetOwnerKey == nil {
+			return fmt.Errorf("IndexExtractor.GetOwnerKey is required when indexing is enabled")
+		}
 		ownerKey := c.extractor.GetOwnerKey(value)
 		indexKey := c.buildIndexKey("owner", ownerKey)
-		pipe.SAdd(ctx, indexKey, key)
-		if ttl > 0 {
-			pipe.Expire(ctx, indexKey, ttl)
-		}
+
+		result, err = c.setWithIndexScript.Run(ctx, c.client,
+			[]string{dataKey, metaKey, indexKey},
+			string(serializedValue), int64(ttl.Seconds()), key).Result()
+	} else {
+		// No indexing - use simple SET script
+		result, err = c.setScript.Run(ctx, c.client,
+			[]string{dataKey, metaKey},
+			string(serializedValue), int64(ttl.Seconds())).Result()
 	}
 
-	_, err = pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("set", err)
 		c.metrics.RecordError("redis", "set", "redis_error", "infrastructure", c.getMetricTags())
-		return fmt.Errorf("Redis set error: %w", err)
+		return fmt.Errorf("redis set error: %w", err)
+	}
+
+	// Validate script result
+	if result != "OK" {
+		return fmt.Errorf("unexpected set script result: %v", result)
 	}
 
 	c.metrics.RecordOperation("redis", "set", "success", time.Since(start), c.getMetricTags())
