@@ -9,6 +9,7 @@ import (
 )
 
 // GetMany retrieves multiple keys in a single operation
+// @TODO Lua script
 func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
 	start := time.Now()
 	result := make(map[string]T)
@@ -96,6 +97,7 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	return result, nil
 }
 
+// @TODO Lua script
 // SetMany stores multiple values with same TTL, using extractors for keys
 func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Duration) error {
 	start := time.Now()
@@ -171,6 +173,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	return nil
 }
 
+// @TODO Lua script
 // DeleteMany removes multiple keys
 func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	start := time.Now()

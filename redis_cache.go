@@ -446,6 +446,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return {oldVal, existed, newVal}
 	`)
 
+	// @TODO change name from sessIdxPref
 	// Delete by index script
 	c.deleteByIndexScript = redis.NewScript(`
 		local subjIdxKey   = KEYS[1]
@@ -467,6 +468,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return total
 	`)
 
+	// @TODO think about a rename. Also think about whether there needs to be any manipulation of index values
+	// e.g. reverseKey -> does it GET the OwnerKey, or the OwnerKey less the prefix. One requires some string manipulation, the other requires more data stored
 	// Delete with index cleanup script
 	c.deleteByEntryScript = redis.NewScript(`
 		local dataKey = KEYS[1]
