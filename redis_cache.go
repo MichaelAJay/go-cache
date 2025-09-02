@@ -565,6 +565,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		return totalDeleted
 	`)
+
+	// @TODO consider warming here - could even warm it based on config
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
