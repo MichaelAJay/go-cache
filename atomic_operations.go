@@ -198,6 +198,7 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 	return zero, fmt.Errorf("Update max retries exceeded for key %s", key)
 }
 
+// @TODO Uses pipeline
 // SetIfNotExists atomically sets value only if key doesn't exist
 func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {
 	// Extract key from value using configured extractor
@@ -273,6 +274,7 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 	return wasSet, nil
 }
 
+// @TODO Uses pipeline
 // SetIfExists atomically sets value only if key exists
 func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {
 	// Extract key from value using configured extractor
