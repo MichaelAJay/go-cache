@@ -342,8 +342,13 @@ func (c *RedisCache[T]) initLuaScripts() {
 	c.setIfExistsScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
+		local indexKey = KEYS[3]
+		local reverseKey = KEYS[4]
 		local serializedVal = ARGV[1]
 		local ttl = tonumber(ARGV[2])
+		local entryKey = ARGV[3]
+		local ownerKey = ARGV[4]
+		local indexingEnabled = ARGV[5] == "true"
 
 		-- Try to set only if key already exists
 		local setArgs = { "SET", dataKey, serializedVal, "XX" }
@@ -373,6 +378,32 @@ func (c *RedisCache[T]) initLuaScripts() {
 			redis.call('EXPIRE', metaKey, ttl)
 		end
 
+		-- Early return if indexing is disabled
+		if not indexingEnabled then
+			return 1  -- SET succeeded, no indexing
+		end
+
+		-- Get old owner for potential cleanup
+		local oldOwner = redis.call('GET', reverseKey)
+
+		-- Handle owner change - remove from old index if owner changed
+		if oldOwner and oldOwner ~= ownerKey then
+			local oldIndexKey = string.gsub(indexKey, ownerKey, oldOwner)
+			redis.call('SREM', oldIndexKey, entryKey)
+		end
+
+		-- Update forward index (owner -> entry keys)
+		redis.call('SADD', indexKey, entryKey)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', indexKey, ttl)
+		end
+
+		-- Update reverse index (entry -> owner key)
+		redis.call('SET', reverseKey, ownerKey)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', reverseKey, ttl)
+		end
+
 		return 1  -- SET succeeded
 	`)
 
@@ -380,8 +411,13 @@ func (c *RedisCache[T]) initLuaScripts() {
 	c.setIfNotExistsScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
+		local indexKey = KEYS[3]
+		local reverseKey = KEYS[4]
 		local serializedVal = ARGV[1]
 		local ttl = tonumber(ARGV[2])
+		local entryKey = ARGV[3]
+		local ownerKey = ARGV[4]
+		local indexingEnabled = ARGV[5] == "true"
 
 		-- Try to set only if key does not already exist
 		local setArgs = { "SET", dataKey, serializedVal, "NX" }
@@ -407,6 +443,23 @@ func (c *RedisCache[T]) initLuaScripts() {
 		)
 		if ttl and ttl > 0 then
 			redis.call('EXPIRE', metaKey, ttl)
+		end
+
+		-- Early return if indexing is disabled
+		if not indexingEnabled then
+			return 1  -- SET succeeded, no indexing
+		end
+
+		-- Update forward index (owner -> entry keys)
+		redis.call('SADD', indexKey, entryKey)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', indexKey, ttl)
+		end
+
+		-- Update reverse index (entry -> owner key)
+		redis.call('SET', reverseKey, ownerKey)
+		if ttl and ttl > 0 then
+			redis.call('EXPIRE', reverseKey, ttl)
 		end
 
 		return 1  -- SET succeeded
