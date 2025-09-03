@@ -6,7 +6,6 @@ import (
 	"time"
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
-	"github.com/go-redis/redis/v8"
 )
 
 // GetOrSet atomically gets existing value or sets new value from loader
@@ -198,7 +197,6 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 	return zero, fmt.Errorf("Update max retries exceeded for key %s", key)
 }
 
-// @TODO Uses pipeline
 // SetIfNotExists atomically sets value only if key doesn't exist
 func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {
 	// Extract key from value using configured extractor
@@ -223,50 +221,32 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
-	// Use Redis SETNX (SET if Not eXists)
-	var wasSet bool
-	if ttl > 0 {
-		// Use SET with NX and EX options for atomic operation with TTL
-		result := c.client.Set(ctx, dataKey, serializedValue, ttl)
-		wasSet = result.Err() == nil && result.Val() == "OK"
-	} else {
-		// Use SETNX for atomic operation without TTL
-		result, err := c.client.SetNX(ctx, dataKey, serializedValue, 0).Result()
-		if err != nil {
-			c.handleError("setifnotexists", err)
-			c.metrics.RecordError("redis", "setifnotexists", "redis_error", "infrastructure", c.getMetricTags())
-			return false, fmt.Errorf("Redis SetIfNotExists error: %w", err)
-		}
-		wasSet = result
+	// Use Lua script for atomic SetIfNotExists with metadata
+	result, err := c.setIfNotExistsScript.Run(ctx, c.client, 
+		[]string{dataKey, metaKey}, 
+		string(serializedValue), 
+		int64(ttl.Seconds())).Result()
+
+	if err != nil {
+		c.handleError("setifnotexists", err)
+		c.metrics.RecordError("redis", "setifnotexists", "redis_error", "infrastructure", c.getMetricTags())
+		return false, fmt.Errorf("Redis SetIfNotExists error: %w", err)
 	}
 
-	if wasSet {
-		// Set metadata and indexes
-		now := time.Now().Unix()
+	wasSet := result.(int64) == 1
+
+	// Handle indexing if the SET was successful and indexing is configured
+	if wasSet && c.indexingMode && c.extractor.GetOwnerKey != nil {
+		ownerKey := c.extractor.GetOwnerKey(value)
+		indexKey := c.buildIndexKey("owner", ownerKey)
+		reverseKey := c.buildReverseIndexKey(key)
+
 		pipe := c.client.TxPipeline()
-
-		pipe.HSet(ctx, metaKey, map[string]interface{}{
-			"created_at":    now,
-			"last_accessed": now,
-			"access_count":  1,
-			"ttl":           int64(ttl.Seconds()),
-			"size":          len(serializedValue),
-		})
-
+		pipe.SAdd(ctx, indexKey, key)
+		pipe.Set(ctx, reverseKey, ownerKey, ttl)
 		if ttl > 0 {
-			pipe.Expire(ctx, metaKey, ttl)
+			pipe.Expire(ctx, indexKey, ttl)
 		}
-
-		// Update indexes if configured
-		if c.extractor.GetOwnerKey != nil {
-			ownerKey := c.extractor.GetOwnerKey(value)
-			indexKey := c.buildIndexKey("owner", ownerKey)
-			pipe.SAdd(ctx, indexKey, key)
-			if ttl > 0 {
-				pipe.Expire(ctx, indexKey, ttl)
-			}
-		}
-
 		pipe.Exec(ctx)
 	}
 
@@ -274,7 +254,6 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 	return wasSet, nil
 }
 
-// @TODO Uses pipeline
 // SetIfExists atomically sets value only if key exists
 func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {
 	// Extract key from value using configured extractor
@@ -299,44 +278,48 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
-	// Use Redis SET with XX option (SET if eXists)
-	var cmd *redis.StatusCmd
-	if ttl > 0 {
-		cmd = c.client.Set(ctx, dataKey, serializedValue, ttl)
-	} else {
-		cmd = c.client.Set(ctx, dataKey, serializedValue, 0)
+	// Use Lua script for atomic SetIfExists with metadata
+	result, err := c.setIfExistsScript.Run(ctx, c.client, 
+		[]string{dataKey, metaKey}, 
+		string(serializedValue), 
+		int64(ttl.Seconds())).Result()
+
+	if err != nil {
+		c.handleError("setifexists", err)
+		c.metrics.RecordError("redis", "setifexists", "redis_error", "infrastructure", c.getMetricTags())
+		return false, fmt.Errorf("Redis SetIfExists error: %w", err)
 	}
 
-	result := cmd.Val()
-	wasSet := result == "OK"
+	wasSet := result.(int64) == 1
 
-	if wasSet {
-		// Update metadata and indexes
-		now := time.Now().Unix()
+	// Handle indexing if the SET was successful and indexing is configured
+	// Note: For SetIfExists, we may need to handle owner changes
+	if wasSet && c.indexingMode && c.extractor.GetOwnerKey != nil {
+		ownerKey := c.extractor.GetOwnerKey(value)
+		indexKey := c.buildIndexKey("owner", ownerKey)
+		reverseKey := c.buildReverseIndexKey(key)
+
+		// For existing entries, we should handle potential owner changes
 		pipe := c.client.TxPipeline()
+		
+		// Get old owner key to clean up old indexes
+		oldOwnerResult := pipe.Get(ctx, reverseKey)
+		pipe.Exec(ctx)
+		
+		oldOwner := oldOwnerResult.Val()
+		if oldOwner != "" && oldOwner != ownerKey {
+			// Owner changed, remove from old index
+			oldIndexKey := c.buildIndexKey("owner", oldOwner)
+			c.client.SRem(ctx, oldIndexKey, key)
+		}
 
-		pipe.HIncrBy(ctx, metaKey, "access_count", 1)
-
-		pipe.HSet(ctx, metaKey, map[string]interface{}{
-			"last_accessed": now,
-			"ttl":           int64(ttl.Seconds()),
-			"size":          len(serializedValue),
-		})
-
+		// Add to new owner index and update reverse mapping
+		pipe = c.client.TxPipeline()
+		pipe.SAdd(ctx, indexKey, key)
+		pipe.Set(ctx, reverseKey, ownerKey, ttl)
 		if ttl > 0 {
-			pipe.Expire(ctx, metaKey, ttl)
+			pipe.Expire(ctx, indexKey, ttl)
 		}
-
-		// Update indexes if configured (for existing entries)
-		if c.extractor.GetOwnerKey != nil {
-			ownerKey := c.extractor.GetOwnerKey(value)
-			indexKey := c.buildIndexKey("owner", ownerKey)
-			pipe.SAdd(ctx, indexKey, key)
-			if ttl > 0 {
-				pipe.Expire(ctx, indexKey, ttl)
-			}
-		}
-
 		pipe.Exec(ctx)
 	}
 
