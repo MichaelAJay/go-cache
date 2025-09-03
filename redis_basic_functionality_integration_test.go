@@ -12,58 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRedisCache_BasicInitialization tests that a RedisCache can be created and initialized properly
-func TestRedisCache_BasicInitialization(t *testing.T) {
-	t.Skip()
-	ctx := context.Background()
-
-	// Setup test environment using existing container infrastructure
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-	setup.FlushRedis(ctx, t)
-
-	// Test basic cache creation without indexing
-	config := testintegration.DefaultCacheConfig()
-	config.IndexingMode = false
-
-	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Failed to create basic cache")
-	require.NotNil(t, cache, "Cache should not be nil")
-
-	// Test cache can be closed
-	err = cache.Close()
-	assert.NoError(t, err, "Cache close should not error")
-
-	t.Logf("✅ Basic cache initialization successful")
-}
-
-// TestRedisCache_IndexedInitialization tests cache creation with indexing enabled
-func TestRedisCache_IndexedInitialization(t *testing.T) {
-	t.Skip()
-	ctx := context.Background()
-
-	// Setup test environment
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-	setup.FlushRedis(ctx, t)
-
-	// Test indexed cache creation
-	config := testintegration.IndexedCacheConfig()
-
-	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Failed to create indexed cache")
-	require.NotNil(t, cache, "Cache should not be nil")
-
-	// Test cache can be closed
-	err = cache.Close()
-	assert.NoError(t, err, "Cache close should not error")
-
-	t.Logf("✅ Indexed cache initialization successful")
-}
-
 // TestRedisCache_BasicGet tests a simple GET operation that should miss (no data present)
 func TestRedisCache_BasicGet(t *testing.T) {
-
 	ctx := context.Background()
 
 	// Setup test environment
@@ -369,61 +319,240 @@ func TestRedisCache_MultipleSetGet(t *testing.T) {
 	t.Logf("   - Sessions tested: %d", len(sessions))
 }
 
-// TestRedisCache_SerializationFormats tests cache creation with different serialization formats
-func TestRedisCache_SerializationFormats(t *testing.T) {
-	t.Skip()
+// TestRedisCache_DeleteNonExistent tests DELETE operation on non-existent key
+func TestRedisCache_DeleteNonExistent(t *testing.T) {
 	ctx := context.Background()
 
+	// Setup test environment
 	setup := testintegration.SetupTestEnvironment(ctx, t)
 	setup.ValidateEnvironment(ctx, t)
 	setup.FlushRedis(ctx, t)
 
-	// Test different serialization formats
-	formats := []string{"json", "gob", "msgpack"}
-
-	for _, format := range formats {
-		t.Run("Format_"+format, func(t *testing.T) {
-			config := testintegration.DefaultCacheConfig()
-			config.SerializerFormat = format
-
-			cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-			require.NoError(t, err, "Failed to create cache with %s serialization", format)
-			require.NotNil(t, cache, "Cache should not be nil")
-
-			// Test basic operation works
-			session, found, err := cache.Get(ctx, "test:key")
-			assert.NoError(t, err, "GET should work with %s serialization", format)
-			assert.False(t, found, "GET should miss for non-existent key")
-			assert.Nil(t, session, "Value should be nil for cache miss")
-
-			cache.Close()
-			t.Logf("✅ %s serialization test successful", format)
-		})
-	}
-}
-
-// TestRedisCache_ConnectionValidation tests that cache properly validates Redis connection
-func TestRedisCache_ConnectionValidation(t *testing.T) {
-	t.Skip()
-	ctx := context.Background()
-
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-
-	t.Logf("🔗 Testing Redis connection validation")
-	t.Logf("   - Redis Address: %s", setup.TestEnv.GetRedisAddr())
-	t.Logf("   - Test Mode: %s", setup.TestEnv.GetMode().String())
-
-	// Verify we can create a cache and it connects properly
+	// Create cache instance
 	config := testintegration.DefaultCacheConfig()
 	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Cache creation should succeed with valid Redis connection")
-	require.NotNil(t, cache, "Cache should not be nil")
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
 
-	// Test a simple operation to ensure connection works
-	exists := cache.Has(ctx, "test:connection:check")
-	assert.False(t, exists, "Key should not exist in fresh Redis")
+	testKey := "session:nonexistent-delete"
 
-	cache.Close()
-	t.Logf("✅ Connection validation successful")
+	t.Logf("📝 Testing DELETE operation on non-existent key: %s", testKey)
+
+	// DELETE operation on non-existent key - should not error
+	err = cache.Delete(ctx, testKey)
+
+	// Assertions
+	assert.NoError(t, err, "DELETE operation should not error on non-existent key")
+
+	t.Logf("✅ DELETE non-existent key test successful")
+	t.Logf("   - Key: %s", testKey)
+	t.Logf("   - Error: %v", err)
+}
+
+// TestRedisCache_HasNonExistent tests HAS operation on non-existent key
+func TestRedisCache_HasNonExistent(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	testKey := "session:nonexistent-has"
+
+	t.Logf("📝 Testing HAS operation on non-existent key: %s", testKey)
+
+	// HAS operation on non-existent key - should return false
+	exists := cache.Has(ctx, testKey)
+
+	// Assertions
+	assert.False(t, exists, "HAS should return false for non-existent key")
+
+	t.Logf("✅ HAS non-existent key test successful")
+	t.Logf("   - Key: %s", testKey)
+	t.Logf("   - Exists: %v", exists)
+}
+
+// TestRedisCache_SetOverwrite tests overwriting an existing key
+func TestRedisCache_SetOverwrite(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	sessionID := "session:overwrite-test"
+
+	// Create first session
+	originalSession := &testintegration.TestSession{
+		ID:       sessionID,
+		UserID:   "user500",
+		Username: "originaluser",
+		Created:  time.Now(),
+	}
+
+	// Create updated session with same ID
+	updatedSession := &testintegration.TestSession{
+		ID:       sessionID,
+		UserID:   "user600",
+		Username: "updateduser",
+		Created:  time.Now().Add(time.Hour),
+	}
+
+	t.Logf("📝 Testing SET overwrite for session ID: %s", sessionID)
+
+	// SET original session
+	err = cache.Set(ctx, originalSession, 0)
+	require.NoError(t, err, "Original SET operation should not error")
+
+	// SET updated session (overwrite)
+	err = cache.Set(ctx, updatedSession, 0)
+	require.NoError(t, err, "Overwrite SET operation should not error")
+
+	// GET to verify overwrite worked
+	retrievedSession, found, err := cache.Get(ctx, sessionID)
+
+	// Assertions
+	assert.NoError(t, err, "GET operation should not error")
+	assert.True(t, found, "GET should return found=true")
+	assert.NotNil(t, retrievedSession, "GET should return non-nil value")
+	assert.Equal(t, updatedSession.ID, retrievedSession.ID, "Retrieved session ID should match updated")
+	assert.Equal(t, updatedSession.UserID, retrievedSession.UserID, "Retrieved session should have updated UserID")
+	assert.Equal(t, updatedSession.Username, retrievedSession.Username, "Retrieved session should have updated Username")
+	assert.NotEqual(t, originalSession.UserID, retrievedSession.UserID, "Retrieved session should not have original UserID")
+
+	t.Logf("✅ SET overwrite test successful")
+	t.Logf("   - Session ID: %s", sessionID)
+	t.Logf("   - Original UserID: %s", originalSession.UserID)
+	t.Logf("   - Updated UserID: %s", retrievedSession.UserID)
+}
+
+// TestRedisCache_Clear tests clearing all cache entries
+func TestRedisCache_Clear(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create multiple test sessions
+	sessions := []*testintegration.TestSession{
+		{
+			ID:       "session:clear-1",
+			UserID:   "user700",
+			Username: "clearuser1",
+			Created:  time.Now(),
+		},
+		{
+			ID:       "session:clear-2", 
+			UserID:   "user701",
+			Username: "clearuser2",
+			Created:  time.Now(),
+		},
+		{
+			ID:       "session:clear-3",
+			UserID:   "user702",
+			Username: "clearuser3",
+			Created:  time.Now(),
+		},
+	}
+
+	t.Logf("📝 Testing CLEAR operation with %d sessions", len(sessions))
+
+	// SET all sessions
+	for _, session := range sessions {
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "SET operation should not error for session %s", session.ID)
+		
+		// Verify session was set
+		exists := cache.Has(ctx, session.ID)
+		assert.True(t, exists, "Session %s should exist after SET", session.ID)
+	}
+
+	// CLEAR all entries
+	err = cache.Clear(ctx)
+	require.NoError(t, err, "CLEAR operation should not error")
+
+	// Verify all sessions were cleared
+	for _, session := range sessions {
+		exists := cache.Has(ctx, session.ID)
+		assert.False(t, exists, "Session %s should not exist after CLEAR", session.ID)
+		
+		// Double check with GET
+		retrievedSession, found, err := cache.Get(ctx, session.ID)
+		assert.NoError(t, err, "GET should not error after CLEAR")
+		assert.False(t, found, "GET should return found=false after CLEAR for session %s", session.ID)
+		assert.Nil(t, retrievedSession, "GET should return nil after CLEAR for session %s", session.ID)
+	}
+
+	t.Logf("✅ CLEAR test successful")
+	t.Logf("   - Sessions cleared: %d", len(sessions))
+}
+
+// TestRedisCache_EmptyValues tests handling of sessions with empty/zero values
+func TestRedisCache_EmptyValues(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create session with minimal values
+	testSession := &testintegration.TestSession{
+		ID:       "session:empty-values",
+		UserID:   "", // Empty string
+		Username: "", // Empty string
+		Created:  time.Time{}, // Zero time
+	}
+
+	t.Logf("📝 Testing SET/GET with empty values for session ID: %s", testSession.ID)
+
+	// SET operation
+	err = cache.Set(ctx, testSession, 0)
+	require.NoError(t, err, "SET operation should not error with empty values")
+
+	// GET operation
+	retrievedSession, found, err := cache.Get(ctx, testSession.ID)
+
+	// Assertions
+	assert.NoError(t, err, "GET operation should not error")
+	assert.True(t, found, "GET should return found=true")
+	assert.NotNil(t, retrievedSession, "GET should return non-nil value")
+	assert.Equal(t, testSession.ID, retrievedSession.ID, "Retrieved session ID should match")
+	assert.Equal(t, "", retrievedSession.UserID, "Retrieved session should preserve empty UserID")
+	assert.Equal(t, "", retrievedSession.Username, "Retrieved session should preserve empty Username")
+	assert.True(t, retrievedSession.Created.IsZero(), "Retrieved session should preserve zero Created time")
+
+	t.Logf("✅ Empty values test successful")
+	t.Logf("   - Session ID: %s", testSession.ID)
+	t.Logf("   - Empty UserID preserved: %v", retrievedSession.UserID == "")
+	t.Logf("   - Empty Username preserved: %v", retrievedSession.Username == "")
+	t.Logf("   - Zero time preserved: %v", retrievedSession.Created.IsZero())
 }
