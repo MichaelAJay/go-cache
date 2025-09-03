@@ -412,63 +412,6 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return 1  -- SET succeeded
 	`)
 
-	// Unified conditional SET script - single script that handles both cases
-	c.setIfExistsOrNot = redis.NewScript(`
-		local dataKey = KEYS[1]
-		local metaKey = KEYS[2]
-		local serializedVal = ARGV[1]
-		local ttl = tonumber(ARGV[2])
-		local condition = ARGV[3]  -- 'EXISTS' or 'NOT_EXISTS'
-
-		-- Build SET command based on condition
-		local setArgs = { "SET", dataKey, serializedVal }
-		if condition == "EXISTS" then
-			table.insert(setArgs, "XX")
-		elseif condition == "NOT_EXISTS" then
-			table.insert(setArgs, "NX")
-		end
-		if ttl and ttl > 0 then
-			table.insert(setArgs, "EX")
-			table.insert(setArgs, ttl)
-		end
-
-		local ok = redis.call(unpack(setArgs))
-		if not ok then
-			return 0  -- Condition not met, SET failed
-		end
-
-		-- Handle metadata based on whether this is create or update
-		local now = redis.call('TIME')
-		local ts = now[1]
-
-		if condition == "NOT_EXISTS" then
-			-- New entry - set initial metadata
-			redis.call('HSET', metaKey,
-				'created_at', ts,
-				'last_accessed', ts,
-				'access_count', '1',
-				'ttl', tostring(ttl or 0),
-				'size', tostring(string.len(serializedVal))
-			)
-		else
-			-- Existing entry - update metadata
-			local acc = redis.call('HGET', metaKey, 'access_count') or '0'
-			acc = tostring((tonumber(acc) or 0) + 1)
-			redis.call('HSET', metaKey,
-				'last_accessed', ts,
-				'access_count', acc,
-				'ttl', tostring(ttl or 0),
-				'size', tostring(string.len(serializedVal))
-			)
-		end
-
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
-		end
-
-		return 1  -- SET succeeded
-	`)
-
 	if c.options.WarmLuaScripts {
 		c.warmLuaScripts(context.Background())
 	}
@@ -479,7 +422,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 		c.getScript, c.setScript, c.setWithIndexScript,
 		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
-		c.setIfExistsScript, c.setIfNotExistsScript, c.setIfExistsOrNot,
+		c.setIfExistsScript, c.setIfNotExistsScript,
 	}
 
 	for _, script := range scripts {

@@ -80,7 +80,6 @@ type RedisCache[T any] struct {
 	deleteByOwnerScript  *redis.Script
 	setIfExistsScript    *redis.Script
 	setIfNotExistsScript *redis.Script
-	setIfExistsOrNot     *redis.Script
 }
 
 // Option defines a functional option for configuring cache behavior
