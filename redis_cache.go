@@ -76,8 +76,8 @@ type RedisCache[T any] struct {
 	updateScript        *redis.Script
 	deleteByIndexScript *redis.Script
 	deleteByEntryScript *redis.Script
-	getByOwnerScript      *redis.Script
-	deleteByOwnerScript   *redis.Script
+	getByOwnerScript    *redis.Script
+	deleteByOwnerScript *redis.Script
 }
 
 // Option defines a functional option for configuring cache behavior
@@ -147,7 +147,7 @@ func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] 
 // Valid combinations:
 //   - indexingMode=false, extractor with GetEntryKey (basic caching)
 //   - indexingMode=true, extractor with GetEntryKey & GetOwnerKey (indexed caching)
-func NewCache[T any](client redis.Cmdable, indexingMode bool, extractor *IndexExtractor[T], opts ...Option[T]) (interfaces.Cache[T], error) {
+func NewCache[T any](ctx context.Context, client redis.Cmdable, indexingMode bool, extractor *IndexExtractor[T], opts ...Option[T]) (interfaces.Cache[T], error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis client cannot be nil")
 	}
@@ -566,7 +566,24 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return totalDeleted
 	`)
 
-	// @TODO consider warming here - could even warm it based on config
+	if c.options.WarmLuaScripts {
+		c.warmLuaScripts(context.Background())
+	}
+}
+
+func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
+	scripts := []*redis.Script{
+		c.getScript, c.setScript, c.setWithIndexScript,
+		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
+		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
+	}
+
+	for _, script := range scripts {
+		if err := script.Load(ctx, c.client).Err(); err != nil {
+			return fmt.Errorf("failed to warm script :%w", err)
+		}
+	}
+	return nil
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
@@ -920,7 +937,7 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	reversePrefix := c.buildReverseIndexKey("")
 
 	// Use atomic Lua script for complete deletion
-	result, err := c.deleteByOwnerScript.Run(ctx, c.client, 
+	result, err := c.deleteByOwnerScript.Run(ctx, c.client,
 		[]string{indexKey},
 		dataPrefix, metaPrefix, reversePrefix).Result()
 

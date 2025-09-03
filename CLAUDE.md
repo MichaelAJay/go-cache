@@ -51,7 +51,7 @@ Go-Cache is undergoing **strategic refactoring** to become a high-performance, g
 2. **Thread-Safety at Cache Layer**: All concurrency complexity handled internally - consumers never need mutexes/locks
 3. **Bold Breaking Changes**: Clean design prioritized over backward compatibility
 4. **Enterprise Features Preserved**: Secondary indexing, metrics, security, middleware maintained and enhanced
-5. **Observability First**: Comprehensive go-metrics integration, Prometheus, OpenTelemetry support  
+5. **Observability First**: Comprehensive go-metrics integration, Prometheus, OpenTelemetry support
 6. **Security Conscious**: Built-in protections against timing attacks, secure cleanup, enhanced for concurrent access
 7. **Performance Optimized**: Lock-free where possible, atomic operations, sub-microsecond latency targets
 
@@ -117,31 +117,31 @@ type Cache[T any] interface {
     Delete(ctx context.Context, key string) error
     Clear(ctx context.Context) error
     Has(ctx context.Context, key string) bool
-    
+
     // Atomic operations (eliminate consumer-side locking)
     GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error)
     Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error)
-    
+
     // Batch operations for performance
     GetMany(ctx context.Context, keys []string) (map[string]T, error)
     SetMany(ctx context.Context, items map[string]T, ttl time.Duration) error
     DeleteMany(ctx context.Context, keys []string) error
-    
+
     // Secondary indexing (thread-safe)
     AddIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
     RemoveIndex(ctx context.Context, indexName string, keyPattern string, indexKey string) error
     GetByIndex(ctx context.Context, indexName string, indexKey string) ([]string, error)
     DeleteByIndex(ctx context.Context, indexName string, indexKey string) error
-    
+
     // Conditional operations
     SetIfNotExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error)
     SetIfExists(ctx context.Context, key string, value T, ttl time.Duration) (bool, error)
-    
+
     // Pattern operations
     GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
     DeleteByPattern(ctx context.Context, pattern string) (int, error)
-    
-    // Metadata operations  
+
+    // Metadata operations
     GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
 
     // Lifecycle
@@ -195,6 +195,8 @@ type CacheOptions struct {
     Indexes map[string]string // indexName -> keyPattern
     Hooks   *CacheHooks
     Metrics EnhancedCacheMetrics
+
+    WarmLuaScripts bool
 }
 ```
 
@@ -499,14 +501,16 @@ value, err := cache.GetOrSet(ctx, key, loader, ttl) // ✅ Atomic
 🚧 **In Progress - Strategic Refactoring** 🚧
 
 The go-cache module is undergoing aggressive refactoring to achieve:
+
 - **Generic-first interfaces** with `Cache[T]` - **BREAKING CHANGES**
-- **Thread-safe atomic operations** eliminating all consumer-side locking  
+- **Thread-safe atomic operations** eliminating all consumer-side locking
 - **Performance targets**: >1M ops/sec (memory), >100k ops/sec (Redis)
 - **Enterprise features preserved**: secondary indexing, metrics, security, middleware
 
 ### Migration Impact
 
 ⚠️ **Breaking Changes Planned** ⚠️
+
 - **No backward compatibility** - clean design takes priority
 - **Consumer refactoring required** - dramatic simplification expected
 - **Performance improvements**: 5-10x faster concurrent operations
@@ -517,10 +521,11 @@ The go-cache module is undergoing aggressive refactoring to achieve:
 See: `/improvements/overhaul_improvement_plan.md` for detailed roadmap
 
 **Phase Status:**
-- [ ] Phase 0: Core Interface Design 
+
+- [ ] Phase 0: Core Interface Design
 - [ ] Phase 1: Concurrency Architecture & Guarantees
 - [ ] Phase 2: High-Performance In-Memory Provider
-- [ ] Phase 3: Distributed Redis Provider  
+- [ ] Phase 3: Distributed Redis Provider
 - [ ] Phase 4: Extreme Testing & Performance Validation
 - [ ] Phase 5: Consumer Migration & Optimization
 - [ ] Phase 6: Production Readiness & Observability

@@ -27,6 +27,8 @@ type CacheOptions struct {
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
+
+	WarmLuaScripts bool
 }
 
 // CacheHooks provides lifecycle hooks for extending cache behavior
@@ -102,13 +104,11 @@ func (o *CacheOptions) WithHooks(hooks *CacheHooks) *CacheOptions {
 	return o
 }
 
-
 // WithSerializer sets serialization format (for Redis)
 func (o *CacheOptions) WithSerializer(format string) *CacheOptions {
 	o.SerializerFormat = format
 	return o
 }
-
 
 // WithRedisClient sets the Redis client (required for cache creation)
 func (o *CacheOptions) WithRedisClient(client redis.Cmdable) *CacheOptions {
