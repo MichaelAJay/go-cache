@@ -34,11 +34,11 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local serializedVal = ARGV[1]
-		local ttl = tonumber(ARGV[2])
+		local ttlMs = tonumber(ARGV[2])
 
-		-- Set value
-		if ttl and ttl > 0 then
-			redis.call('SETEX', dataKey, ttl, serializedVal)
+		-- Set value with millisecond precision using modern SET syntax
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', dataKey, serializedVal, 'PX', ttlMs)
 		else
 			redis.call('SET', dataKey, serializedVal)
 		end
@@ -50,11 +50,11 @@ func (c *RedisCache[T]) initLuaScripts() {
 			'created_at', ts,
 			'last_accessed', ts,
 			'access_count', '1',
-			'ttl', tostring(ttl or 0),
+			'ttl', tostring(ttlMs or 0),
 			'size', tostring(string.len(serializedVal))
 		)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', metaKey, ttlMs)
 		end
 
 		return 'OK'
@@ -67,14 +67,15 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local indexKey = KEYS[3]
 		local reverseKey = KEYS[4]
 		local serializedVal = ARGV[1]
-		local ttl = tonumber(ARGV[2])
+		local ttlMs = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
 		local ownerKey = ARGV[4]
 
-		-- Set value
-		redis.call('SET', dataKey, serializedVal)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', dataKey, ttl)
+		-- Set value with millisecond precision using modern SET syntax
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', dataKey, serializedVal, 'PX', ttlMs)
+		else
+			redis.call('SET', dataKey, serializedVal)
 		end
 
 		-- Set metadata
@@ -84,23 +85,24 @@ func (c *RedisCache[T]) initLuaScripts() {
 			'created_at', ts,
 			'last_accessed', ts,
 			'access_count', '1',
-			'ttl', tostring(ttl or 0),
+			'ttl', tostring(ttlMs or 0),
 			'size', tostring(string.len(serializedVal))
 		)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', metaKey, ttlMs)
 		end
 
 		-- Update forward index (owner -> entry keys)
 		redis.call('SADD', indexKey, entryKey)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', indexKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', indexKey, ttlMs)
 		end
 
 		-- Update reverse index (entry -> owner key)
-		redis.call('SET', reverseKey, ownerKey)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', reverseKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', reverseKey, ownerKey, 'PX', ttlMs)
+		else
+			redis.call('SET', reverseKey, ownerKey)
 		end
 
 		return 'OK'
@@ -108,13 +110,13 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 	// GetOrSet script
 	c.getOrSetScript = redis.NewScript(`
-		local lockKey       = KEYS[1]
-		local dataKey       = KEYS[2]
-		local metaKey       = KEYS[3]
-		local lockValue     = ARGV[1]
-		local ttl           = tonumber(ARGV[2])
-		local serializedVal = ARGV[3]
-		local lockTimeout   = tonumber(ARGV[4])
+		local lockKey        = KEYS[1]
+		local dataKey        = KEYS[2]
+		local metaKey        = KEYS[3]
+		local lockValue      = ARGV[1]
+		local ttlMs          = tonumber(ARGV[2])
+		local serializedVal  = ARGV[3]
+		local lockTimeoutMs  = tonumber(ARGV[4])
 
 		-- Fast path: already present
 		local existing = redis.call('GET', dataKey)
@@ -122,8 +124,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 			return {existing, '0'}  -- found, no write
 		end
 
-		-- Acquire lock
-		local ok = redis.call('SET', lockKey, lockValue, 'EX', lockTimeout, 'NX')
+		-- Acquire lock with millisecond precision
+		local ok = redis.call('SET', lockKey, lockValue, 'PX', lockTimeoutMs, 'NX')
 		if not ok then
 			-- Someone else is loading; check again
 			existing = redis.call('GET', dataKey)
@@ -142,9 +144,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 			return {nil, '2'}  -- Signal: miss + no data available
 		end
 
-		-- Set value
-		if ttl and ttl > 0 then
-			redis.call('SETEX', dataKey, ttl, serializedVal)
+		-- Set value with millisecond precision using modern SET syntax
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', dataKey, serializedVal, 'PX', ttlMs)
 		else
 			redis.call('SET', dataKey, serializedVal)
 		end
@@ -156,11 +158,11 @@ func (c *RedisCache[T]) initLuaScripts() {
 			'created_at', ts,
 			'last_accessed', ts,
 			'access_count', '1',
-			'ttl', tostring(ttl or 0),
+			'ttl', tostring(ttlMs or 0),
 			'size', tostring(string.len(serializedVal))
 		)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', metaKey, ttlMs)
 		end
 
 		-- Release lock if we own it
@@ -173,15 +175,15 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 	// Update script
 	c.updateScript = redis.NewScript(`
-		local lockKey   = KEYS[1]
-		local dataKey   = KEYS[2]
-		local metaKey   = KEYS[3]
-		local lockValue = ARGV[1]
-		local ttl       = tonumber(ARGV[2])
-		local newVal    = ARGV[3]
-		local lockTout  = tonumber(ARGV[4])
+		local lockKey     = KEYS[1]
+		local dataKey     = KEYS[2]
+		local metaKey     = KEYS[3]
+		local lockValue   = ARGV[1]
+		local ttlMs       = tonumber(ARGV[2])
+		local newVal      = ARGV[3]
+		local lockToutMs  = tonumber(ARGV[4])
 
-		local ok = redis.call('SET', lockKey, lockValue, 'EX', lockTout, 'NX')
+		local ok = redis.call('SET', lockKey, lockValue, 'PX', lockToutMs, 'NX')
 		if not ok then
 			return {false, '1'} -- signal retry
 		end
@@ -189,8 +191,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local oldVal = redis.call('GET', dataKey)
 		local existed = oldVal and '1' or '0'
 
-		if ttl and ttl > 0 then
-			redis.call('SETEX', dataKey, ttl, newVal)
+		-- Set value with millisecond precision using modern SET syntax
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', dataKey, newVal, 'PX', ttlMs)
 		else
 			redis.call('SET', dataKey, newVal)
 		end
@@ -203,14 +206,14 @@ func (c *RedisCache[T]) initLuaScripts() {
 		redis.call('HSET', metaKey,
 			'last_accessed', ts,
 			'access_count', acc,
-			'ttl', tostring(ttl or 0),
+			'ttl', tostring(ttlMs or 0),
 			'size', tostring(string.len(newVal))
 		)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', metaKey, ttlMs)
 		end
 
-		-- Rlease only if we still own it
+		-- Release only if we still own it
 		if redis.call('GET', lockKey) == lockValue then
 			redis.call('DEL', lockKey)
 		end
@@ -345,16 +348,16 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local indexKey = KEYS[3]
 		local reverseKey = KEYS[4]
 		local serializedVal = ARGV[1]
-		local ttl = tonumber(ARGV[2])
+		local ttlMs = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
 		local ownerKey = ARGV[4]
 		local indexingEnabled = ARGV[5] == "true"
 
-		-- Try to set only if key already exists
+		-- Try to set only if key already exists, using millisecond precision
 		local setArgs = { "SET", dataKey, serializedVal, "XX" }
-		if ttl and ttl > 0 then
-			table.insert(setArgs, "EX")
-			table.insert(setArgs, ttl)
+		if ttlMs and ttlMs > 0 then
+			table.insert(setArgs, "PX")
+			table.insert(setArgs, ttlMs)
 		end
 
 		local ok = redis.call(unpack(setArgs))
@@ -371,11 +374,11 @@ func (c *RedisCache[T]) initLuaScripts() {
 		redis.call('HSET', metaKey,
 			'last_accessed', ts,
 			'access_count', acc,
-			'ttl', tostring(ttl or 0),
+			'ttl', tostring(ttlMs or 0),
 			'size', tostring(string.len(serializedVal))
 		)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', metaKey, ttlMs)
 		end
 
 		-- Early return if indexing is disabled
@@ -394,14 +397,15 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		-- Update forward index (owner -> entry keys)
 		redis.call('SADD', indexKey, entryKey)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', indexKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', indexKey, ttlMs)
 		end
 
 		-- Update reverse index (entry -> owner key)
-		redis.call('SET', reverseKey, ownerKey)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', reverseKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', reverseKey, ownerKey, 'PX', ttlMs)
+		else
+			redis.call('SET', reverseKey, ownerKey)
 		end
 
 		return 1  -- SET succeeded
@@ -414,16 +418,16 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local indexKey = KEYS[3]
 		local reverseKey = KEYS[4]
 		local serializedVal = ARGV[1]
-		local ttl = tonumber(ARGV[2])
+		local ttlMs = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
 		local ownerKey = ARGV[4]
 		local indexingEnabled = ARGV[5] == "true"
 
-		-- Try to set only if key does not already exist
+		-- Try to set only if key does not already exist, using millisecond precision
 		local setArgs = { "SET", dataKey, serializedVal, "NX" }
-		if ttl and ttl > 0 then
-			table.insert(setArgs, "EX")
-			table.insert(setArgs, ttl)
+		if ttlMs and ttlMs > 0 then
+			table.insert(setArgs, "PX")
+			table.insert(setArgs, ttlMs)
 		end
 
 		local ok = redis.call(unpack(setArgs))
@@ -438,11 +442,11 @@ func (c *RedisCache[T]) initLuaScripts() {
 			'created_at', ts,
 			'last_accessed', ts,
 			'access_count', '1',
-			'ttl', tostring(ttl or 0),
+			'ttl', tostring(ttlMs or 0),
 			'size', tostring(string.len(serializedVal))
 		)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', metaKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', metaKey, ttlMs)
 		end
 
 		-- Early return if indexing is disabled
@@ -452,14 +456,15 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		-- Update forward index (owner -> entry keys)
 		redis.call('SADD', indexKey, entryKey)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', indexKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('PEXPIRE', indexKey, ttlMs)
 		end
 
 		-- Update reverse index (entry -> owner key)
-		redis.call('SET', reverseKey, ownerKey)
-		if ttl and ttl > 0 then
-			redis.call('EXPIRE', reverseKey, ttl)
+		if ttlMs and ttlMs > 0 then
+			redis.call('SET', reverseKey, ownerKey, 'PX', ttlMs)
+		else
+			redis.call('SET', reverseKey, ownerKey)
 		end
 
 		return 1  -- SET succeeded

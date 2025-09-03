@@ -28,7 +28,7 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 	for range maxRetries {
 		// Try the Lua script for atomic GetOrSet
 		result, err := c.getOrSetScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
-			lockValue, int64(ttl.Seconds()), "", int64(defaultLockTimeout.Seconds())).Result()
+			lockValue, ttlToMilliseconds(ttl), "", ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil {
 			c.handleError("getorset", err)
@@ -89,7 +89,7 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 
 		// Try the script again with the loaded value
 		result, err = c.getOrSetScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
-			lockValue, int64(ttl.Seconds()), string(serializedValue), int64(defaultLockTimeout.Seconds())).Result()
+			lockValue, ttlToMilliseconds(ttl), string(serializedValue), ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil {
 			c.handleError("getorset", err)
@@ -126,7 +126,7 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		// First, try to get the current value and acquire lock
 		result, err := c.updateScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
-			lockValue, int64(ttl.Seconds()), "", int64(defaultLockTimeout.Seconds())).Result()
+			lockValue, ttlToMilliseconds(ttl), "", ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil && err.Error() != "NOSCRIPT" {
 			c.handleError("update", err)
@@ -181,7 +181,7 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 
 		// Execute the update script with the new value
 		result, err = c.updateScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
-			lockValue, int64(ttl.Seconds()), string(serializedNewValue), int64(defaultLockTimeout.Seconds())).Result()
+			lockValue, ttlToMilliseconds(ttl), string(serializedNewValue), ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil {
 			c.handleError("update", err)
@@ -235,7 +235,7 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 	result, err := c.setIfNotExistsScript.Run(ctx, c.client,
 		[]string{dataKey, metaKey, indexKey, reverseKey},
 		string(serializedValue),
-		int64(ttl.Seconds()),
+		ttlToMilliseconds(ttl),
 		key,
 		ownerKey,
 		fmt.Sprintf("%t", indexingEnabled)).Result()
@@ -290,7 +290,7 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 	result, err := c.setIfExistsScript.Run(ctx, c.client,
 		[]string{dataKey, metaKey, indexKey, reverseKey},
 		string(serializedValue),
-		int64(ttl.Seconds()),
+		ttlToMilliseconds(ttl),
 		key,
 		ownerKey,
 		fmt.Sprintf("%t", indexingEnabled)).Result()

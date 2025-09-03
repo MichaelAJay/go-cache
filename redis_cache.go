@@ -244,6 +244,14 @@ func generateInstanceID() string {
 	return hex.EncodeToString(bytes)
 }
 
+// ttlToMilliseconds converts a duration to milliseconds for Redis PEXPIRE commands
+func ttlToMilliseconds(ttl time.Duration) int64 {
+	if ttl <= 0 {
+		return 0
+	}
+	return int64(ttl.Milliseconds())
+}
+
 // Basic Operations
 
 // Get retrieves a value by key
@@ -328,6 +336,8 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
 
+	ttlInMilliseconds := ttlToMilliseconds(ttl)
+
 	// Use appropriate atomic Lua script based on indexing mode
 	var result any
 	if c.indexingMode {
@@ -341,12 +351,12 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 
 		result, err = c.setWithIndexScript.Run(ctx, c.client,
 			[]string{dataKey, metaKey, indexKey, reverseKey},
-			string(serializedValue), int64(ttl.Seconds()), key, ownerKey).Result()
+			string(serializedValue), ttlInMilliseconds, key, ownerKey).Result()
 	} else {
 		// No indexing - use simple SET script
 		result, err = c.setScript.Run(ctx, c.client,
 			[]string{dataKey, metaKey},
-			string(serializedValue), int64(ttl.Seconds())).Result()
+			string(serializedValue), ttlInMilliseconds).Result()
 	}
 
 	if err != nil {

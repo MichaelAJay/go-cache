@@ -146,7 +146,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 			"created_at":    now,
 			"last_accessed": now,
 			"access_count":  1,
-			"ttl":           int64(ttl.Seconds()),
+			"ttl":           ttlToMilliseconds(ttl),
 			"size":          len(serializedValue),
 		})
 
