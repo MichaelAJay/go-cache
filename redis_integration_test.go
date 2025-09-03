@@ -5,6 +5,7 @@ package cache_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
 	"github.com/stretchr/testify/assert"
@@ -90,6 +91,90 @@ func TestRedisCache_BasicGet(t *testing.T) {
 
 	t.Logf("✅ GET test successful - key not found as expected")
 	t.Logf("   - Key: %s", testKey)
+	t.Logf("   - Found: %v", found)
+	t.Logf("   - Error: %v", err)
+}
+
+// TestRedisCache_BasicSet tests a simple SET operation
+func TestRedisCache_BasicSet(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create test session
+	testSession := &testintegration.TestSession{
+		ID:       "session:test-set",
+		UserID:   "user123",
+		Username: "testuser",
+		Created:  time.Now(),
+	}
+
+	t.Logf("📝 Testing SET operation for session ID: %s", testSession.ID)
+
+	err = cache.Set(ctx, testSession, 0)
+
+	// Assertions
+	assert.NoError(t, err, "SET operation should not error")
+
+	t.Logf("✅ SET test successful")
+	t.Logf("   - Session ID: %s", testSession.ID)
+	t.Logf("   - User ID: %s", testSession.UserID)
+	t.Logf("   - Error: %v", err)
+}
+
+// TestRedisCache_SetThenGet tests SET followed by GET in the same test
+func TestRedisCache_SetThenGet(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create test session
+	testSession := &testintegration.TestSession{
+		ID:       "session:test-set-get",
+		UserID:   "user456",
+		Username: "testuser2",
+		Created:  time.Now(),
+	}
+
+	t.Logf("📝 Testing SET then GET operation for session ID: %s", testSession.ID)
+
+	// SET operation
+	err = cache.Set(ctx, testSession, 0)
+	require.NoError(t, err, "SET operation should not error")
+
+	// GET operation
+	retrievedSession, found, err := cache.Get(ctx, testSession.ID)
+
+	// Assertions
+	assert.NoError(t, err, "GET operation should not error")
+	assert.True(t, found, "GET should return found=true for existing key")
+	assert.NotNil(t, retrievedSession, "GET should return non-nil value for existing key")
+	assert.Equal(t, testSession.ID, retrievedSession.ID, "Retrieved session should match original")
+	assert.Equal(t, testSession.UserID, retrievedSession.UserID, "Retrieved session user ID should match original")
+	assert.Equal(t, testSession.Username, retrievedSession.Username, "Retrieved session username should match original")
+
+	t.Logf("✅ SET then GET test successful")
+	t.Logf("   - Session ID: %s", testSession.ID)
+	t.Logf("   - Original Session ID: %s", testSession.ID)
+	t.Logf("   - Retrieved Session ID: %s", retrievedSession.ID)
 	t.Logf("   - Found: %v", found)
 	t.Logf("   - Error: %v", err)
 }
