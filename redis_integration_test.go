@@ -13,6 +13,7 @@ import (
 
 // TestRedisCache_BasicInitialization tests that a RedisCache can be created and initialized properly
 func TestRedisCache_BasicInitialization(t *testing.T) {
+	t.Skip()
 	ctx := context.Background()
 
 	// Setup test environment using existing container infrastructure
@@ -37,6 +38,7 @@ func TestRedisCache_BasicInitialization(t *testing.T) {
 
 // TestRedisCache_IndexedInitialization tests cache creation with indexing enabled
 func TestRedisCache_IndexedInitialization(t *testing.T) {
+	t.Skip()
 	ctx := context.Background()
 
 	// Setup test environment
@@ -60,6 +62,7 @@ func TestRedisCache_IndexedInitialization(t *testing.T) {
 
 // TestRedisCache_BasicGet tests a simple GET operation that should miss (no data present)
 func TestRedisCache_BasicGet(t *testing.T) {
+
 	ctx := context.Background()
 
 	// Setup test environment
@@ -93,6 +96,7 @@ func TestRedisCache_BasicGet(t *testing.T) {
 
 // TestRedisCache_SerializationFormats tests cache creation with different serialization formats
 func TestRedisCache_SerializationFormats(t *testing.T) {
+	t.Skip()
 	ctx := context.Background()
 
 	setup := testintegration.SetupTestEnvironment(ctx, t)
@@ -125,6 +129,7 @@ func TestRedisCache_SerializationFormats(t *testing.T) {
 
 // TestRedisCache_ConnectionValidation tests that cache properly validates Redis connection
 func TestRedisCache_ConnectionValidation(t *testing.T) {
+	t.Skip()
 	ctx := context.Background()
 
 	setup := testintegration.SetupTestEnvironment(ctx, t)

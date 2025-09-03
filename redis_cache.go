@@ -617,8 +617,19 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	}
 
 	resultSlice, ok := result.([]any)
-	if !ok || len(resultSlice) < 2 {
-		return zero, false, fmt.Errorf("unexpected script result format")
+	if !ok {
+		return zero, false, fmt.Errorf("unexpected script result type: %T", result)
+	}
+
+	// Handle empty result (cache miss)
+	if len(resultSlice) == 0 {
+		c.metrics.RecordMiss("redis", c.getMetricTags())
+		c.metrics.RecordOperation("redis", "get", "miss", time.Since(start), c.getMetricTags())
+		return zero, false, nil
+	}
+
+	if len(resultSlice) < 2 {
+		return zero, false, fmt.Errorf("unexpected script result length: %d", len(resultSlice))
 	}
 
 	serializedValue := resultSlice[0]
