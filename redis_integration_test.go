@@ -179,6 +179,196 @@ func TestRedisCache_SetThenGet(t *testing.T) {
 	t.Logf("   - Error: %v", err)
 }
 
+// TestRedisCache_SetDeleteGet tests SET > DELETE > GET sequence
+func TestRedisCache_SetDeleteGet(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create test session
+	testSession := &testintegration.TestSession{
+		ID:       "session:test-delete",
+		UserID:   "user789",
+		Username: "deletetest",
+		Created:  time.Now(),
+	}
+
+	t.Logf("📝 Testing SET > DELETE > GET sequence for session ID: %s", testSession.ID)
+
+	// SET operation
+	err = cache.Set(ctx, testSession, 0)
+	require.NoError(t, err, "SET operation should not error")
+
+	// DELETE operation
+	err = cache.Delete(ctx, testSession.ID)
+	require.NoError(t, err, "DELETE operation should not error")
+
+	// GET operation (should miss)
+	retrievedSession, found, err := cache.Get(ctx, testSession.ID)
+
+	// Assertions
+	assert.NoError(t, err, "GET operation should not error")
+	assert.False(t, found, "GET should return found=false for deleted key")
+	assert.Nil(t, retrievedSession, "GET should return nil value for deleted key")
+
+	t.Logf("✅ SET > DELETE > GET test successful")
+	t.Logf("   - Session ID: %s", testSession.ID)
+	t.Logf("   - Found after delete: %v", found)
+	t.Logf("   - Error: %v", err)
+}
+
+// TestRedisCache_SetHas tests SET > HAS sequence
+func TestRedisCache_SetHas(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create test session
+	testSession := &testintegration.TestSession{
+		ID:       "session:test-has",
+		UserID:   "user101",
+		Username: "hastest",
+		Created:  time.Now(),
+	}
+
+	t.Logf("📝 Testing SET > HAS sequence for session ID: %s", testSession.ID)
+
+	// HAS operation (should be false before SET)
+	exists := cache.Has(ctx, testSession.ID)
+	assert.False(t, exists, "HAS should return false before SET")
+
+	// SET operation
+	err = cache.Set(ctx, testSession, 0)
+	require.NoError(t, err, "SET operation should not error")
+
+	// HAS operation (should be true after SET)
+	exists = cache.Has(ctx, testSession.ID)
+	assert.True(t, exists, "HAS should return true after SET")
+
+	t.Logf("✅ SET > HAS test successful")
+	t.Logf("   - Session ID: %s", testSession.ID)
+	t.Logf("   - Exists after SET: %v", exists)
+}
+
+// TestRedisCache_SetHasDeleteHas tests SET > HAS > DELETE > HAS sequence
+func TestRedisCache_SetHasDeleteHas(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create test session
+	testSession := &testintegration.TestSession{
+		ID:       "session:test-has-delete-has",
+		UserID:   "user202",
+		Username: "hasdeletetest",
+		Created:  time.Now(),
+	}
+
+	t.Logf("📝 Testing SET > HAS > DELETE > HAS sequence for session ID: %s", testSession.ID)
+
+	// SET operation
+	err = cache.Set(ctx, testSession, 0)
+	require.NoError(t, err, "SET operation should not error")
+
+	// HAS operation (should be true after SET)
+	exists := cache.Has(ctx, testSession.ID)
+	assert.True(t, exists, "HAS should return true after SET")
+
+	// DELETE operation
+	err = cache.Delete(ctx, testSession.ID)
+	require.NoError(t, err, "DELETE operation should not error")
+
+	// HAS operation (should be false after DELETE)
+	exists = cache.Has(ctx, testSession.ID)
+	assert.False(t, exists, "HAS should return false after DELETE")
+
+	t.Logf("✅ SET > HAS > DELETE > HAS test successful")
+	t.Logf("   - Session ID: %s", testSession.ID)
+	t.Logf("   - Exists after DELETE: %v", exists)
+}
+
+// TestRedisCache_MultipleSetGet tests setting and getting multiple different sessions
+func TestRedisCache_MultipleSetGet(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	// Create multiple test sessions
+	sessions := []*testintegration.TestSession{
+		{
+			ID:       "session:multi-1",
+			UserID:   "user301",
+			Username: "multiuser1",
+			Created:  time.Now(),
+		},
+		{
+			ID:       "session:multi-2",
+			UserID:   "user302",
+			Username: "multiuser2",
+			Created:  time.Now(),
+		},
+	}
+
+	t.Logf("📝 Testing multiple SET > GET operations")
+
+	// SET all sessions
+	for _, session := range sessions {
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "SET operation should not error for session %s", session.ID)
+	}
+
+	// GET all sessions and verify
+	for _, originalSession := range sessions {
+		retrievedSession, found, err := cache.Get(ctx, originalSession.ID)
+		
+		assert.NoError(t, err, "GET operation should not error for session %s", originalSession.ID)
+		assert.True(t, found, "GET should return found=true for session %s", originalSession.ID)
+		assert.NotNil(t, retrievedSession, "GET should return non-nil value for session %s", originalSession.ID)
+		assert.Equal(t, originalSession.ID, retrievedSession.ID, "Retrieved session ID should match original")
+		assert.Equal(t, originalSession.UserID, retrievedSession.UserID, "Retrieved session UserID should match original")
+		assert.Equal(t, originalSession.Username, retrievedSession.Username, "Retrieved session Username should match original")
+	}
+
+	t.Logf("✅ Multiple SET > GET test successful")
+	t.Logf("   - Sessions tested: %d", len(sessions))
+}
+
 // TestRedisCache_SerializationFormats tests cache creation with different serialization formats
 func TestRedisCache_SerializationFormats(t *testing.T) {
 	t.Skip()
