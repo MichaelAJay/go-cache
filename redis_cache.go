@@ -69,15 +69,18 @@ type RedisCache[T any] struct {
 	instanceID string
 
 	// Lua scripts for atomic operations
-	getScript           *redis.Script
-	setScript           *redis.Script
-	setWithIndexScript  *redis.Script
-	getOrSetScript      *redis.Script
-	updateScript        *redis.Script
-	deleteByIndexScript *redis.Script
-	deleteByEntryScript *redis.Script
-	getByOwnerScript    *redis.Script
-	deleteByOwnerScript *redis.Script
+	getScript            *redis.Script
+	setScript            *redis.Script
+	setWithIndexScript   *redis.Script
+	getOrSetScript       *redis.Script
+	updateScript         *redis.Script
+	deleteByIndexScript  *redis.Script
+	deleteByEntryScript  *redis.Script
+	getByOwnerScript     *redis.Script
+	deleteByOwnerScript  *redis.Script
+	setIfExistsScript    *redis.Script
+	setIfNotExistsScript *redis.Script
+	setIfExistsOrNot     *redis.Script
 }
 
 // Option defines a functional option for configuring cache behavior
