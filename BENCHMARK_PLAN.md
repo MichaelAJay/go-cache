@@ -93,28 +93,21 @@ BenchmarkRedisCache_WithScriptWarming
 BenchmarkRedisCache_WithoutScriptWarming
 BenchmarkRedisCache_ColdStart_FirstCall
 
-9. Circuit Breaker Overhead
+9. Circuit Breaker Overhead - complete
 
 // Circuit breaker performance impact
 BenchmarkRedisCache_CircuitBreakerOpen
 BenchmarkRedisCache_CircuitBreakerClosed
 BenchmarkRedisCache_CircuitBreakerRecovery
 
-10. Memory and Resource Usage
+10. Memory and Resource Usage - complete
 
 // Memory allocation and GC pressure tests
 BenchmarkRedisCache_MemoryAllocations
 BenchmarkRedisCache_GCPressure
 BenchmarkRedisCache_ConnectionPooling
 
-11. Metadata Overhead Assessment
-
-// Cost of comprehensive metadata tracking
-BenchmarkRedisCache_MetadataEnabled
-BenchmarkRedisCache_MetadataDisabled
-BenchmarkRedisCache_GetMetadata
-
-12. Real-World Usage Patterns
+11. Real-World Usage Patterns
 
 // Simulate go-auth session management patterns
 BenchmarkRedisCache_SessionWorkload_Create
@@ -122,13 +115,21 @@ BenchmarkRedisCache_SessionWorkload_Access
 BenchmarkRedisCache_SessionWorkload_Cleanup
 BenchmarkRedisCache_SessionWorkload_Mixed // 70% reads, 20% writes, 10% deletes
 
-13. Performance vs Reliability Trade-offs
+12. Performance vs Reliability Trade-offs
 
 // Test performance impact of safety features
 BenchmarkRedisCache_FullFeatures // All features enabled
 BenchmarkRedisCache_MinimalFeatures // Basic operations only
 BenchmarkRedisCache_NoMetrics
 BenchmarkRedisCache_NoIndexing
+
+LATER:
+Metadata Overhead Assessment
+
+// Cost of comprehensive metadata tracking
+BenchmarkRedisCache_MetadataEnabled
+BenchmarkRedisCache_MetadataDisabled
+BenchmarkRedisCache_GetMetadata
 
 Benchmark Configuration Strategy
 
