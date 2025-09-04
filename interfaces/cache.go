@@ -123,6 +123,30 @@ type Cache[T any] interface {
 	// MUST be goroutine-safe and return consistent snapshot
 	GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
 
+	// Atomic counter operations
+	// IMPLEMENTATION REQUIREMENT: Must be atomic and goroutine-safe for concurrent access
+	// Essential for rate limiting, analytics, session counting, and other counter use cases
+
+	// Increment atomically increments a counter key by the specified delta
+	// Creates key with initial value of delta if key doesn't exist
+	// Returns the new value after incrementing
+	// MUST be atomic - no race conditions under concurrent access
+	// MUST handle non-numeric existing values with appropriate error
+	Increment(ctx context.Context, key string, delta int64) (int64, error)
+
+	// Decrement atomically decrements a counter key by the specified delta
+	// Creates key with initial value of -delta if key doesn't exist
+	// Returns the new value after decrementing
+	// MUST be atomic - no race conditions under concurrent access
+	// MUST handle non-numeric existing values with appropriate error
+	Decrement(ctx context.Context, key string, delta int64) (int64, error)
+
+	// IncrementFloat atomically increments a floating-point counter key by the specified delta
+	// Creates key with initial value of delta if key doesn't exist
+	// Returns the new value after incrementing
+	// MUST be atomic - no race conditions under concurrent access
+	// MUST handle non-numeric existing values with appropriate error
+	IncrementFloat(ctx context.Context, key string, delta float64) (float64, error)
 
 	// Metadata operations
 	// IMPLEMENTATION REQUIREMENT: Must provide consistent metadata view

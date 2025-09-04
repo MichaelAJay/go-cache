@@ -88,3 +88,45 @@ func CreateStringCache(ctx context.Context, client redis.Cmdable, config *CacheC
 
 	return cache.NewCache(ctx, client, config.IndexingMode, stringExtractor, opts...)
 }
+
+// CreateTestCounterCache creates a RedisCache[int64] for counter testing
+func CreateTestCounterCache(ctx context.Context, client redis.Cmdable, config *CacheConfig) (interfaces.Cache[int64], error) {
+	counterExtractor := &cache.IndexExtractor[int64]{
+		GetEntryKey: func(value int64) string {
+			return "counter" // Simple key since counters are accessed by explicit keys
+		},
+		GetOwnerKey: func(value int64) string {
+			return "default" // All counters belong to "default" owner for simplicity
+		},
+	}
+
+	opts := []cache.Option[int64]{
+		cache.WithTTL[int64](config.TTL),
+		cache.WithSerializer[int64](config.SerializerFormat),
+	}
+
+	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
+
+	return cache.NewCache(ctx, client, config.IndexingMode, counterExtractor, opts...)
+}
+
+// CreateTestFloatCounterCache creates a RedisCache[float64] for float counter testing
+func CreateTestFloatCounterCache(ctx context.Context, client redis.Cmdable, config *CacheConfig) (interfaces.Cache[float64], error) {
+	floatCounterExtractor := &cache.IndexExtractor[float64]{
+		GetEntryKey: func(value float64) string {
+			return "float_counter" // Simple key since counters are accessed by explicit keys
+		},
+		GetOwnerKey: func(value float64) string {
+			return "default" // All float counters belong to "default" owner for simplicity
+		},
+	}
+
+	opts := []cache.Option[float64]{
+		cache.WithTTL[float64](config.TTL),
+		cache.WithSerializer[float64](config.SerializerFormat),
+	}
+
+	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
+
+	return cache.NewCache(ctx, client, config.IndexingMode, floatCounterExtractor, opts...)
+}

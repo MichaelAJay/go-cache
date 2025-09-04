@@ -13,4 +13,8 @@ var (
 	ErrContextCanceled     = errors.New("cache: operation canceled")
 	ErrInvalidValue        = errors.New("cache: invalid value type for operation")
 	ErrCircuitBreakerOpen  = errors.New("cache: circuit breaker is open")
+
+	// Counter-specific error types
+	ErrNotNumeric = errors.New("cache: value is not numeric")
+	ErrOverflow   = errors.New("cache: numeric overflow")
 )

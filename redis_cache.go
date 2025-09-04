@@ -769,6 +769,119 @@ func (c *RedisCache[T]) handleError(operation string, err error) {
 	}
 }
 
+// Atomic counter operations
+
+// Increment atomically increments a counter key by the specified delta
+func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) (int64, error) {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordOperation("redis", "increment", "circuit_breaker", time.Since(time.Now()), c.getMetricTags())
+		return 0, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	
+	// Build the data key with proper prefix
+	dataKey := c.buildDataKey(key)
+	
+	// Use Redis INCRBY for atomic increment
+	result, err := c.client.IncrBy(ctx, dataKey, delta).Result()
+	
+	duration := time.Since(start)
+	
+	if err != nil {
+		c.handleError("increment", err)
+		
+		// Categorize error for metrics
+		errorType := "redis_error"
+		if err == redis.Nil {
+			errorType = "key_not_found"
+		}
+		
+		c.metrics.RecordOperation("redis", "increment", errorType, duration, c.getMetricTags())
+		return 0, fmt.Errorf("increment operation failed: %w", err)
+	}
+	
+	// Record successful operation
+	c.metrics.RecordOperation("redis", "increment", "success", duration, c.getMetricTags())
+	
+	return result, nil
+}
+
+// Decrement atomically decrements a counter key by the specified delta
+func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) (int64, error) {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordOperation("redis", "decrement", "circuit_breaker", time.Since(time.Now()), c.getMetricTags())
+		return 0, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	
+	// Build the data key with proper prefix
+	dataKey := c.buildDataKey(key)
+	
+	// Use Redis DECRBY for atomic decrement
+	result, err := c.client.DecrBy(ctx, dataKey, delta).Result()
+	
+	duration := time.Since(start)
+	
+	if err != nil {
+		c.handleError("decrement", err)
+		
+		// Categorize error for metrics
+		errorType := "redis_error"
+		if err == redis.Nil {
+			errorType = "key_not_found"
+		}
+		
+		c.metrics.RecordOperation("redis", "decrement", errorType, duration, c.getMetricTags())
+		return 0, fmt.Errorf("decrement operation failed: %w", err)
+	}
+	
+	// Record successful operation
+	c.metrics.RecordOperation("redis", "decrement", "success", duration, c.getMetricTags())
+	
+	return result, nil
+}
+
+// IncrementFloat atomically increments a floating-point counter key by the specified delta
+func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta float64) (float64, error) {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordOperation("redis", "increment_float", "circuit_breaker", time.Since(time.Now()), c.getMetricTags())
+		return 0, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	
+	// Build the data key with proper prefix
+	dataKey := c.buildDataKey(key)
+	
+	// Use Redis INCRBYFLOAT for atomic float increment
+	result, err := c.client.IncrByFloat(ctx, dataKey, delta).Result()
+	
+	duration := time.Since(start)
+	
+	if err != nil {
+		c.handleError("increment_float", err)
+		
+		// Categorize error for metrics
+		errorType := "redis_error"
+		if err == redis.Nil {
+			errorType = "key_not_found"
+		}
+		
+		c.metrics.RecordOperation("redis", "increment_float", errorType, duration, c.getMetricTags())
+		return 0, fmt.Errorf("increment float operation failed: %w", err)
+	}
+	
+	// Record successful operation
+	c.metrics.RecordOperation("redis", "increment_float", "success", duration, c.getMetricTags())
+	
+	return result, nil
+}
+
 // Lifecycle management
 
 // Close shuts down the cache and cleans up resources
