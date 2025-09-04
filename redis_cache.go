@@ -154,6 +154,13 @@ func WithVersion[T any](version string) Option[T] {
 	}
 }
 
+// WithWarmLuaScripts enables or disables Lua script pre-loading
+func WithWarmLuaScripts[T any](warmScripts bool) Option[T] {
+	return func(cache *RedisCache[T]) {
+		cache.options.WarmLuaScripts = warmScripts
+	}
+}
+
 // NewCache creates a new Redis cache instance with clean abstraction
 // indexingMode explicitly controls whether indexing features are enabled
 // extractor provides key extraction functions - GetEntryKey always required, GetOwnerKey only when indexing enabled
