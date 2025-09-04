@@ -309,6 +309,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 	`)
 
 	// DeleteByOwner script - atomic deletion of all entries for an owner
+	// Returns the number of sessions/entries actually deleted, counting successful deletions
 	c.deleteByOwnerScript = redis.NewScript(`
 		local indexKey = KEYS[1]
 		local dataPrefix = ARGV[1]
@@ -321,24 +322,32 @@ func (c *RedisCache[T]) initLuaScripts() {
 			return 0
 		end
 
-		local totalDeleted = 0
+		local sessionsDeleted = 0
 
 		-- Delete each entry's data, metadata, and reverse index atomically
+		-- Count sessions as deleted only if the main data key existed and was deleted
 		for i = 1, #entryKeys do
 			local entryKey = entryKeys[i]
 			local dataKey = dataPrefix .. entryKey
 			local metaKey = metaPrefix .. entryKey
 			local reverseKey = reversePrefix .. entryKey
 			
-			totalDeleted = totalDeleted + redis.call('DEL', dataKey)
-			totalDeleted = totalDeleted + redis.call('DEL', metaKey)
-			totalDeleted = totalDeleted + redis.call('DEL', reverseKey)
+			-- Only count as deleted if the main data key actually existed
+			local dataDeleted = redis.call('DEL', dataKey)
+			if dataDeleted > 0 then
+				sessionsDeleted = sessionsDeleted + 1
+			end
+			
+			-- Always clean up metadata and reverse indexes regardless
+			redis.call('DEL', metaKey)
+			redis.call('DEL', reverseKey)
 		end
 
 		-- Delete the owner index itself
-		totalDeleted = totalDeleted + redis.call('DEL', indexKey)
+		redis.call('DEL', indexKey)
 
-		return totalDeleted
+		-- Return count of sessions actually deleted (based on data key existence)
+		return sessionsDeleted
 	`)
 
 	// SetIfExists script - atomic conditional SET that only sets if key exists

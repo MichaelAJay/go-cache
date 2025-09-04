@@ -589,7 +589,20 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 	return result, nil
 }
 
-// DeleteByOwner removes all entries for a given owner key using atomic Lua script
+// DeleteByOwner removes all entries for a given owner key using atomic Lua script.
+// Returns the number of sessions/entries deleted (not the total number of Redis keys deleted).
+// For example, if 3 sessions are deleted, this returns 3, even though internally it may
+// delete 10+ Redis keys (data, metadata, reverse indexes, etc.).
+//
+// Requires indexing to be enabled on the cache instance.
+//
+// Parameters:
+//   - ctx: context for the operation
+//   - ownerKey: the owner identifier (e.g., user ID)
+//
+// Returns:
+//   - deletedCount: number of sessions/entries deleted (not Redis keys)
+//   - err: error if operation fails or indexing is disabled
 func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error) {
 	start := time.Now()
 
