@@ -1,0 +1,7 @@
+Key Patterns
+
+| Key Pattern                    | Type   | Value                                |
+| ------------------------------ | ------ | ------------------------------------ |
+| `session:{sessionID}`          | String | Session payload (JSON, msgpack, etc) |
+| `session:{sessionID}:subject`  | String | SubjectID that owns this session     |
+| `subject:{subjectID}:sessions` | Set    | SessionIDs for this subject          |
