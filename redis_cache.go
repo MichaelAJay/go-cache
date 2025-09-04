@@ -25,6 +25,7 @@ type RedisOptions struct {
 	IndexPrefix string // Prefix for index keys (e.g., "sessions:index:")
 	MetaPrefix  string // Prefix for metadata keys (e.g., "sessions:meta:")
 	LockPrefix  string // Prefix for lock keys (e.g., "sessions:lock:")
+	Version     string // Optional version suffix for schema migrations (e.g., "v2" -> "session:abc:v2")
 }
 
 // IndexExtractor defines how to extract keys from values for indexing
@@ -139,6 +140,17 @@ func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] 
 	return func(cache *RedisCache[T]) {
 		cache.options.GoMetricsRegistry = registry
 		cache.options.GlobalMetricsTags = tags
+	}
+}
+
+// WithVersion sets a version suffix for cache keys for schema migrations
+// Usage: WithVersion("v2") will append ":v2" to all cache keys
+func WithVersion[T any](version string) Option[T] {
+	return func(cache *RedisCache[T]) {
+		if cache.redisOptions == nil {
+			cache.redisOptions = &RedisOptions{}
+		}
+		cache.redisOptions.Version = version
 	}
 }
 
@@ -679,18 +691,30 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 // buildDataKey constructs the Redis key for data storage
 func (c *RedisCache[T]) buildDataKey(key string) string {
-	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
-		return c.redisOptions.DataPrefix + key
+	// Add version suffix if configured
+	finalKey := key
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
+		finalKey = key + ":" + c.redisOptions.Version
 	}
-	return "cache:data:" + key
+	
+	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
+		return c.redisOptions.DataPrefix + finalKey
+	}
+	return "cache:data:" + finalKey
 }
 
 // buildMetaKey constructs the Redis key for metadata storage
 func (c *RedisCache[T]) buildMetaKey(key string) string {
-	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
-		return c.redisOptions.MetaPrefix + key
+	// Add version suffix if configured
+	finalKey := key
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
+		finalKey = key + ":" + c.redisOptions.Version
 	}
-	return "cache:meta:" + key
+	
+	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
+		return c.redisOptions.MetaPrefix + finalKey
+	}
+	return "cache:meta:" + finalKey
 }
 
 // buildIndexKey constructs the Redis key for index storage
@@ -704,19 +728,31 @@ func (c *RedisCache[T]) buildIndexKey(indexName, indexKey string) string {
 
 // buildReverseIndexKey constructs the Redis key for reverse indexing (entry -> owner)
 func (c *RedisCache[T]) buildReverseIndexKey(entryKey string) string {
+	// Add version suffix if configured
+	finalKey := entryKey
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
+		finalKey = entryKey + ":" + c.redisOptions.Version
+	}
+	
 	prefix := "cache:reverse:"
 	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
 		prefix = c.redisOptions.IndexPrefix + "reverse:"
 	}
-	return prefix + entryKey
+	return prefix + finalKey
 }
 
 // buildLockKey constructs the Redis key for distributed locks
 func (c *RedisCache[T]) buildLockKey(key string) string {
-	if c.redisOptions != nil && c.redisOptions.LockPrefix != "" {
-		return c.redisOptions.LockPrefix + key
+	// Add version suffix if configured
+	finalKey := key
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
+		finalKey = key + ":" + c.redisOptions.Version
 	}
-	return "cache:lock:" + key
+	
+	if c.redisOptions != nil && c.redisOptions.LockPrefix != "" {
+		return c.redisOptions.LockPrefix + finalKey
+	}
+	return "cache:lock:" + finalKey
 }
 
 // getMetricTags returns metric tags for this cache instance
