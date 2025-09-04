@@ -71,7 +71,6 @@ type RedisCache[T any] struct {
 	// Lua scripts for atomic operations
 	getScript            *redis.Script
 	setScript            *redis.Script
-	setWithIndexScript   *redis.Script
 	getOrSetScript       *redis.Script
 	updateScript         *redis.Script
 	deleteByIndexScript  *redis.Script
@@ -338,26 +337,29 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 
 	ttlInMilliseconds := ttlToMilliseconds(ttl)
 
-	// Use appropriate atomic Lua script based on indexing mode
-	var result any
+	// Always use unified SET script with conditional indexing
+	var ownerKey string
+	var indexKey string
+	var reverseKey string
+	
 	if c.indexingMode {
-		// Indexing enabled - use indexed SET script
+		// Indexing enabled - validate and extract owner key
 		if c.extractor.GetOwnerKey == nil {
 			return fmt.Errorf("IndexExtractor.GetOwnerKey is required when indexing is enabled")
 		}
-		ownerKey := c.extractor.GetOwnerKey(value)
-		indexKey := c.buildIndexKey("owner", ownerKey)
-		reverseKey := c.buildReverseIndexKey(key)
-
-		result, err = c.setWithIndexScript.Run(ctx, c.client,
-			[]string{dataKey, metaKey, indexKey, reverseKey},
-			string(serializedValue), ttlInMilliseconds, key, ownerKey).Result()
+		ownerKey = c.extractor.GetOwnerKey(value)
+		indexKey = c.buildIndexKey("owner", ownerKey)
+		reverseKey = c.buildReverseIndexKey(key)
 	} else {
-		// No indexing - use simple SET script
-		result, err = c.setScript.Run(ctx, c.client,
-			[]string{dataKey, metaKey},
-			string(serializedValue), ttlInMilliseconds).Result()
+		// Provide dummy values for non-indexing mode (will be ignored by script)
+		ownerKey = ""
+		indexKey = ""
+		reverseKey = ""
 	}
+
+	result, err := c.setScript.Run(ctx, c.client,
+		[]string{dataKey, metaKey, indexKey, reverseKey},
+		string(serializedValue), ttlInMilliseconds, key, ownerKey, fmt.Sprintf("%t", c.indexingMode)).Result()
 
 	if err != nil {
 		c.handleError("set", err)

@@ -29,39 +29,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return {value, '1'}  -- found
 	`)
 
-	// Simple SET script (no indexing)
+	// Unified SET script with conditional indexing
 	c.setScript = redis.NewScript(`
-		local dataKey = KEYS[1]
-		local metaKey = KEYS[2]
-		local serializedVal = ARGV[1]
-		local ttlMs = tonumber(ARGV[2])
-
-		-- Set value with millisecond precision using modern SET syntax
-		if ttlMs and ttlMs > 0 then
-			redis.call('SET', dataKey, serializedVal, 'PX', ttlMs)
-		else
-			redis.call('SET', dataKey, serializedVal)
-		end
-
-		-- Set metadata
-		local now = redis.call('TIME')
-		local ts = now[1]
-		redis.call('HSET', metaKey,
-			'created_at', ts,
-			'last_accessed', ts,
-			'access_count', '1',
-			'ttl', tostring(ttlMs or 0),
-			'size', tostring(string.len(serializedVal))
-		)
-		if ttlMs and ttlMs > 0 then
-			redis.call('PEXPIRE', metaKey, ttlMs)
-		end
-
-		return 'OK'
-	`)
-
-	// SET script with indexing support
-	c.setWithIndexScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local indexKey = KEYS[3]
@@ -70,6 +39,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local ttlMs = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
 		local ownerKey = ARGV[4]
+		local indexingEnabled = ARGV[5] == "true"
 
 		-- Set value with millisecond precision using modern SET syntax
 		if ttlMs and ttlMs > 0 then
@@ -90,6 +60,21 @@ func (c *RedisCache[T]) initLuaScripts() {
 		)
 		if ttlMs and ttlMs > 0 then
 			redis.call('PEXPIRE', metaKey, ttlMs)
+		end
+
+		-- Early return if indexing is disabled
+		if not indexingEnabled then
+			return 'OK'  -- SET succeeded, no indexing
+		end
+
+		-- Get old owner for potential cleanup
+		local oldOwner = redis.call('GET', reverseKey)
+		
+		-- Handle owner change - remove from old index if owner changed
+		if oldOwner and oldOwner ~= ownerKey then
+			-- Build old index key using the same pattern as buildIndexKey
+			local oldIndexKey = 'cache:index:owner:' .. oldOwner
+			redis.call('SREM', oldIndexKey, entryKey)
 		end
 
 		-- Update forward index (owner -> entry keys)
@@ -486,7 +471,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 	scripts := []*redis.Script{
-		c.getScript, c.setScript, c.setWithIndexScript,
+		c.getScript, c.setScript,
 		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
