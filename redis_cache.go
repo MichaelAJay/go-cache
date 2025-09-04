@@ -772,9 +772,10 @@ func (c *RedisCache[T]) handleError(operation string, err error) {
 // Lifecycle management
 
 // Close shuts down the cache and cleans up resources
+// Note: This does NOT close the Redis client since it's provided externally.
+// The caller who provided the client is responsible for closing it.
 func (c *RedisCache[T]) Close() error {
-	if rdb, ok := c.client.(*redis.Client); ok {
-		return rdb.Close()
-	}
+	// Cache doesn't own the Redis client, so it doesn't close it
+	// The client lifecycle is managed by the caller
 	return nil
 }
