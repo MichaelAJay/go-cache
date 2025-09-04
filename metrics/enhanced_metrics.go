@@ -21,6 +21,7 @@ type EnhancedCacheMetrics interface {
 	RecordTimingProtection(provider, operation string, actualTime, adjustedTime time.Duration, tags metric.Tags)
 	RecordCleanup(provider string, reason CleanupReason, itemCount int, duration time.Duration, tags metric.Tags)
 	RecordMemoryUsage(provider string, totalSize int64, entryCount int64, tags metric.Tags)
+	RecordMemoryPressure(provider string, usageBytes int64, threshold int64, tags metric.Tags)
 	RecordProviderSpecific(provider, metricName string, value float64, tags metric.Tags)
 }
 
@@ -186,6 +187,63 @@ func (e *enhancedCacheMetrics) RecordMemoryUsage(provider string, totalSize int6
 		Tags:        mergedTags,
 	})
 	entryGauge.Set(float64(entryCount))
+}
+
+// RecordMemoryPressure records memory pressure alerts when usage exceeds threshold
+func (e *enhancedCacheMetrics) RecordMemoryPressure(provider string, usageBytes int64, threshold int64, tags metric.Tags) {
+	if tags == nil {
+		tags = make(metric.Tags)
+	}
+	tags["provider"] = provider
+	
+	mergedTags := e.mergeTags(tags)
+	
+	// Calculate pressure percentage
+	pressurePercent := float64(usageBytes) / float64(threshold) * 100.0
+	
+	// Record current memory pressure level
+	pressureGauge := e.registry.Gauge(metric.Options{
+		Name:        "cache_memory_pressure_percent",
+		Description: "Current memory pressure as percentage of threshold",
+		Unit:        "percent",
+		Tags:        mergedTags,
+	})
+	pressureGauge.Set(pressurePercent)
+	
+	// Record memory pressure threshold breach if usage exceeds threshold
+	if usageBytes > threshold {
+		// Record threshold breach counter
+		breachCounter := e.registry.Counter(metric.Options{
+			Name:        "cache_memory_pressure_breaches_total",
+			Description: "Total number of memory pressure threshold breaches",
+			Unit:        "count",
+			Tags:        mergedTags,
+		})
+		breachCounter.Inc()
+		
+		// Determine severity based on how much the threshold is exceeded
+		severity := "warning"
+		if pressurePercent >= 150.0 {
+			severity = "critical"
+		} else if pressurePercent >= 125.0 {
+			severity = "high"
+		}
+		
+		// Record severity-specific counter
+		severityTags := make(metric.Tags)
+		for k, v := range mergedTags {
+			severityTags[k] = v
+		}
+		severityTags["severity"] = severity
+		
+		severityCounter := e.registry.Counter(metric.Options{
+			Name:        "cache_memory_pressure_alerts_total",
+			Description: "Total number of memory pressure alerts by severity",
+			Unit:        "count",
+			Tags:        severityTags,
+		})
+		severityCounter.Inc()
+	}
 }
 
 // RecordProviderSpecific records provider-specific metrics
