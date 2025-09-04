@@ -32,7 +32,7 @@ BenchmarkRedisCache_Delete
 BenchmarkRedisCache_Has
 BenchmarkRedisCache_Clear
 
-2. Concurrency Stress Tests
+2. Concurrency Stress Tests - complete
 
 // High-concurrency scenarios targeting goroutine safety
 BenchmarkRedisCache_Get_Concurrent_10
