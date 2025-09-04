@@ -65,12 +65,12 @@ func setupBenchmarkCache(b *testing.B) interfaces.Cache[benchmarkData] {
 	b.Helper()
 
 	ctx := context.Background()
-	
+
 	// Create a temporary testing.T to satisfy the interface
 	// This is a workaround for the setup function expecting a *testing.T
 	t := &testing.T{}
 	setup := testintegration.SetupTestEnvironment(ctx, t)
-	
+
 	// Cleanup after benchmark
 	b.Cleanup(func() {
 		setup.TestEnv.Close()
@@ -102,7 +102,7 @@ func setupBenchmarkCache(b *testing.B) interfaces.Cache[benchmarkData] {
 func BenchmarkRedisCache_Get_1KB(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData1KB("bench:test:1kb")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -125,7 +125,7 @@ func BenchmarkRedisCache_Get_1KB(b *testing.B) {
 func BenchmarkRedisCache_Get_10KB(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData10KB("bench:test:10kb")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -148,7 +148,7 @@ func BenchmarkRedisCache_Get_10KB(b *testing.B) {
 func BenchmarkRedisCache_Get_100KB(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData100KB("bench:test:100kb")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -255,7 +255,7 @@ func BenchmarkRedisCache_Delete(b *testing.B) {
 func BenchmarkRedisCache_Has(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData1KB("bench:has:test")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -302,7 +302,7 @@ func BenchmarkRedisCache_Clear(b *testing.B) {
 func BenchmarkRedisCache_Get_Concurrent_10(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData1KB("bench:concurrent:get:10")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -326,7 +326,7 @@ func BenchmarkRedisCache_Get_Concurrent_10(b *testing.B) {
 func BenchmarkRedisCache_Get_Concurrent_100(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData1KB("bench:concurrent:get:100")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -350,7 +350,7 @@ func BenchmarkRedisCache_Get_Concurrent_100(b *testing.B) {
 func BenchmarkRedisCache_Get_Concurrent_1000(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData1KB("bench:concurrent:get:1000")
 	err := cache.Set(ctx, testData, 10*time.Minute)
@@ -415,7 +415,7 @@ func BenchmarkRedisCache_Set_Concurrent_100(b *testing.B) {
 func BenchmarkRedisCache_Mixed_Operations_Concurrent(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with initial data
 	for i := range 1000 {
 		testData := generateBenchmarkData1KB(fmt.Sprintf("bench:mixed:initial:%d", i))
@@ -427,7 +427,7 @@ func BenchmarkRedisCache_Mixed_Operations_Concurrent(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			operation := i % 10
-			
+
 			switch {
 			case operation < 7: // 70% reads
 				keyIndex := i % 1000
@@ -435,14 +435,14 @@ func BenchmarkRedisCache_Mixed_Operations_Concurrent(b *testing.B) {
 				if err != nil {
 					b.Errorf("Mixed GET error: %v", err)
 				}
-				
+
 			case operation < 9: // 20% writes
 				testData := generateBenchmarkData1KB(fmt.Sprintf("bench:mixed:write:%d", i))
 				err := cache.Set(ctx, testData, 10*time.Minute)
 				if err != nil {
 					b.Errorf("Mixed SET error: %v", err)
 				}
-				
+
 			default: // 10% deletes
 				keyIndex := i % 1000
 				err := cache.Delete(ctx, fmt.Sprintf("bench:mixed:initial:%d", keyIndex))
@@ -453,7 +453,7 @@ func BenchmarkRedisCache_Mixed_Operations_Concurrent(b *testing.B) {
 				testData := generateBenchmarkData1KB(fmt.Sprintf("bench:mixed:initial:%d", keyIndex))
 				cache.Set(ctx, testData, 10*time.Minute)
 			}
-			
+
 			i++
 		}
 	})
@@ -465,7 +465,7 @@ func BenchmarkRedisCache_Mixed_Operations_Concurrent(b *testing.B) {
 func BenchmarkRedisCache_GetOrSet_CacheMiss(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Loader function that generates new data
 	loader := func(ctx context.Context) (benchmarkData, error) {
 		return generateBenchmarkData1KB("bench:getorset:miss:generated"), nil
@@ -491,14 +491,14 @@ func BenchmarkRedisCache_GetOrSet_CacheMiss(b *testing.B) {
 func BenchmarkRedisCache_GetOrSet_CacheHit(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	testData := generateBenchmarkData1KB("bench:getorset:hit")
 	err := cache.Set(ctx, testData, 10*time.Minute)
 	if err != nil {
 		b.Fatalf("Failed to pre-populate cache: %v", err)
 	}
-	
+
 	// Loader function (should not be called)
 	loader := func(ctx context.Context) (benchmarkData, error) {
 		return generateBenchmarkData1KB("should:not:be:called"), nil
@@ -519,7 +519,7 @@ func BenchmarkRedisCache_GetOrSet_CacheHit(b *testing.B) {
 func BenchmarkRedisCache_GetOrSet_HighContention(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Loader function that simulates work
 	loader := func(ctx context.Context) (benchmarkData, error) {
 		// Simulate some work
@@ -544,7 +544,7 @@ func BenchmarkRedisCache_GetOrSet_HighContention(b *testing.B) {
 func BenchmarkRedisCache_Update_Existing(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with test data
 	for i := 0; i < b.N; i++ {
 		testData := generateBenchmarkData1KB(fmt.Sprintf("bench:update:existing:%d", i))
@@ -553,7 +553,7 @@ func BenchmarkRedisCache_Update_Existing(b *testing.B) {
 			b.Fatalf("Failed to pre-populate cache: %v", err)
 		}
 	}
-	
+
 	// Updater function that modifies existing data
 	updater := func(old benchmarkData, exists bool) (benchmarkData, error) {
 		if !exists {
@@ -581,7 +581,7 @@ func BenchmarkRedisCache_Update_Existing(b *testing.B) {
 func BenchmarkRedisCache_Update_NonExistent(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Updater function that creates new data if key doesn't exist
 	updater := func(old benchmarkData, exists bool) (benchmarkData, error) {
 		if exists {
@@ -610,14 +610,14 @@ func BenchmarkRedisCache_Update_NonExistent(b *testing.B) {
 func BenchmarkRedisCache_Update_HighContention(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
-	
+
 	// Pre-populate cache with initial data
 	initialData := generateBenchmarkData1KB("bench:update:contention")
 	err := cache.Set(ctx, initialData, 10*time.Minute)
 	if err != nil {
 		b.Fatalf("Failed to pre-populate cache: %v", err)
 	}
-	
+
 	// Updater function that increments a counter in the data
 	updater := func(old benchmarkData, exists bool) (benchmarkData, error) {
 		if !exists {
@@ -816,11 +816,11 @@ func setupBenchmarkCacheWithIndexing(b *testing.B) interfaces.Cache[benchmarkDat
 	b.Helper()
 
 	ctx := context.Background()
-	
+
 	// Create a temporary testing.T to satisfy the interface
 	t := &testing.T{}
 	setup := testintegration.SetupTestEnvironment(ctx, t)
-	
+
 	// Cleanup after benchmark
 	b.Cleanup(func() {
 		setup.TestEnv.Close()
@@ -975,4 +975,131 @@ func BenchmarkRedisCache_DeleteByOwner_100Entries(b *testing.B) {
 			b.Errorf("Expected to delete 100 entries, deleted %d", deletedCount)
 		}
 	}
+}
+
+// 6. Serialization Overhead
+
+// setupBenchmarkCacheWithSerializer creates cache with specific serialization format
+func setupBenchmarkCacheWithSerializer(b *testing.B, format string) interfaces.Cache[benchmarkData] {
+	b.Helper()
+
+	ctx := context.Background()
+
+	// Create a temporary testing.T to satisfy the interface
+	t := &testing.T{}
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+
+	// Cleanup after benchmark
+	b.Cleanup(func() {
+		setup.TestEnv.Close()
+	})
+
+	extractor := &cache.IndexExtractor[benchmarkData]{
+		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
+		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
+	}
+
+	cacheInstance, err := cache.NewCache(
+		ctx,
+		setup.RedisClient,
+		false, // no indexing for serialization tests
+		extractor,
+		cache.WithTTL[benchmarkData](10*time.Minute),
+		cache.WithSerializer[benchmarkData](format), // specific serialization format
+	)
+	if err != nil {
+		b.Fatalf("Failed to create cache with %s serialization: %v", format, err)
+	}
+
+	return cacheInstance
+}
+
+// BenchmarkRedisCache_JSON_Serialization tests performance with JSON serialization
+func BenchmarkRedisCache_JSON_Serialization(b *testing.B) {
+	cache := setupBenchmarkCacheWithSerializer(b, "json")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			// Test Set operation with JSON serialization
+			testData := generateBenchmarkData1KB(fmt.Sprintf("bench:json:set:%d", i))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Errorf("JSON Set error: %v", err)
+			}
+
+			// Test Get operation with JSON deserialization
+			_, found, err := cache.Get(ctx, testData.GetID())
+			if err != nil {
+				b.Errorf("JSON Get error: %v", err)
+			}
+			if !found {
+				b.Errorf("Expected to find key after JSON set")
+			}
+
+			i++
+		}
+	})
+}
+
+// BenchmarkRedisCache_Gob_Serialization tests performance with Gob serialization
+func BenchmarkRedisCache_Gob_Serialization(b *testing.B) {
+	cache := setupBenchmarkCacheWithSerializer(b, "gob")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			// Test Set operation with Gob serialization
+			testData := generateBenchmarkData1KB(fmt.Sprintf("bench:gob:set:%d", i))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Errorf("Gob Set error: %v", err)
+			}
+
+			// Test Get operation with Gob deserialization
+			_, found, err := cache.Get(ctx, testData.GetID())
+			if err != nil {
+				b.Errorf("Gob Get error: %v", err)
+			}
+			if !found {
+				b.Errorf("Expected to find key after Gob set")
+			}
+
+			i++
+		}
+	})
+}
+
+// BenchmarkRedisCache_Msgpack_Serialization tests performance with MessagePack serialization
+func BenchmarkRedisCache_Msgpack_Serialization(b *testing.B) {
+	cache := setupBenchmarkCacheWithSerializer(b, "msgpack")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			// Test Set operation with MessagePack serialization
+			testData := generateBenchmarkData1KB(fmt.Sprintf("bench:msgpack:set:%d", i))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Errorf("MessagePack Set error: %v", err)
+			}
+
+			// Test Get operation with MessagePack deserialization
+			_, found, err := cache.Get(ctx, testData.GetID())
+			if err != nil {
+				b.Errorf("MessagePack Get error: %v", err)
+			}
+			if !found {
+				b.Errorf("Expected to find key after MessagePack set")
+			}
+
+			i++
+		}
+	})
 }
