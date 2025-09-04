@@ -8,8 +8,7 @@ import (
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 )
 
-// GetMany retrieves multiple keys in a single operation
-// @TODO Lua script
+// GetMany retrieves multiple keys in a single operation using optimized pipeline
 func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
 	start := time.Now()
 	result := make(map[string]T)
@@ -34,19 +33,13 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	// Use pipeline for efficient batch retrieval
 	pipe := c.client.TxPipeline()
 
-	// Get all data values
+	// Get all data values first
 	dataResults := make([]interface{}, len(keys))
 	for i, dataKey := range dataKeys {
 		dataResults[i] = pipe.Get(ctx, dataKey)
 	}
 
-	// Update metadata for accessed keys (increment access count, update last accessed)
-	for _, metaKey := range metaKeys {
-		pipe.HIncrBy(ctx, metaKey, "access_count", 1)
-		pipe.HSet(ctx, metaKey, "last_accessed", time.Now().Unix())
-	}
-
-	// Execute pipeline
+	// Execute data retrieval pipeline first
 	_, err := pipe.Exec(ctx)
 	if err != nil && err.Error() != "redis: nil" {
 		c.handleError("getmany", err)
@@ -54,9 +47,10 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		return result, fmt.Errorf("Redis GetMany error: %w", err)
 	}
 
-	// Process results
+	// Process results and track which keys had hits
 	hits := 0
 	misses := 0
+	hitMetaKeys := make([]string, 0, len(keys))
 
 	for i, key := range keys {
 		if cmdResult, ok := dataResults[i].(interface {
@@ -75,12 +69,27 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 
 				result[key] = value
 				hits++
+				hitMetaKeys = append(hitMetaKeys, metaKeys[i])
 			} else {
 				misses++
 			}
 		} else {
 			misses++
 		}
+	}
+
+	// Update metadata only for successful retrievals using separate pipeline
+	if len(hitMetaKeys) > 0 {
+		metaPipe := c.client.TxPipeline()
+		now := time.Now().Unix()
+		
+		for _, metaKey := range hitMetaKeys {
+			metaPipe.HIncrBy(ctx, metaKey, "access_count", 1)
+			metaPipe.HSet(ctx, metaKey, "last_accessed", now)
+		}
+		
+		// Execute metadata updates (ignore errors as they're not critical)
+		metaPipe.Exec(ctx)
 	}
 
 	// Record metrics
@@ -97,8 +106,7 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	return result, nil
 }
 
-// @TODO Lua script
-// SetMany stores multiple values with same TTL, using extractors for keys
+// SetMany stores multiple values with same TTL, using extractors for keys with optimized pipeline
 func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Duration) error {
 	start := time.Now()
 
@@ -116,13 +124,22 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 		return fmt.Errorf("IndexExtractor.GetEntryKey is required for SetMany operation")
 	}
 
-	// Use pipeline for efficient batch setting
-	pipe := c.client.TxPipeline()
+	// Pre-serialize all values to catch errors early
+	type setItem struct {
+		key             string
+		serializedValue []byte
+		dataKey         string
+		metaKey         string
+		ownerKey        string
+		indexKey        string
+	}
+
+	items := make([]setItem, 0, len(values))
 	now := time.Now().Unix()
 
-	// Process all values
 	for _, value := range values {
 		key := c.extractor.GetEntryKey(value)
+		
 		// Serialize value
 		serializedValue, err := c.serializer.Serialize(value)
 		if err != nil {
@@ -130,33 +147,51 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
 		}
 
-		dataKey := c.buildDataKey(key)
-		metaKey := c.buildMetaKey(key)
+		item := setItem{
+			key:             key,
+			serializedValue: serializedValue,
+			dataKey:         c.buildDataKey(key),
+			metaKey:         c.buildMetaKey(key),
+		}
 
-		// Set data
+		// Build index keys if configured
+		if c.extractor.GetOwnerKey != nil {
+			item.ownerKey = c.extractor.GetOwnerKey(value)
+			item.indexKey = c.buildIndexKey("owner", item.ownerKey)
+		}
+
+		items = append(items, item)
+	}
+
+	// Use pipeline for efficient batch setting
+	pipe := c.client.TxPipeline()
+
+	// Add all operations to pipeline
+	for _, item := range items {
+		// Set data with TTL
 		if ttl > 0 {
-			pipe.SetEX(ctx, dataKey, serializedValue, ttl)
-			pipe.Expire(ctx, metaKey, ttl)
+			pipe.SetEX(ctx, item.dataKey, item.serializedValue, ttl)
 		} else {
-			pipe.Set(ctx, dataKey, serializedValue, 0)
+			pipe.Set(ctx, item.dataKey, item.serializedValue, 0)
 		}
 
 		// Set metadata
-		pipe.HMSet(ctx, metaKey, map[string]interface{}{
+		pipe.HSet(ctx, item.metaKey, map[string]interface{}{
 			"created_at":    now,
 			"last_accessed": now,
 			"access_count":  1,
 			"ttl":           ttlToMilliseconds(ttl),
-			"size":          len(serializedValue),
+			"size":          len(item.serializedValue),
 		})
+		if ttl > 0 {
+			pipe.Expire(ctx, item.metaKey, ttl)
+		}
 
 		// Update indexes if configured
-		if c.extractor.GetOwnerKey != nil {
-			ownerKey := c.extractor.GetOwnerKey(value)
-			indexKey := c.buildIndexKey("owner", ownerKey)
-			pipe.SAdd(ctx, indexKey, key)
+		if item.ownerKey != "" {
+			pipe.SAdd(ctx, item.indexKey, item.key)
 			if ttl > 0 {
-				pipe.Expire(ctx, indexKey, ttl)
+				pipe.Expire(ctx, item.indexKey, ttl)
 			}
 		}
 	}
@@ -173,8 +208,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	return nil
 }
 
-// @TODO Lua script
-// DeleteMany removes multiple keys
+// DeleteMany removes multiple keys using optimized batched deletion
 func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	start := time.Now()
 
@@ -195,19 +229,20 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		allKeys = append(allKeys, dataKey, metaKey)
 	}
 
-	// Delete in batches to avoid blocking Redis
-	batchSize := 100
-	for i := 0; i < len(allKeys); i += batchSize {
-		end := i + batchSize
-		if end > len(allKeys) {
-			end = len(allKeys)
-		}
-
-		if err := c.client.Del(ctx, allKeys[i:end]...).Err(); err != nil {
-			c.handleError("deletemany", err)
-			c.metrics.RecordError("redis", "deletemany", "redis_error", "infrastructure", c.getMetricTags())
-			return fmt.Errorf("Redis DeleteMany error: %w", err)
-		}
+	// Use pipeline for efficient batch deletion instead of multiple DEL commands
+	pipe := c.client.TxPipeline()
+	
+	// Add all deletions to pipeline
+	for _, key := range allKeys {
+		pipe.Del(ctx, key)
+	}
+	
+	// Execute pipeline
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		c.handleError("deletemany", err)
+		c.metrics.RecordError("redis", "deletemany", "redis_error", "infrastructure", c.getMetricTags())
+		return fmt.Errorf("Redis DeleteMany error: %w", err)
 	}
 
 	c.metrics.RecordBatchOperation("redis", "deletemany", len(keys), time.Since(start), c.getMetricTags())
