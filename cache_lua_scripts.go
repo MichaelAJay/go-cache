@@ -9,10 +9,12 @@ import (
 
 // initLuaScripts initializes Lua scripts for atomic operations using vetted scripts
 func (c *RedisCache[T]) initLuaScripts() {
-	// Get script
+	// Get script with LRU tracking
 	c.getScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
+		local lruTrackerKey = KEYS[3]
+		local entryKey = ARGV[1]
 
 		-- Get the value
 		local value = redis.call('GET', dataKey)
@@ -20,26 +22,33 @@ func (c *RedisCache[T]) initLuaScripts() {
 			return {nil, '0'}  -- not found
 		end
 
-		-- Update metadata atomically
+		-- Update metadata atomically using microsecond precision
 		local now = redis.call('TIME')
-		local ts = now[1]
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
 		redis.call('HINCRBY', metaKey, 'access_count', 1)
 		redis.call('HSET', metaKey, 'last_accessed', ts)
+
+		-- Update LRU tracker with new access time
+		redis.call('ZADD', lruTrackerKey, ts, entryKey)
 
 		return {value, '1'}  -- found
 	`)
 
-	// Unified SET script with conditional indexing
+	// Unified SET script with conditional indexing and LRU eviction
 	c.setScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local indexKey = KEYS[3]
 		local reverseKey = KEYS[4]
+		local lruTrackerKey = KEYS[5]
 		local serializedVal = ARGV[1]
 		local ttlMs = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
 		local ownerKey = ARGV[4]
 		local indexingEnabled = ARGV[5] == "true"
+		local maxEntries = tonumber(ARGV[6])
+		local dataPrefix = ARGV[7]
+		local metaPrefix = ARGV[8]
 
 		-- Set value with millisecond precision using modern SET syntax
 		if ttlMs and ttlMs > 0 then
@@ -48,9 +57,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 			redis.call('SET', dataKey, serializedVal)
 		end
 
-		-- Set metadata
+		-- Set metadata using microsecond precision
 		local now = redis.call('TIME')
-		local ts = now[1]
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
 		redis.call('HSET', metaKey,
 			'created_at', ts,
 			'last_accessed', ts,
@@ -60,6 +69,45 @@ func (c *RedisCache[T]) initLuaScripts() {
 		)
 		if ttlMs and ttlMs > 0 then
 			redis.call('PEXPIRE', metaKey, ttlMs)
+		end
+
+		-- LRU tracking and eviction logic
+		if maxEntries and maxEntries > 0 then
+			-- Update LRU tracker with current timestamp as score
+			redis.call('ZADD', lruTrackerKey, ts, entryKey)
+			
+			-- Check if we need to evict entries
+			local currentCount = redis.call('ZCARD', lruTrackerKey)
+			if currentCount > maxEntries then
+				-- Get oldest entries that need to be evicted
+				local toEvict = currentCount - maxEntries
+				local oldestEntries = redis.call('ZRANGE', lruTrackerKey, 0, toEvict - 1)
+				
+				-- Remove oldest entries from cache and LRU tracker
+				for i = 1, #oldestEntries do
+					local oldEntryKey = oldestEntries[i]
+					local oldDataKey = dataPrefix .. oldEntryKey
+					local oldMetaKey = metaPrefix .. oldEntryKey
+					
+					-- Delete the actual cache data
+					redis.call('DEL', oldDataKey)
+					redis.call('DEL', oldMetaKey)
+					
+					-- Remove from LRU tracker
+					redis.call('ZREM', lruTrackerKey, oldEntryKey)
+					
+					-- If indexing is enabled, clean up reverse index for evicted entry
+					if indexingEnabled then
+						local oldReverseKey = 'cache:reverse:' .. oldEntryKey
+						local oldOwner = redis.call('GET', oldReverseKey)
+						if oldOwner then
+							local oldIndexKey = 'cache:index:owner:' .. oldOwner
+							redis.call('SREM', oldIndexKey, oldEntryKey)
+							redis.call('DEL', oldReverseKey)
+						end
+					end
+				end
+			end
 		end
 
 		-- Early return if indexing is disabled
@@ -111,7 +159,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		-- Acquire lock with millisecond precision
 		local ok = redis.call('SET', lockKey, lockValue, 'PX', lockTimeoutMs, 'NX')
-		if not ok then
+		-- SET with NX returns empty table on success, false on failure
+		if ok == false then
 			-- Someone else is loading; check again
 			existing = redis.call('GET', dataKey)
 			if existing then
@@ -126,7 +175,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 			if redis.call('GET', lockKey) == lockValue then
 				redis.call('DEL', lockKey)
 			end
-			return {nil, '2'}  -- Signal: miss + no data available
+			return {false, '2'}  -- Signal: miss + no data available (use false instead of nil)
 		end
 
 		-- Set value with millisecond precision using modern SET syntax
@@ -169,41 +218,45 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local lockToutMs  = tonumber(ARGV[4])
 
 		local ok = redis.call('SET', lockKey, lockValue, 'PX', lockToutMs, 'NX')
-		if not ok then
+		-- SET with NX returns empty table on success, false on failure
+		if ok == false then
 			return {false, '1'} -- signal retry
 		end
 
 		local oldVal = redis.call('GET', dataKey)
 		local existed = oldVal and '1' or '0'
 
-		-- Set value with millisecond precision using modern SET syntax
-		if ttlMs and ttlMs > 0 then
-			redis.call('SET', dataKey, newVal, 'PX', ttlMs)
-		else
-			redis.call('SET', dataKey, newVal)
+		-- Only set value if newVal is not empty (not the read-only call)
+		if newVal and newVal ~= "" then
+			-- Set value with millisecond precision using modern SET syntax
+			if ttlMs and ttlMs > 0 then
+				redis.call('SET', dataKey, newVal, 'PX', ttlMs)
+			else
+				redis.call('SET', dataKey, newVal)
+			end
+
+			local now = redis.call('TIME')
+			local ts  = now[1]
+			local acc = redis.call('HGET', metaKey, 'access_count') or '0'
+			acc = tostring((tonumber(acc) or 0) + 1)
+
+			redis.call('HSET', metaKey,
+				'last_accessed', ts,
+				'access_count', acc,
+				'ttl', tostring(ttlMs or 0),
+				'size', tostring(string.len(newVal))
+			)
+			if ttlMs and ttlMs > 0 then
+				redis.call('PEXPIRE', metaKey, ttlMs)
+			end
 		end
 
-		local now = redis.call('TIME')
-		local ts  = now[1]
-		local acc = redis.call('HGET', metaKey, 'access_count') or '0'
-		acc = tostring((tonumber(acc) or 0) + 1)
-
-		redis.call('HSET', metaKey,
-			'last_accessed', ts,
-			'access_count', acc,
-			'ttl', tostring(ttlMs or 0),
-			'size', tostring(string.len(newVal))
-		)
-		if ttlMs and ttlMs > 0 then
-			redis.call('PEXPIRE', metaKey, ttlMs)
-		end
-
-		-- Release only if we still own it
+		-- Always release lock if we still own it
 		if redis.call('GET', lockKey) == lockValue then
 			redis.call('DEL', lockKey)
 		end
 
-		return {oldVal, existed, newVal}
+		return {oldVal or false, existed, newVal}
 	`)
 
 	// @TODO change name from sessIdxPref
@@ -230,11 +283,12 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 	// @TODO think about a rename. Also think about whether there needs to be any manipulation of index values
 	// e.g. reverseKey -> does it GET the OwnerKey, or the OwnerKey less the prefix. One requires some string manipulation, the other requires more data stored
-	// Delete with index cleanup script
+	// Delete with index cleanup and LRU tracking script
 	c.deleteByEntryScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local reverseKey = KEYS[3]
+		local lruTrackerKey = KEYS[4]
 		local entryKey = ARGV[1]
 		local indexPrefix = ARGV[2]
 
@@ -253,6 +307,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 		removed = removed + redis.call('DEL', dataKey)
 		removed = removed + redis.call('DEL', metaKey)
 		removed = removed + redis.call('DEL', reverseKey)
+
+		-- Remove from LRU tracker
+		redis.call('ZREM', lruTrackerKey, entryKey)
 
 		return removed
 	`)
@@ -464,6 +521,24 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return 1  -- SET succeeded
 	`)
 
+	// GetMany metadata update script for atomic metadata updates after batch retrieval
+	c.getManyMetadataUpdateScript = redis.NewScript(`
+		local metaKeys = KEYS
+		if #metaKeys == 0 then
+			return 0
+		end
+		
+		local now = redis.call('TIME')
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
+		
+		for i = 1, #metaKeys do
+			redis.call('HINCRBY', metaKeys[i], 'access_count', 1)
+			redis.call('HSET', metaKeys[i], 'last_accessed', ts)
+		end
+		
+		return #metaKeys
+	`)
+
 	if c.options.WarmLuaScripts {
 		c.warmLuaScripts(context.Background())
 	}
@@ -475,6 +550,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
+		c.getManyMetadataUpdateScript,
 	}
 
 	for _, script := range scripts {

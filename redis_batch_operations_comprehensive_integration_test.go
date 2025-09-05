@@ -418,8 +418,8 @@ func TestSetMany_WithTTL(t *testing.T) {
 		{ID: "ttl-test2", UserID: "user2", Username: "user2", Created: time.Now()},
 	}
 
-	// Set with 100ms TTL
-	err = cache.SetMany(ctx, sessions, 100*time.Millisecond)
+	// Set with 1s TTL (SetEX minimum precision)
+	err = cache.SetMany(ctx, sessions, 1*time.Second)
 	require.NoError(t, err)
 
 	// Verify sessions exist immediately
@@ -430,7 +430,7 @@ func TestSetMany_WithTTL(t *testing.T) {
 	}
 
 	// Wait for TTL expiration
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 
 	// Verify sessions have expired
 	for _, session := range sessions {

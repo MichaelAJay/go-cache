@@ -65,8 +65,8 @@ func setupBenchmarkCache(b *testing.B) interfaces.Cache[benchmarkData] {
 
 	ctx := context.Background()
 
-	// Create a temporary testing.T to satisfy the interface
-	// This is a workaround for the setup function expecting a *testing.T
+	// Create individual test environment for each benchmark
+	// In compose mode, this will connect to shared services but reset state
 	t := &testing.T{}
 	setup := testintegration.SetupTestEnvironment(ctx, t)
 

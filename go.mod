@@ -3,7 +3,6 @@ module github.com/MichaelAJay/go-cache
 go 1.23.3
 
 require (
-	github.com/MichaelAJay/go-logger v0.1.0
 	github.com/MichaelAJay/go-metrics v0.1.0
 	github.com/MichaelAJay/go-serializer v0.1.0
 	github.com/go-redis/redis/v8 v8.11.5
@@ -11,6 +10,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.38.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.38.0
+	golang.org/x/sync v0.15.0
 )
 
 require (

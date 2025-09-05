@@ -22,6 +22,7 @@ simple
 *.json
 # Benchmark results directory (uncomment if you want to track results in git)
 # benchmarks/
+benchmarks/*.txt
 *.yaml
 *.yml
 *.toml

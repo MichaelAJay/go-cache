@@ -75,14 +75,15 @@ Test performance under realistic network conditions using containers mode with T
 - **Satellite/Poor network**: 500ms+ latency
 
 **How It Works:**
-- Uses **containers mode** for complete isolation and reliability
-- Fresh Docker containers are created for each benchmark run
-- Redis and Toxiproxy containers communicate via dedicated Docker network
-- Automatic cleanup after each benchmark completes
+- Uses **compose mode** for fast, reliable latency benchmarking
+- Persistent Docker Compose services (Redis + Toxiproxy) shared across benchmarks
+- Automatic state cleanup between benchmarks (Redis flush + toxiproxy reset)
+- No container recreation overhead - services stay running throughout benchmark session
 
 **Prerequisites for Latency Testing:**
-- Docker must be installed and running
-- **No external services needed** - containers are managed automatically
+- Docker and Docker Compose must be installed
+- Services started automatically or manually with `docker compose up -d`
+- Automatic toxiproxy conflict resolution and state management
 
 ### Comparing Results
 
@@ -176,26 +177,26 @@ Network latency typically affects operations differently:
 ## Troubleshooting
 
 **Benchmarks show `0` runs or `NaN` ns/op:**
-- **Fixed in containers mode** - fresh containers eliminate state issues
-- Verify integration tag is working: `go test -tags=integration -list "BenchmarkRedisCache_Get_1KB"`
-- Check Docker is running and accessible: `docker info`
+- **Fixed in compose mode** - automatic state cleanup eliminates conflicts
+- Verify integration tag is working: `go test -tags=integration -list "BenchmarkRedisCache_Get_1KB"`  
+- Check Docker services: `docker compose ps` (should show Redis + Toxiproxy as Up)
 
 **Latency benchmarks failing:**
-- **Containers mode provides isolation** - each run starts fresh
-- Check Docker is running: `docker ps`
-- Verify testcontainers can access Docker: `docker info`
-- If containers fail to start, check Docker resource limits
+- **Compose mode handles state automatically** - toxiproxy conflicts resolved
+- Check services are running: `docker compose ps`
+- Restart services if needed: `docker compose restart`
+- Verify toxiproxy is accessible: `curl http://localhost:8474/version`
 
-**Container startup issues:**
-- Ensure sufficient Docker resources (memory/disk)
-- Check for conflicting containers: `docker ps -a`
-- Try cleaning Docker system: `docker system prune`
+**Service startup issues:**
+- Start services manually: `docker compose up -d`
+- Check service health: `docker compose logs redis toxiproxy`
+- Reset if needed: `docker compose down && docker compose up -d`
 
 **Benchmarks take very long or hang:**
-- **Expected**: Container startup adds ~15-30s per benchmark category
+- **Large datasets with latency**: 1000-key operations can take 60+ seconds with network latency
 - Reduce `BENCHTIME` for faster testing: `BENCHTIME=100ms`
 - Use specific categories instead of `all`: `./scripts/run_benchmarks.sh test.txt core`
-- Monitor container startup progress in benchmark output logs
+- Skip large benchmarks for quick testing (focus on 1KB, 10KB operations)
 
 ## Quick Diagnostic Commands
 

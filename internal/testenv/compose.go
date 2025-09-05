@@ -19,6 +19,9 @@ func newComposeEnvironment(ctx context.Context) (*TestEnvironment, error) {
 			return nil, err
 		}
 		
+		// Clean up any existing proxies/toxics first
+		_ = toxiController.Cleanup(ctx) // Ignore errors if no proxies exist
+		
 		// Initialize proxies for cache testing
 		if err := toxiController.SetupCacheProxies(ctx); err != nil {
 			return nil, err

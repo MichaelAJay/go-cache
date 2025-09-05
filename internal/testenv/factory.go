@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+	
+	"github.com/go-redis/redis/v8"
 )
 
 // TestMode represents different test environment modes
@@ -106,4 +108,28 @@ func (te *TestEnvironment) GetToxiproxyController() *ToxiproxyController {
 // HasToxiproxy returns true if this environment has toxiproxy available
 func (te *TestEnvironment) HasToxiproxy() bool {
 	return te.ToxiproxyController != nil
+}
+
+// ResetForNewBenchmark clears Redis state and reconfigures toxiproxy for a new benchmark
+func (te *TestEnvironment) ResetForNewBenchmark(ctx context.Context, latencyMs int) error {
+	// First, get a Redis client to flush the database
+	// Note: This is a simple approach - in production you might want to inject the client
+	client := redis.NewClient(&redis.Options{
+		Addr: te.GetRedisAddr(),
+	})
+	defer client.Close()
+	
+	// Clear all Redis data for clean state
+	if err := client.FlushAll(ctx).Err(); err != nil {
+		return fmt.Errorf("failed to flush Redis: %w", err)
+	}
+	
+	// Reset toxiproxy latency if toxiproxy is available
+	if te.HasToxiproxy() && latencyMs > 0 {
+		if err := te.ToxiproxyController.ResetLatency(ctx, "redis_proxy", latencyMs); err != nil {
+			return fmt.Errorf("failed to reset toxiproxy latency: %w", err)
+		}
+	}
+	
+	return nil
 }
