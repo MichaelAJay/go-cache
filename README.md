@@ -42,11 +42,14 @@ func main() {
         Addr: "localhost:6379",
     })
     
-    // Configure cache
-    opts := config.NewCacheOptions(rdb)
+    // Define key extractor
+    extractor := &cache.IndexExtractor[User]{
+        GetEntryKey: func(u User) string { return u.ID },
+        GetOwnerKey: func(u User) string { return u.ID }, // Same as entry for simple caching
+    }
     
-    // Create cache instance
-    userCache, err := cache.NewRedisCache[User](opts)
+    // Create cache instance (indexing disabled for simple use case)
+    userCache, err := cache.NewCache[User](ctx, rdb, false, extractor)
     if err != nil {
         panic(err)
     }
@@ -82,10 +85,12 @@ extractor := &cache.IndexExtractor[Session]{
     GetOwnerKey: func(s Session) string { return s.UserID },
 }
 
-// Create cache with indexing
-sessionCache, err := cache.NewRedisCache[Session](
-    opts,
-    cache.WithIndexExtractor(extractor),
+// Create cache with indexing enabled
+sessionCache, err := cache.NewCache[Session](
+    ctx,
+    rdb, // Redis client
+    true, // Enable indexing
+    extractor,
     cache.WithRedisOptions(&cache.RedisOptions{
         DataPrefix:  "sessions:data:",
         IndexPrefix: "sessions:index:",
@@ -149,11 +154,16 @@ if currentRequests > 100 {
 ## Configuration Options
 
 ```go
-opts := config.NewCacheOptions(redisClient).
-    WithTTL(time.Hour).
-    WithSerializer("msgpack"). // json, gob, msgpack
-    WithMetrics(customMetrics).
-    WithHooks(&config.CacheHooks{
+// Using functional options with constructor
+cache, err := cache.NewCache[User](
+    ctx,
+    redisClient,
+    false, // indexing mode
+    extractor,
+    cache.WithTTL(time.Hour),
+    cache.WithSerializer("msgpack"), // json, gob, msgpack
+    cache.WithMetrics(customMetrics),
+    cache.WithHooks(&config.CacheHooks{
         PreSet: func(ctx context.Context, key string, value any) error {
             // Custom validation
             return nil
@@ -161,7 +171,8 @@ opts := config.NewCacheOptions(redisClient).
         PostGet: func(ctx context.Context, key string, found bool, err error) {
             // Custom logging
         },
-    })
+    }),
+)
 ```
 
 ## Testing
@@ -215,6 +226,115 @@ All operations are designed to be goroutine-safe without external locking:
 - **MessagePack**: Default, compact binary format
 - **JSON**: Human-readable, cross-language
 - **Gob**: Go-native, fastest for Go-to-Go
+
+## Public Interface
+
+### Core Interface
+
+The cache implements the `Cache[T any]` interface with full generic type safety:
+
+```go
+type Cache[T any] interface {
+    // Basic operations
+    Set(ctx context.Context, value T, ttl time.Duration) error
+    Get(ctx context.Context, key string) (value T, found bool, err error)
+    Delete(ctx context.Context, key string) error
+    Clear(ctx context.Context) error
+    Has(ctx context.Context, key string) bool
+
+    // Owner-based operations (requires indexing)
+    GetByOwner(ctx context.Context, ownerKey string) ([]T, error)
+    DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error)
+
+    // Atomic operations
+    GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error)
+    Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error)
+
+    // Batch operations
+    GetMany(ctx context.Context, keys []string) (map[string]T, error)
+    SetMany(ctx context.Context, values []T, ttl time.Duration) error
+    DeleteMany(ctx context.Context, keys []string) error
+
+    // Conditional operations
+    SetIfNotExists(ctx context.Context, value T, ttl time.Duration) (wasSet bool, err error)
+    SetIfExists(ctx context.Context, value T, ttl time.Duration) (wasSet bool, err error)
+
+    // Pattern operations
+    GetKeysByPattern(ctx context.Context, pattern string) ([]string, error)
+
+    // Counter operations
+    Increment(ctx context.Context, key string, delta int64) (int64, error)
+    Decrement(ctx context.Context, key string, delta int64) (int64, error)
+    IncrementFloat(ctx context.Context, key string, delta float64) (float64, error)
+
+    // Metadata operations
+    GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
+
+    // Lifecycle management
+    Close() error
+}
+```
+
+### Constructor and Configuration
+
+```go
+// Create cache instance
+func NewCache[T any](
+    ctx context.Context, 
+    client redis.Cmdable, 
+    indexingMode bool, 
+    extractor *IndexExtractor[T], 
+    opts ...Option[T]
+) (Cache[T], error)
+
+// Index extractor for key extraction
+type IndexExtractor[T any] struct {
+    GetEntryKey func(T) string // Required: primary cache key
+    GetOwnerKey func(T) string // Required for indexing: grouping key
+}
+
+// Configuration options (functional options pattern)
+func WithRedisOptions[T any](redisOpts *RedisOptions) Option[T]
+func WithTTL[T any](ttl time.Duration) Option[T]
+func WithMetrics[T any](metrics metrics.EnhancedCacheMetrics) Option[T]
+func WithHooks[T any](hooks *config.CacheHooks) Option[T]
+func WithSerializer[T any](format string) Option[T] // "json", "gob", "msgpack"
+func WithMaxEntries[T any](max int) Option[T]
+func WithCleanupInterval[T any](interval time.Duration) Option[T]
+func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T]
+func WithVersion[T any](version string) Option[T]
+func WithWarmLuaScripts[T any](warmScripts bool) Option[T]
+
+// Redis-specific options
+type RedisOptions struct {
+    DataPrefix  string // Prefix for data keys
+    IndexPrefix string // Prefix for index keys  
+    MetaPrefix  string // Prefix for metadata keys
+    LockPrefix  string // Prefix for lock keys
+    Version     string // Optional version suffix
+}
+```
+
+### Configuration Builder (Chainable)
+
+```go
+// Create base configuration
+opts := config.NewCacheOptions(redisClient)
+
+// Chain configuration methods
+opts = opts.
+    WithTTL(time.Hour).
+    WithSerializer("msgpack").
+    WithMetrics(customMetrics).
+    WithHooks(&config.CacheHooks{
+        PreSet: func(ctx context.Context, key string, value any) error {
+            return nil // Custom validation
+        },
+        PostGet: func(ctx context.Context, key string, found bool, err error) {
+            // Custom logging
+        },
+    })
+```
 
 ## Requirements
 
