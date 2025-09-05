@@ -2,10 +2,7 @@ package cache_test
 
 import (
 	"context"
-	"os"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -62,50 +59,21 @@ func generateBenchmarkData100KB(id string) benchmarkData {
 	}
 }
 
-// Global benchmark environment for container reuse
-var (
-	globalBenchmarkEnv   *testintegration.TestEnvironmentSetup
-	globalBenchmarkMutex sync.Mutex
-)
-
-// getSharedBenchmarkEnvironment returns a shared test environment for all benchmarks
-func getSharedBenchmarkEnvironment(b *testing.B) *testintegration.TestEnvironmentSetup {
-	globalBenchmarkMutex.Lock()
-	defer globalBenchmarkMutex.Unlock()
-	
-	if globalBenchmarkEnv == nil {
-		ctx := context.Background()
-		t := &testing.T{}
-		globalBenchmarkEnv = testintegration.SetupTestEnvironment(ctx, t)
-		
-		// Setup cleanup to run when all benchmarks are done
-		// Note: This is a simplification - in a real implementation you might want
-		// more sophisticated lifecycle management
-		b.Cleanup(func() {
-			if globalBenchmarkEnv != nil {
-				globalBenchmarkEnv.TestEnv.Close()
-				globalBenchmarkEnv = nil
-			}
-		})
-	}
-	
-	return globalBenchmarkEnv
-}
-
-// Setup helper for benchmarks with shared containers
+// Setup helper for benchmarks
 func setupBenchmarkCache(b *testing.B) interfaces.Cache[benchmarkData] {
 	b.Helper()
 
 	ctx := context.Background()
-	
-	// Get shared environment (creates containers once)
-	setup := getSharedBenchmarkEnvironment(b)
-	
-	// Reset environment for clean state
-	latencyMs := getLatencyFromEnv()
-	if err := setup.TestEnv.ResetForNewBenchmark(ctx, latencyMs); err != nil {
-		b.Fatalf("Failed to reset benchmark environment: %v", err)
-	}
+
+	// Create individual test environment for each benchmark
+	// In compose mode, this will connect to shared services but reset state
+	t := &testing.T{}
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+
+	// Cleanup after benchmark
+	b.Cleanup(func() {
+		setup.TestEnv.Close()
+	})
 
 	extractor := &cache.IndexExtractor[benchmarkData]{
 		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
@@ -125,16 +93,6 @@ func setupBenchmarkCache(b *testing.B) interfaces.Cache[benchmarkData] {
 	}
 
 	return cacheInstance
-}
-
-// getLatencyFromEnv extracts latency setting from environment variables
-func getLatencyFromEnv() int {
-	if latencyStr := os.Getenv("GOCACHE_TEST_REDIS_LATENCY_MS"); latencyStr != "" {
-		if latency, err := strconv.Atoi(latencyStr); err == nil {
-			return latency
-		}
-	}
-	return 0
 }
 
 // 1. Basic Operation Benchmarks
