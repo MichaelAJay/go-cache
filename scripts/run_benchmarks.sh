@@ -2,6 +2,13 @@
 
 # Benchmark runner script for go-cache
 # Usage: ./scripts/run_benchmarks.sh [output-file] [category]
+# 
+# Requires Docker services to be running (integration tests)
+# Environment variables:
+#   BENCHTIME=1s      - Duration per benchmark (default: 3s)
+#   COUNT=5           - Number of runs per benchmark (default: 5) 
+#   LATENCY_MODE=enabled - Enable network latency simulation
+#   LATENCY_MS=100    - Latency in milliseconds
 
 set -e
 
@@ -35,46 +42,46 @@ run_category_benchmarks() {
     case $category in
         "core")
             if [ -n "$test_env" ]; then
-                env $test_env go test -bench="BenchmarkRedisCache_(Get|Set|Delete|Has|Clear|GetOrSet|Update|SetIf)" \
-                    -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
+                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(Get|Set|Delete|Has|Clear|GetOrSet|Update|SetIf)" \
+                    -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem -v >> "$output_file" 2>&1
             else
-                go test -bench="BenchmarkRedisCache_(Get|Set|Delete|Has|Clear|GetOrSet|Update|SetIf)" \
-                    -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
+                go test -tags=integration -bench="BenchmarkRedisCache_(Get|Set|Delete|Has|Clear|GetOrSet|Update|SetIf)" \
+                    -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem -v >> "$output_file" 2>&1
             fi
             ;;
         "batch")
             if [ -n "$test_env" ]; then
-                env $test_env go test -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
+                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             else
-                go test -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
+                go test -tags=integration -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             fi
             ;;
         "features")
             if [ -n "$test_env" ]; then
-                env $test_env go test -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
+                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             else
-                go test -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
+                go test -tags=integration -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             fi
             ;;
         "system")
             if [ -n "$test_env" ]; then
-                env $test_env go test -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
+                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             else
-                go test -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
+                go test -tags=integration -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             fi
             ;;
         "all")
             if [ -n "$test_env" ]; then
-                env $test_env go test -bench="BenchmarkRedisCache_" \
+                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             else
-                go test -bench="BenchmarkRedisCache_" \
+                go test -tags=integration -bench="BenchmarkRedisCache_" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file"
             fi
             ;;

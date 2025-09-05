@@ -35,6 +35,8 @@ Run all benchmarks:
 ./scripts/run_benchmarks.sh
 ```
 
+> **Note**: Benchmarks require the `integration` build tag and depend on Redis/Docker infrastructure.
+
 Run specific category:
 ```bash
 ./scripts/run_benchmarks.sh results_core.txt core
@@ -76,6 +78,11 @@ LATENCY_MODE=enabled ./scripts/run_benchmarks.sh latency_results.txt core
 - **Cross-country**: 50-100ms latency
 - **International**: 100-300ms latency
 - **Satellite/Poor network**: 500ms+ latency
+
+**Prerequisites for Latency Testing:**
+- Docker and Docker Compose must be installed
+- Services started with `make docker-up` or `docker compose up -d`
+- Toxiproxy may show "409 conflict" errors if already configured (this is normal)
 
 ### Comparing Results
 
@@ -128,6 +135,8 @@ Network latency typically affects operations differently:
 5. **Focus on important metrics**: Core operations and your specific use case
 6. **Test realistic conditions**: Use latency testing to simulate production network conditions
 7. **Consider operation patterns**: Batch operations become critical under high latency
+8. **Integration setup**: Benchmarks require Redis infrastructure - ensure Docker services are running
+9. **Benchmark duration**: Use longer `BENCHTIME` (1s+) for stable results, shorter (100ms) for quick tests
 
 ## Benchmark Categories Explained
 
@@ -149,5 +158,22 @@ Network latency typically affects operations differently:
 - **`run_benchmarks.sh`**: Main benchmark runner with category filtering
 - **`run_latency_benchmarks.sh`**: Automated latency testing with Toxiproxy
 - **`compare_benchmarks.sh`**: Statistical comparison using benchstat
+
+## Troubleshooting
+
+**Benchmarks show `0` runs or `NaN` ns/op:**
+- Ensure Docker services are running: `docker compose ps`
+- Check that Redis is healthy: `docker compose logs redis`
+- Verify integration tag is working: `go test -tags=integration -list "BenchmarkRedisCache_Get_1KB"`
+
+**"409 conflict" errors with Toxiproxy:**
+- This is normal - means proxy is already configured
+- Script will continue and work correctly
+- To reset: `docker compose restart toxiproxy`
+
+**Benchmarks take very long or hang:**
+- Check Docker container health: `docker compose ps`
+- Reduce `BENCHTIME` for faster testing: `BENCHTIME=100ms`
+- Use specific categories instead of `all`: `./scripts/run_benchmarks.sh test.txt core`
 
 > **Note**: Benchmark files are gitignored by default. Uncomment the `# benchmarks/` line in `.gitignore` if you want to track benchmark history in git.
