@@ -49,16 +49,28 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 		Key: key,
 	}
 
-	// Parse timestamps
+	// Parse timestamps (handle both second and microsecond precision)
 	if createdAtStr, ok := metadataFields["created_at"]; ok {
 		if createdAtUnix, err := strconv.ParseInt(createdAtStr, 10, 64); err == nil {
-			metadata.CreatedAt = time.Unix(createdAtUnix, 0)
+			if createdAtUnix > 1e12 { // Microsecond timestamp (> year 2001 in microseconds)
+				seconds := createdAtUnix / 1000000
+				nanoseconds := (createdAtUnix % 1000000) * 1000
+				metadata.CreatedAt = time.Unix(seconds, nanoseconds)
+			} else { // Second timestamp
+				metadata.CreatedAt = time.Unix(createdAtUnix, 0)
+			}
 		}
 	}
 
 	if lastAccessedStr, ok := metadataFields["last_accessed"]; ok {
 		if lastAccessedUnix, err := strconv.ParseInt(lastAccessedStr, 10, 64); err == nil {
-			metadata.LastAccessed = time.Unix(lastAccessedUnix, 0)
+			if lastAccessedUnix > 1e12 { // Microsecond timestamp (> year 2001 in microseconds)
+				seconds := lastAccessedUnix / 1000000
+				nanoseconds := (lastAccessedUnix % 1000000) * 1000
+				metadata.LastAccessed = time.Unix(seconds, nanoseconds)
+			} else { // Second timestamp
+				metadata.LastAccessed = time.Unix(lastAccessedUnix, 0)
+			}
 		}
 	}
 

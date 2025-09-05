@@ -20,9 +20,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 			return {nil, '0'}  -- not found
 		end
 
-		-- Update metadata atomically
+		-- Update metadata atomically using microsecond precision
 		local now = redis.call('TIME')
-		local ts = now[1]
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
 		redis.call('HINCRBY', metaKey, 'access_count', 1)
 		redis.call('HSET', metaKey, 'last_accessed', ts)
 
@@ -48,9 +48,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 			redis.call('SET', dataKey, serializedVal)
 		end
 
-		-- Set metadata
+		-- Set metadata using microsecond precision
 		local now = redis.call('TIME')
-		local ts = now[1]
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
 		redis.call('HSET', metaKey,
 			'created_at', ts,
 			'last_accessed', ts,
@@ -464,6 +464,24 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return 1  -- SET succeeded
 	`)
 
+	// GetMany metadata update script for atomic metadata updates after batch retrieval
+	c.getManyMetadataUpdateScript = redis.NewScript(`
+		local metaKeys = KEYS
+		if #metaKeys == 0 then
+			return 0
+		end
+		
+		local now = redis.call('TIME')
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
+		
+		for i = 1, #metaKeys do
+			redis.call('HINCRBY', metaKeys[i], 'access_count', 1)
+			redis.call('HSET', metaKeys[i], 'last_accessed', ts)
+		end
+		
+		return #metaKeys
+	`)
+
 	if c.options.WarmLuaScripts {
 		c.warmLuaScripts(context.Background())
 	}
@@ -475,6 +493,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
+		c.getManyMetadataUpdateScript,
 	}
 
 	for _, script := range scripts {

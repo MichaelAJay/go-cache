@@ -60,10 +60,8 @@ func CreateTestSessionCache(ctx context.Context, client redis.Cmdable, config *C
 	opts := []cache.Option[*TestSession]{
 		cache.WithTTL[*TestSession](config.TTL),
 		cache.WithSerializer[*TestSession](config.SerializerFormat),
+		cache.WithWarmLuaScripts[*TestSession](config.WarmLuaScripts),
 	}
-
-	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
-	// We don't need to explicitly set it via options for now
 
 	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, opts...)
 }

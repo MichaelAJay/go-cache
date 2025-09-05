@@ -77,18 +77,13 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		}
 	}
 
-	// Update metadata for successful retrievals in separate pipeline
+	// Update metadata for successful retrievals using Lua script for atomicity
 	if len(hitMetaKeys) > 0 {
-		metaPipe := c.client.TxPipeline()
-		now := time.Now().Unix()
-
-		for _, metaKey := range hitMetaKeys {
-			metaPipe.HIncrBy(ctx, metaKey, "access_count", 1)
-			metaPipe.HSet(ctx, metaKey, "last_accessed", now)
+		_, err := c.getManyMetadataUpdateScript.Run(ctx, c.client, hitMetaKeys).Result()
+		if err != nil {
+			// Log error but don't fail the operation since metadata updates are supplementary
+			c.handleError("getmany_metadata", err)
 		}
-
-		// Execute metadata updates (ignore errors as they're not critical)
-		metaPipe.Exec(ctx)
 	}
 
 	// Record metrics
