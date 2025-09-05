@@ -20,7 +20,8 @@ simple
 
 *.html
 *.json
-*.txt
+# Benchmark results directory (uncomment if you want to track results in git)
+# benchmarks/
 *.yaml
 *.yml
 *.toml
