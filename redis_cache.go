@@ -289,9 +289,10 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
+	lruTrackerKey := c.buildLRUTrackerKey()
 
-	// Use Lua script for atomic get and metadata update
-	result, err := c.getScript.Run(ctx, c.client, []string{dataKey, metaKey}).Result()
+	// Use Lua script for atomic get and metadata update with LRU tracking
+	result, err := c.getScript.Run(ctx, c.client, []string{dataKey, metaKey, lruTrackerKey}, key).Result()
 	if err != nil {
 		c.handleError("get", err)
 		c.metrics.RecordError("redis", "get", "redis_error", "infrastructure", c.getMetricTags())
@@ -381,9 +382,14 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 		reverseKey = ""
 	}
 
+	// LRU tracking parameters
+	lruTrackerKey := c.buildLRUTrackerKey()
+	dataPrefix := c.buildDataKey("")
+	metaPrefix := c.buildMetaKey("")
+	
 	result, err := c.setScript.Run(ctx, c.client,
-		[]string{dataKey, metaKey, indexKey, reverseKey},
-		string(serializedValue), ttlInMilliseconds, key, ownerKey, fmt.Sprintf("%t", c.indexingMode)).Result()
+		[]string{dataKey, metaKey, indexKey, reverseKey, lruTrackerKey},
+		string(serializedValue), ttlInMilliseconds, key, ownerKey, fmt.Sprintf("%t", c.indexingMode), c.options.MaxEntries, dataPrefix, metaPrefix).Result()
 
 	if err != nil {
 		c.handleError("set", err)
@@ -413,7 +419,6 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 	metaKey := c.buildMetaKey(key)
 
 	var deleted int64
-	var err error
 
 	if c.indexingMode {
 		// Use atomic script to clean up indexes
@@ -423,8 +428,9 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 			indexPrefix = c.redisOptions.IndexPrefix
 		}
 
+		lruTrackerKey := c.buildLRUTrackerKey()
 		result, scriptErr := c.deleteByEntryScript.Run(ctx, c.client,
-			[]string{dataKey, metaKey, reverseKey},
+			[]string{dataKey, metaKey, reverseKey, lruTrackerKey},
 			key, indexPrefix).Result()
 
 		if scriptErr != nil {
@@ -434,13 +440,18 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		}
 		deleted = result.(int64)
 	} else {
-		// Simple delete without index cleanup
-		deleted, err = c.client.Del(ctx, dataKey, metaKey).Result()
+		// Simple delete without index cleanup but with LRU tracker cleanup
+		lruTrackerKey := c.buildLRUTrackerKey()
+		pipe := c.client.TxPipeline()
+		pipe.Del(ctx, dataKey, metaKey)
+		pipe.ZRem(ctx, lruTrackerKey, key)
+		results, err := pipe.Exec(ctx)
 		if err != nil {
 			c.handleError("delete", err)
 			c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
 			return fmt.Errorf("redis delete error: %w", err)
 		}
+		deleted = results[0].(*redis.IntCmd).Val()
 	}
 
 	c.metrics.RecordOperation("redis", "delete", "success", time.Since(start), c.getMetricTags())
@@ -765,6 +776,19 @@ func (c *RedisCache[T]) buildLockKey(key string) string {
 		return c.redisOptions.LockPrefix + finalKey
 	}
 	return "cache:lock:" + finalKey
+}
+
+// buildLRUTrackerKey constructs the Redis key for LRU tracking sorted set
+func (c *RedisCache[T]) buildLRUTrackerKey() string {
+	prefix := "cache:lru:tracker"
+	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
+		// Use data prefix to ensure LRU tracker is scoped to the same cache instance
+		prefix = c.redisOptions.DataPrefix + "lru:tracker"
+	}
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
+		prefix = prefix + ":" + c.redisOptions.Version
+	}
+	return prefix
 }
 
 // getMetricTags returns metric tags for this cache instance

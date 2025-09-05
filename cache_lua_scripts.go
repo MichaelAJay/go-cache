@@ -9,10 +9,12 @@ import (
 
 // initLuaScripts initializes Lua scripts for atomic operations using vetted scripts
 func (c *RedisCache[T]) initLuaScripts() {
-	// Get script
+	// Get script with LRU tracking
 	c.getScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
+		local lruTrackerKey = KEYS[3]
+		local entryKey = ARGV[1]
 
 		-- Get the value
 		local value = redis.call('GET', dataKey)
@@ -26,20 +28,27 @@ func (c *RedisCache[T]) initLuaScripts() {
 		redis.call('HINCRBY', metaKey, 'access_count', 1)
 		redis.call('HSET', metaKey, 'last_accessed', ts)
 
+		-- Update LRU tracker with new access time
+		redis.call('ZADD', lruTrackerKey, ts, entryKey)
+
 		return {value, '1'}  -- found
 	`)
 
-	// Unified SET script with conditional indexing
+	// Unified SET script with conditional indexing and LRU eviction
 	c.setScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local indexKey = KEYS[3]
 		local reverseKey = KEYS[4]
+		local lruTrackerKey = KEYS[5]
 		local serializedVal = ARGV[1]
 		local ttlMs = tonumber(ARGV[2])
 		local entryKey = ARGV[3]
 		local ownerKey = ARGV[4]
 		local indexingEnabled = ARGV[5] == "true"
+		local maxEntries = tonumber(ARGV[6])
+		local dataPrefix = ARGV[7]
+		local metaPrefix = ARGV[8]
 
 		-- Set value with millisecond precision using modern SET syntax
 		if ttlMs and ttlMs > 0 then
@@ -60,6 +69,45 @@ func (c *RedisCache[T]) initLuaScripts() {
 		)
 		if ttlMs and ttlMs > 0 then
 			redis.call('PEXPIRE', metaKey, ttlMs)
+		end
+
+		-- LRU tracking and eviction logic
+		if maxEntries and maxEntries > 0 then
+			-- Update LRU tracker with current timestamp as score
+			redis.call('ZADD', lruTrackerKey, ts, entryKey)
+			
+			-- Check if we need to evict entries
+			local currentCount = redis.call('ZCARD', lruTrackerKey)
+			if currentCount > maxEntries then
+				-- Get oldest entries that need to be evicted
+				local toEvict = currentCount - maxEntries
+				local oldestEntries = redis.call('ZRANGE', lruTrackerKey, 0, toEvict - 1)
+				
+				-- Remove oldest entries from cache and LRU tracker
+				for i = 1, #oldestEntries do
+					local oldEntryKey = oldestEntries[i]
+					local oldDataKey = dataPrefix .. oldEntryKey
+					local oldMetaKey = metaPrefix .. oldEntryKey
+					
+					-- Delete the actual cache data
+					redis.call('DEL', oldDataKey)
+					redis.call('DEL', oldMetaKey)
+					
+					-- Remove from LRU tracker
+					redis.call('ZREM', lruTrackerKey, oldEntryKey)
+					
+					-- If indexing is enabled, clean up reverse index for evicted entry
+					if indexingEnabled then
+						local oldReverseKey = 'cache:reverse:' .. oldEntryKey
+						local oldOwner = redis.call('GET', oldReverseKey)
+						if oldOwner then
+							local oldIndexKey = 'cache:index:owner:' .. oldOwner
+							redis.call('SREM', oldIndexKey, oldEntryKey)
+							redis.call('DEL', oldReverseKey)
+						end
+					end
+				end
+			end
 		end
 
 		-- Early return if indexing is disabled
@@ -235,11 +283,12 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 	// @TODO think about a rename. Also think about whether there needs to be any manipulation of index values
 	// e.g. reverseKey -> does it GET the OwnerKey, or the OwnerKey less the prefix. One requires some string manipulation, the other requires more data stored
-	// Delete with index cleanup script
+	// Delete with index cleanup and LRU tracking script
 	c.deleteByEntryScript = redis.NewScript(`
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local reverseKey = KEYS[3]
+		local lruTrackerKey = KEYS[4]
 		local entryKey = ARGV[1]
 		local indexPrefix = ARGV[2]
 
@@ -258,6 +307,9 @@ func (c *RedisCache[T]) initLuaScripts() {
 		removed = removed + redis.call('DEL', dataKey)
 		removed = removed + redis.call('DEL', metaKey)
 		removed = removed + redis.call('DEL', reverseKey)
+
+		-- Remove from LRU tracker
+		redis.call('ZREM', lruTrackerKey, entryKey)
 
 		return removed
 	`)
