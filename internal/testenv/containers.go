@@ -16,11 +16,30 @@ func newContainerEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Create a network for containers to communicate
+	network, err := testcontainers.GenericNetwork(ctxWithTimeout, testcontainers.GenericNetworkRequest{
+		NetworkRequest: testcontainers.NetworkRequest{
+			Name:           "go-cache-test-net",
+			CheckDuplicate: true,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network: %w", err)
+	}
+
 	// Start Redis container
 	redisContainer, err := redis.RunContainer(ctxWithTimeout,
 		testcontainers.WithImage("redis:8.0.3"),
 		redis.WithSnapshotting(10, 1),
 		redis.WithLogLevel(redis.LogLevelVerbose),
+		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Networks: []string{"go-cache-test-net"},
+				NetworkAliases: map[string][]string{
+					"go-cache-test-net": {"redis"},
+				},
+			},
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start Redis container: %w", err)
@@ -53,9 +72,13 @@ func newContainerEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	if isLatencyTestingEnabled() {
 		toxiContainer, err := testcontainers.GenericContainer(ctxWithTimeout, testcontainers.GenericContainerRequest{
 			ContainerRequest: testcontainers.ContainerRequest{
-				Image:        "shopify/toxiproxy:2.9.0",
+				Image:        "shopify/toxiproxy:latest",
 				ExposedPorts: []string{"8474/tcp", "8080/tcp"},
-				WaitingFor:   wait.ForHTTP("/version"),
+				WaitingFor:   wait.ForHTTP("/version").WithPort("8474"),
+				Networks:     []string{"go-cache-test-net"},
+				NetworkAliases: map[string][]string{
+					"go-cache-test-net": {"toxiproxy"},
+				},
 			},
 			Started: true,
 		})
@@ -89,8 +112,8 @@ func newContainerEnvironment(ctx context.Context) (*TestEnvironment, error) {
 			return nil, fmt.Errorf("failed to initialize Toxiproxy controller: %w", err)
 		}
 
-		// Setup proxies with actual Redis container details
-		if err := toxiController.SetupCacheProxiesWithTarget(ctxWithTimeout, redisHostPort); err != nil {
+		// Setup proxies using Docker network alias
+		if err := toxiController.SetupCacheProxiesWithTarget(ctxWithTimeout, "redis:6379"); err != nil {
 			redisContainer.Terminate(ctxWithTimeout)
 			toxiContainer.Terminate(ctxWithTimeout)
 			return nil, fmt.Errorf("failed to setup Toxiproxy proxies: %w", err)
@@ -124,6 +147,7 @@ func newContainerEnvironment(ctx context.Context) (*TestEnvironment, error) {
 				toxiController.container.Terminate(cleanupCtx)
 			}
 			redisContainer.Terminate(cleanupCtx)
+			network.Remove(cleanupCtx)
 		},
 	}
 

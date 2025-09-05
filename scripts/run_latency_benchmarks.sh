@@ -27,32 +27,8 @@ echo "3. Run benchmarks with network latency simulation"
 echo "4. Compare results with baseline (if available)"
 echo ""
 
-# Check if docker-compose services are already running
-if ! docker compose ps | grep -q "Up"; then
-    echo "🐳 Starting docker-compose services..."
-    docker compose up -d
-    echo "⏳ Waiting for services to be ready..."
-    sleep 10
-    echo "✅ Services started"
-else
-    echo "✅ Docker-compose services already running"
-fi
-
-# Configure latency using the Go script directly  
-echo "⚡ Configuring ${LATENCY_MS}ms latency..."
-cd scripts
-
-# Check if proxy already exists and has the right latency
-current_latency=$(curl -s http://localhost:8474/proxies/redis_proxy/toxics | jq -r '.[] | select(.name=="redis_proxy_latency") | .attributes.latency // empty' 2>/dev/null)
-if [ "$current_latency" = "$LATENCY_MS" ]; then
-    echo "✅ Toxiproxy already configured with ${LATENCY_MS}ms latency"
-else
-    echo "🔧 Updating Toxiproxy latency configuration..."
-    if ! GOCACHE_TEST_REDIS_LATENCY_MS=$LATENCY_MS go run setup-toxiproxy.go 2>/dev/null; then
-        echo "⚠️  Toxiproxy setup had issues (proxy may already be configured). Continuing with existing setup..."
-    fi
-fi
-cd ..
+# Note: Using containers mode - no need to manage external services
+echo "🐳 Using containers mode - fresh containers will be started for each benchmark"
 
 # Run benchmarks with latency
 echo "🐌 Running benchmarks with ${LATENCY_MS}ms latency..."
