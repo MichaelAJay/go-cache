@@ -5,6 +5,7 @@ package cache_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -302,12 +303,19 @@ func BenchmarkRedisCache_GetOrSet_HighContention(b *testing.B) {
 func BenchmarkRedisCache_SetIfNotExists_NewKey(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
+	
+	// Use timestamp to ensure this benchmark run uses completely unique keys
+	benchPrefix := fmt.Sprintf("bench_setifnotexists_new_%d", time.Now().UnixNano())
+	
+	// Global atomic counter to ensure unique keys across all goroutines
+	var keyCounter uint64
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
-		i := 0
 		for pb.Next() {
-			testData := generateBenchmarkData1KB(fmt.Sprintf("bench:setifnotexists:new:%d", i))
+			// Generate truly unique keys using benchmark prefix + atomic counter
+			uniqueID := atomic.AddUint64(&keyCounter, 1)
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s:%d", benchPrefix, uniqueID))
 			wasSet, err := cache.SetIfNotExists(ctx, testData, 10*time.Minute)
 			if err != nil {
 				b.Errorf("SetIfNotExists new key error: %v", err)
@@ -315,9 +323,6 @@ func BenchmarkRedisCache_SetIfNotExists_NewKey(b *testing.B) {
 			if !wasSet {
 				b.Errorf("SetIfNotExists should return true for new key")
 			}
-			// Clean up to ensure next iteration is also a new key
-			cache.Delete(ctx, testData.ID)
-			i++
 		}
 	})
 }

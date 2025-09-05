@@ -170,10 +170,13 @@ func BenchmarkRedisCache_GetByOwner_10Entries(b *testing.B) {
 	cache := setupBenchmarkCacheWithIndexing(b)
 	ctx := context.Background()
 
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("bench10_%d", time.Now().UnixNano())
+
 	// Pre-populate cache with 10 entries per owner across 100 owners
 	for ownerID := range 100 {
 		for entryID := range 10 {
-			testData := generateBenchmarkData1KB(fmt.Sprintf("user%d:entry%d", ownerID, entryID))
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_user%d:entry%d", benchPrefix, ownerID, entryID))
 			err := cache.Set(ctx, testData, 10*time.Minute)
 			if err != nil {
 				b.Fatalf("Failed to pre-populate cache: %v", err)
@@ -185,7 +188,7 @@ func BenchmarkRedisCache_GetByOwner_10Entries(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		ownerID := 0
 		for pb.Next() {
-			results, err := cache.GetByOwner(ctx, fmt.Sprintf("user%d", ownerID%100))
+			results, err := cache.GetByOwner(ctx, fmt.Sprintf("%s_user%d", benchPrefix, ownerID%100))
 			if err != nil {
 				b.Errorf("GetByOwner error: %v", err)
 			}
@@ -202,10 +205,13 @@ func BenchmarkRedisCache_GetByOwner_100Entries(b *testing.B) {
 	cache := setupBenchmarkCacheWithIndexing(b)
 	ctx := context.Background()
 
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("bench100_%d", time.Now().UnixNano())
+
 	// Pre-populate cache with 100 entries per owner across 10 owners
 	for ownerID := range 10 {
 		for entryID := range 100 {
-			testData := generateBenchmarkData1KB(fmt.Sprintf("user%d:entry%d", ownerID, entryID))
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_user%d:entry%d", benchPrefix, ownerID, entryID))
 			err := cache.Set(ctx, testData, 10*time.Minute)
 			if err != nil {
 				b.Fatalf("Failed to pre-populate cache: %v", err)
@@ -217,7 +223,7 @@ func BenchmarkRedisCache_GetByOwner_100Entries(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		ownerID := 0
 		for pb.Next() {
-			results, err := cache.GetByOwner(ctx, fmt.Sprintf("user%d", ownerID%10))
+			results, err := cache.GetByOwner(ctx, fmt.Sprintf("%s_user%d", benchPrefix, ownerID%10))
 			if err != nil {
 				b.Errorf("GetByOwner error: %v", err)
 			}
