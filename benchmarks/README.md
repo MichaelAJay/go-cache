@@ -192,30 +192,28 @@ Network latency typically affects operations differently:
 - Try cleaning Docker system: `docker system prune`
 
 **Benchmarks take very long or hang:**
-- Check Docker container health: `docker compose ps`
+- **Expected**: Container startup adds ~15-30s per benchmark category
 - Reduce `BENCHTIME` for faster testing: `BENCHTIME=100ms`
 - Use specific categories instead of `all`: `./scripts/run_benchmarks.sh test.txt core`
+- Monitor container startup progress in benchmark output logs
 
 ## Quick Diagnostic Commands
 
 ```bash
-# Verify Docker services
-docker compose ps
-
-# Check Redis connectivity (direct)
-redis-cli -h localhost -p 6379 ping
-
-# Check Redis connectivity (through proxy)  
-redis-cli -h localhost -p 8080 ping
+# Check Docker is running
+docker info
 
 # List available benchmarks
 go test -tags=integration -list "BenchmarkRedisCache_"
 
-# Test single benchmark (baseline)
+# Test single benchmark (baseline - no latency)
 go test -tags=integration -bench="BenchmarkRedisCache_Get_1KB" -run=^$ -benchtime=100ms -count=1
 
-# Test single benchmark (with latency)
+# Test single benchmark (with latency using containers)
 GOCACHE_TEST_MODE=containers GOCACHE_TEST_LATENCY=enabled go test -tags=integration -bench="BenchmarkRedisCache_Get_1KB" -run=^$ -benchtime=100ms -count=1
+
+# Quick latency benchmark test
+BENCHTIME=100ms COUNT=1 ./scripts/run_latency_benchmarks.sh 50 core
 ```
 
 > **Note**: Benchmark files are gitignored by default. Uncomment the `# benchmarks/` line in `.gitignore` if you want to track benchmark history in git.
