@@ -27,8 +27,18 @@ echo "3. Run benchmarks with network latency simulation"
 echo "4. Compare results with baseline (if available)"
 echo ""
 
-# Note: Using containers mode - no need to manage external services
-echo "🐳 Using containers mode - fresh containers will be started for each benchmark"
+# Start docker-compose services if not running
+if ! docker compose ps | grep -q "Up"; then
+    echo "🐳 Starting docker-compose services..."
+    docker compose up -d
+    echo "⏳ Waiting for services to be ready..."
+    sleep 10
+    echo "✅ Services started"
+else
+    echo "✅ Docker-compose services already running"
+fi
+
+echo "🧹 Using compose mode with state reset for clean benchmarks"
 
 # Run benchmarks with latency
 echo "🐌 Running benchmarks with ${LATENCY_MS}ms latency..."

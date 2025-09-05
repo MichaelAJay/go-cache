@@ -33,7 +33,7 @@ run_category_benchmarks() {
     # Set environment variables for latency testing
     local test_env=""
     if [ -n "$LATENCY_MODE" ]; then
-        test_env="GOCACHE_TEST_MODE=containers GOCACHE_TEST_LATENCY=enabled"
+        test_env="GOCACHE_TEST_MODE=compose GOCACHE_TEST_LATENCY=enabled"
         if [ -n "$LATENCY_MS" ]; then
             test_env="$test_env GOCACHE_TEST_REDIS_LATENCY_MS=$LATENCY_MS"
         fi

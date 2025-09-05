@@ -180,6 +180,16 @@ func (tc *ToxiproxyController) RemoveToxic(ctx context.Context, proxyName, toxic
 	return nil
 }
 
+// ResetLatency removes existing latency toxic and applies new settings
+func (tc *ToxiproxyController) ResetLatency(ctx context.Context, proxyName string, newLatencyMs int) error {
+	// Remove existing latency toxic (ignore errors if it doesn't exist)
+	toxicName := fmt.Sprintf("%s_latency", proxyName)
+	_ = tc.RemoveToxic(ctx, proxyName, toxicName)
+	
+	// Apply new latency setting
+	return tc.AddLatencyToxic(ctx, proxyName, newLatencyMs)
+}
+
 // Cleanup removes all proxies and toxics
 func (tc *ToxiproxyController) Cleanup(ctx context.Context) error {
 	// List all proxies
