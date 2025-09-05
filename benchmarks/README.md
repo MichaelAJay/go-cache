@@ -58,18 +58,13 @@ BENCHTIME=100ms COUNT=1 ./scripts/run_benchmarks.sh quick.txt
 
 ### Network Latency Testing with Toxiproxy
 
-Test performance under realistic network conditions using Toxiproxy:
+Test performance under realistic network conditions using containers mode with Toxiproxy:
 
 ```bash
-# Run latency benchmarks with specific latency
+# Run latency benchmarks with specific latency (fully automated)
 ./scripts/run_latency_benchmarks.sh 50 core      # 50ms latency, core operations
 ./scripts/run_latency_benchmarks.sh 100 batch    # 100ms latency, batch operations
 ./scripts/run_latency_benchmarks.sh 200 all      # 200ms latency, all benchmarks
-
-# Manual latency testing workflow
-make docker-up                                   # Start Redis + Toxiproxy
-make docker-configure-latency LATENCY_MS=100    # Configure 100ms latency
-LATENCY_MODE=enabled ./scripts/run_benchmarks.sh latency_results.txt core
 ```
 
 **Available Latency Scenarios:**
@@ -79,10 +74,15 @@ LATENCY_MODE=enabled ./scripts/run_benchmarks.sh latency_results.txt core
 - **International**: 100-300ms latency
 - **Satellite/Poor network**: 500ms+ latency
 
+**How It Works:**
+- Uses **containers mode** for complete isolation and reliability
+- Fresh Docker containers are created for each benchmark run
+- Redis and Toxiproxy containers communicate via dedicated Docker network
+- Automatic cleanup after each benchmark completes
+
 **Prerequisites for Latency Testing:**
-- Docker and Docker Compose must be installed
-- Services started with `make docker-up` or `docker compose up -d`
-- Toxiproxy may show "409 conflict" errors if already configured (this is normal)
+- Docker must be installed and running
+- **No external services needed** - containers are managed automatically
 
 ### Comparing Results
 
@@ -100,6 +100,11 @@ This uses `benchstat` to provide statistical analysis of performance differences
 ./scripts/run_latency_benchmarks.sh 100 core  # Creates latency_100ms_*.txt
 ./scripts/compare_benchmarks.sh benchmarks/baseline.txt benchmarks/latency_100ms_*.txt
 ```
+
+**Expected Results:**
+- **Baseline (no latency)**: ~50,000 ns/op for Get_1KB operations
+- **100ms latency**: ~103,000,000 ns/op (100ms network + ~3ms Redis)
+- **Batch operations**: Much better scaling under latency (GetMany vs individual Gets)
 
 ## Interpreting Results
 
@@ -137,6 +142,8 @@ Network latency typically affects operations differently:
 7. **Consider operation patterns**: Batch operations become critical under high latency
 8. **Integration setup**: Benchmarks require Redis infrastructure - ensure Docker services are running
 9. **Benchmark duration**: Use longer `BENCHTIME` (1s+) for stable results, shorter (100ms) for quick tests
+10. **Proxy persistence**: Toxiproxy configurations may be cleared between runs - scripts handle re-setup automatically
+11. **Latency validation**: Test single operations first to verify latency is working before running full suites
 
 ## Benchmark Categories Explained
 
@@ -156,24 +163,59 @@ Network latency typically affects operations differently:
 ## Available Scripts
 
 - **`run_benchmarks.sh`**: Main benchmark runner with category filtering
+  - Supports environment variables: `BENCHTIME`, `COUNT`, `LATENCY_MODE`, `LATENCY_MS`
+  - Automatically uses integration build tags and redirects errors to output
 - **`run_latency_benchmarks.sh`**: Automated latency testing with Toxiproxy
+  - Handles Docker service startup and proxy configuration  
+  - Intelligently checks and updates existing proxy settings
+  - Automatically compares with baseline if available
 - **`compare_benchmarks.sh`**: Statistical comparison using benchstat
+  - Requires Go benchstat tool (auto-installed if missing)
+  - Provides statistical significance testing and performance deltas
 
 ## Troubleshooting
 
 **Benchmarks show `0` runs or `NaN` ns/op:**
-- Ensure Docker services are running: `docker compose ps`
-- Check that Redis is healthy: `docker compose logs redis`
+- **Fixed in containers mode** - fresh containers eliminate state issues
 - Verify integration tag is working: `go test -tags=integration -list "BenchmarkRedisCache_Get_1KB"`
+- Check Docker is running and accessible: `docker info`
 
-**"409 conflict" errors with Toxiproxy:**
-- This is normal - means proxy is already configured
-- Script will continue and work correctly
-- To reset: `docker compose restart toxiproxy`
+**Latency benchmarks failing:**
+- **Containers mode provides isolation** - each run starts fresh
+- Check Docker is running: `docker ps`
+- Verify testcontainers can access Docker: `docker info`
+- If containers fail to start, check Docker resource limits
+
+**Container startup issues:**
+- Ensure sufficient Docker resources (memory/disk)
+- Check for conflicting containers: `docker ps -a`
+- Try cleaning Docker system: `docker system prune`
 
 **Benchmarks take very long or hang:**
 - Check Docker container health: `docker compose ps`
 - Reduce `BENCHTIME` for faster testing: `BENCHTIME=100ms`
 - Use specific categories instead of `all`: `./scripts/run_benchmarks.sh test.txt core`
+
+## Quick Diagnostic Commands
+
+```bash
+# Verify Docker services
+docker compose ps
+
+# Check Redis connectivity (direct)
+redis-cli -h localhost -p 6379 ping
+
+# Check Redis connectivity (through proxy)  
+redis-cli -h localhost -p 8080 ping
+
+# List available benchmarks
+go test -tags=integration -list "BenchmarkRedisCache_"
+
+# Test single benchmark (baseline)
+go test -tags=integration -bench="BenchmarkRedisCache_Get_1KB" -run=^$ -benchtime=100ms -count=1
+
+# Test single benchmark (with latency)
+GOCACHE_TEST_MODE=containers GOCACHE_TEST_LATENCY=enabled go test -tags=integration -bench="BenchmarkRedisCache_Get_1KB" -run=^$ -benchtime=100ms -count=1
+```
 
 > **Note**: Benchmark files are gitignored by default. Uncomment the `# benchmarks/` line in `.gitignore` if you want to track benchmark history in git.
