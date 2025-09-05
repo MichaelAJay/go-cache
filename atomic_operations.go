@@ -27,7 +27,7 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 	maxRetries := lockMaxRetries
 	for range maxRetries {
 		// Try the Lua script for atomic GetOrSet
-		result, err := c.getOrSetScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
+		result, err := c.getOrSetScript.Run(ctx, c.client, []string{lockKey, dataKey, metaKey},
 			lockValue, ttlToMilliseconds(ttl), "", ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil {
@@ -37,6 +37,14 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 		}
 
 		resultSlice, ok := result.([]any)
+		if !ok {
+			// Try alternative types
+			if resultSlice2, ok2 := result.([]any); ok2 {
+				resultSlice = resultSlice2
+				ok = true
+			}
+		}
+
 		if !ok || len(resultSlice) < 2 {
 			return zero, fmt.Errorf("unexpected script result format")
 		}
@@ -54,13 +62,12 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 		}
 
 		if noDataAvailable {
-			// Cache miss and no backup data source configured
+			// Cache miss - proceed to load the value using the loader function
+			// This is the normal path for GetOrSet when key doesn't exist
 			c.metrics.RecordMiss("redis", c.getMetricTags())
-			c.metrics.RecordError("redis", "getorset", "no_backup_source", "configuration", c.getMetricTags())
-			return zero, fmt.Errorf("cache miss for key %s and no backup data source available", key)
 		}
 
-		if existingValue != nil && existingValue != "" {
+		if existingValue != nil && existingValue != "" && existingValue != false {
 			// Value exists, deserialize and return it
 			var value T
 			if err := c.serializer.Deserialize([]byte(existingValue.(string)), &value); err != nil {
@@ -88,7 +95,7 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 		}
 
 		// Try the script again with the loaded value
-		result, err = c.getOrSetScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
+		result, err = c.getOrSetScript.Run(ctx, c.client, []string{lockKey, dataKey, metaKey},
 			lockValue, ttlToMilliseconds(ttl), string(serializedValue), ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil {
@@ -123,15 +130,15 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 
 	// Retry logic for distributed coordination
 	maxRetries := lockMaxRetries
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for range maxRetries {
 		// First, try to get the current value and acquire lock
-		result, err := c.updateScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
+		result, err := c.updateScript.Run(ctx, c.client, []string{lockKey, dataKey, metaKey},
 			lockValue, ttlToMilliseconds(ttl), "", ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil && err.Error() != "NOSCRIPT" {
 			c.handleError("update", err)
 			c.metrics.RecordError("redis", "update", "redis_error", "infrastructure", c.getMetricTags())
-			return zero, fmt.Errorf("Redis Update error: %w", err)
+			return zero, fmt.Errorf("redis Update error: %w", err)
 		}
 
 		resultSlice, ok := result.([]interface{})
@@ -151,7 +158,7 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 		var oldValue T
 		var exists bool
 
-		if resultSlice[0] != nil && resultSlice[0] != "" {
+		if resultSlice[0] != nil && resultSlice[0] != "" && resultSlice[0] != false {
 			exists = true
 			if err := c.serializer.Deserialize([]byte(resultSlice[0].(string)), &oldValue); err != nil {
 				c.metrics.RecordError("redis", "update", "serialization_error", "data", c.getMetricTags())
@@ -180,7 +187,7 @@ func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old
 		}
 
 		// Execute the update script with the new value
-		result, err = c.updateScript.Run(ctx, c.client, []string{key, lockKey, dataKey, metaKey},
+		result, err = c.updateScript.Run(ctx, c.client, []string{lockKey, dataKey, metaKey},
 			lockValue, ttlToMilliseconds(ttl), string(serializedNewValue), ttlToMilliseconds(defaultLockTimeout)).Result()
 
 		if err != nil {

@@ -111,7 +111,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 		-- Acquire lock with millisecond precision
 		local ok = redis.call('SET', lockKey, lockValue, 'PX', lockTimeoutMs, 'NX')
-		if not ok then
+		-- SET with NX returns empty table on success, false on failure
+		if ok == false then
 			-- Someone else is loading; check again
 			existing = redis.call('GET', dataKey)
 			if existing then
@@ -126,7 +127,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 			if redis.call('GET', lockKey) == lockValue then
 				redis.call('DEL', lockKey)
 			end
-			return {nil, '2'}  -- Signal: miss + no data available
+			return {false, '2'}  -- Signal: miss + no data available (use false instead of nil)
 		end
 
 		-- Set value with millisecond precision using modern SET syntax
@@ -169,7 +170,8 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local lockToutMs  = tonumber(ARGV[4])
 
 		local ok = redis.call('SET', lockKey, lockValue, 'PX', lockToutMs, 'NX')
-		if not ok then
+		-- SET with NX returns empty table on success, false on failure
+		if ok == false then
 			return {false, '1'} -- signal retry
 		end
 
@@ -203,7 +205,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 			redis.call('DEL', lockKey)
 		end
 
-		return {oldVal, existed, newVal}
+		return {oldVal or false, existed, newVal}
 	`)
 
 	// @TODO change name from sessIdxPref
