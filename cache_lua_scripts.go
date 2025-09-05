@@ -539,6 +539,41 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return #metaKeys
 	`)
 
+	// Orphaned metadata cleanup script - atomic cleanup when data key is missing
+	c.cleanupOrphanedMetadataScript = redis.NewScript(`
+		local metaKey = KEYS[1]
+		local reverseKey = KEYS[2]
+		local lruTrackerKey = KEYS[3]
+		local entryKey = ARGV[1]
+		local indexPrefix = ARGV[2]
+
+		-- Check if metadata actually exists
+		local metadataExists = redis.call('EXISTS', metaKey)
+		if metadataExists == 0 then
+			return 0  -- No metadata to clean
+		end
+
+		local cleaned = 0
+
+		-- Clean up metadata
+		cleaned = cleaned + redis.call('DEL', metaKey)
+
+		-- Clean up reverse index if it exists
+		local ownerKey = redis.call('GET', reverseKey)
+		if ownerKey then
+			-- Remove from forward index
+			local forwardIndexKey = indexPrefix .. 'owner:' .. ownerKey
+			redis.call('SREM', forwardIndexKey, entryKey)
+			-- Remove reverse index
+			cleaned = cleaned + redis.call('DEL', reverseKey)
+		end
+
+		-- Remove from LRU tracker
+		redis.call('ZREM', lruTrackerKey, entryKey)
+
+		return cleaned
+	`)
+
 	if c.options.WarmLuaScripts {
 		c.warmLuaScripts(context.Background())
 	}
@@ -550,7 +585,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
-		c.getManyMetadataUpdateScript,
+		c.getManyMetadataUpdateScript, c.cleanupOrphanedMetadataScript,
 	}
 
 	for _, script := range scripts {

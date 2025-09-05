@@ -31,6 +31,26 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 	}
 
 	if exists == 0 {
+		// Data key doesn't exist - check for and cleanup any orphaned metadata
+		reverseKey := c.buildReverseIndexKey(key)
+		lruTrackerKey := c.buildLRUTrackerKey()
+		indexPrefix := "cache:index:"
+		if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+			indexPrefix = c.redisOptions.IndexPrefix
+		}
+
+		cleaned, err := c.cleanupOrphanedMetadataScript.Run(ctx, c.client, 
+			[]string{metaKey, reverseKey, lruTrackerKey}, 
+			key, indexPrefix).Result()
+		
+		if err != nil {
+			// Log cleanup error but don't fail the operation since cleanup is supplementary
+			c.handleError("cleanup_orphaned_metadata", err)
+		} else if cleanedInt, ok := cleaned.(int64); ok && cleanedInt > 0 {
+			// Record successful cleanup for monitoring
+			c.metrics.RecordOperation("redis", "cleanup_orphaned_metadata", "success", time.Since(start), c.getMetricTags())
+		}
+
 		// Key doesn't exist, return nil (not an error according to interface contract)
 		c.metrics.RecordOperation("redis", "getmetadata", "not_found", time.Since(start), c.getMetricTags())
 		return nil, nil
