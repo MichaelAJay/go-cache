@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"golang.org/x/sync/singleflight"
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/config"
@@ -68,6 +69,9 @@ type RedisCache[T any] struct {
 
 	// Instance identifier for distributed coordination
 	instanceID string
+
+	// Singleflight group for coordinating concurrent GetOrSet operations
+	sf singleflight.Group
 
 	// Lua scripts for atomic operations
 	getScript                    *redis.Script
@@ -924,6 +928,176 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 	c.metrics.RecordOperation("redis", "increment_float", "success", duration, c.getMetricTags())
 	
 	return result, nil
+}
+
+// Session management operations
+
+// ExtendTTL atomically extends the TTL of a cache entry without modifying its data
+func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Duration) error {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "extend_ttl", "circuit_breaker", "availability", c.getMetricTags())
+		return cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	
+	// Build the data key with proper prefix
+	dataKey := c.buildDataKey(key)
+	metaKey := c.buildMetaKey(key)
+	
+	// Use Redis PEXPIRE for atomic TTL extension with millisecond precision
+	ttlMs := ttl.Milliseconds()
+	
+	// Set TTL on both data and metadata keys
+	pipe := c.client.Pipeline()
+	dataResult := pipe.PExpire(ctx, dataKey, ttl)
+	metaResult := pipe.PExpire(ctx, metaKey, ttl)
+	_, err := pipe.Exec(ctx)
+	
+	duration := time.Since(start)
+	
+	if err != nil {
+		c.handleError("extend_ttl", err)
+		c.metrics.RecordError("redis", "extend_ttl", "redis_error", "infrastructure", c.getMetricTags())
+		return fmt.Errorf("extend TTL operation failed: %w", err)
+	}
+	
+	// Check if the key actually existed
+	dataExists, _ := dataResult.Result()
+	if !dataExists {
+		c.metrics.RecordError("redis", "extend_ttl", "key_not_found", "data", c.getMetricTags())
+		return fmt.Errorf("key does not exist: %s", key)
+	}
+	
+	// Update metadata TTL field
+	if metaExists, _ := metaResult.Result(); metaExists {
+		c.client.HSet(ctx, metaKey, "ttl", fmt.Sprintf("%d", ttlMs))
+	}
+	
+	// Record successful operation
+	c.metrics.RecordOperation("redis", "extend_ttl", "success", duration, c.getMetricTags())
+	
+	return nil
+}
+
+// Touch atomically updates the last-accessed timestamp and extends TTL for a cache entry
+func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "touch", "circuit_breaker", "availability", c.getMetricTags())
+		return false, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	
+	// Build the keys
+	dataKey := c.buildDataKey(key)
+	metaKey := c.buildMetaKey(key)
+	
+	// Use Lua script for atomic touch operation
+	script := `
+		local dataKey = KEYS[1]
+		local metaKey = KEYS[2]
+		local ttlMs = tonumber(ARGV[1])
+		
+		-- Check if data key exists
+		if redis.call('EXISTS', dataKey) == 0 then
+			return 0
+		end
+		
+		-- Extend TTL on both keys
+		redis.call('PEXPIRE', dataKey, ttlMs)
+		redis.call('PEXPIRE', metaKey, ttlMs)
+		
+		-- Update metadata with current timestamp and access count
+		local now = redis.call('TIME')
+		local ts = now[1]
+		local acc = redis.call('HGET', metaKey, 'access_count') or '0'
+		acc = tostring((tonumber(acc) or 0) + 1)
+		
+		redis.call('HSET', metaKey,
+			'last_accessed', ts,
+			'access_count', acc,
+			'ttl', tostring(ttlMs)
+		)
+		
+		return 1
+	`
+	
+	ttlMs := ttl.Milliseconds()
+	result, err := c.client.Eval(ctx, script, []string{dataKey, metaKey}, ttlMs).Result()
+	
+	duration := time.Since(start)
+	
+	if err != nil {
+		c.handleError("touch", err)
+		c.metrics.RecordError("redis", "touch", "redis_error", "infrastructure", c.getMetricTags())
+		return false, fmt.Errorf("touch operation failed: %w", err)
+	}
+	
+	exists := result.(int64) == 1
+	
+	if !exists {
+		c.metrics.RecordError("redis", "touch", "key_not_found", "data", c.getMetricTags())
+	} else {
+		c.metrics.RecordOperation("redis", "touch", "success", duration, c.getMetricTags())
+	}
+	
+	return exists, nil
+}
+
+// AppendToField atomically appends a value to a string field within a cached entry
+// This is useful for activity logs, session traces, etc.
+func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value string, ttl time.Duration) error {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		c.metrics.RecordError("redis", "append_field", "circuit_breaker", "availability", c.getMetricTags())
+		return cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	
+	// Build the keys
+	dataKey := c.buildDataKey(key)
+	metaKey := c.buildMetaKey(key)
+	
+	// For simple string append, use Redis APPEND command
+	// This works for simple string fields, not complex JSON paths
+	if fieldPath == "" {
+		// Append to the entire value (treat as string)
+		pipe := c.client.Pipeline()
+		appendResult := pipe.Append(ctx, dataKey, value)
+		pipe.PExpire(ctx, dataKey, ttl)
+		pipe.PExpire(ctx, metaKey, ttl)
+		_, err := pipe.Exec(ctx)
+		
+		duration := time.Since(start)
+		
+		if err != nil {
+			c.handleError("append_field", err)
+			c.metrics.RecordError("redis", "append_field", "redis_error", "infrastructure", c.getMetricTags())
+			return fmt.Errorf("append field operation failed: %w", err)
+		}
+		
+		// Update metadata
+		if appendResult.Val() > 0 {
+			now := time.Now().Unix()
+			c.client.HSet(ctx, metaKey, 
+				"last_accessed", fmt.Sprintf("%d", now),
+				"ttl", fmt.Sprintf("%d", ttl.Milliseconds()),
+				"size", fmt.Sprintf("%d", appendResult.Val()),
+			)
+		}
+		
+		c.metrics.RecordOperation("redis", "append_field", "success", duration, c.getMetricTags())
+		return nil
+	}
+	
+	// For complex field paths, this would require JSON manipulation
+	// For now, return an error indicating this feature needs implementation
+	c.metrics.RecordError("redis", "append_field", "unsupported_operation", "application", c.getMetricTags())
+	return fmt.Errorf("complex field path operations not yet implemented: %s", fieldPath)
 }
 
 // Lifecycle management

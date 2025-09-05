@@ -178,29 +178,32 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local oldVal = redis.call('GET', dataKey)
 		local existed = oldVal and '1' or '0'
 
-		-- Set value with millisecond precision using modern SET syntax
-		if ttlMs and ttlMs > 0 then
-			redis.call('SET', dataKey, newVal, 'PX', ttlMs)
-		else
-			redis.call('SET', dataKey, newVal)
+		-- Only set value if newVal is not empty (not the read-only call)
+		if newVal and newVal ~= "" then
+			-- Set value with millisecond precision using modern SET syntax
+			if ttlMs and ttlMs > 0 then
+				redis.call('SET', dataKey, newVal, 'PX', ttlMs)
+			else
+				redis.call('SET', dataKey, newVal)
+			end
+
+			local now = redis.call('TIME')
+			local ts  = now[1]
+			local acc = redis.call('HGET', metaKey, 'access_count') or '0'
+			acc = tostring((tonumber(acc) or 0) + 1)
+
+			redis.call('HSET', metaKey,
+				'last_accessed', ts,
+				'access_count', acc,
+				'ttl', tostring(ttlMs or 0),
+				'size', tostring(string.len(newVal))
+			)
+			if ttlMs and ttlMs > 0 then
+				redis.call('PEXPIRE', metaKey, ttlMs)
+			end
 		end
 
-		local now = redis.call('TIME')
-		local ts  = now[1]
-		local acc = redis.call('HGET', metaKey, 'access_count') or '0'
-		acc = tostring((tonumber(acc) or 0) + 1)
-
-		redis.call('HSET', metaKey,
-			'last_accessed', ts,
-			'access_count', acc,
-			'ttl', tostring(ttlMs or 0),
-			'size', tostring(string.len(newVal))
-		)
-		if ttlMs and ttlMs > 0 then
-			redis.call('PEXPIRE', metaKey, ttlMs)
-		end
-
-		-- Release only if we still own it
+		-- Always release lock if we still own it
 		if redis.call('GET', lockKey) == lockValue then
 			redis.call('DEL', lockKey)
 		end

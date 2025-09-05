@@ -5,7 +5,6 @@ package cache_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -55,7 +54,7 @@ func TestRedisCache_GetOrSet_CacheMiss(t *testing.T) {
 
 	// Call GetOrSet - should trigger loader
 	result, err := cache.GetOrSet(ctx, testKey, loader, 5*time.Minute)
-	
+
 	// Assertions
 	assert.NoError(t, err, "GetOrSet should not error on cache miss")
 	assert.NotNil(t, result, "GetOrSet should return loaded value")
@@ -116,7 +115,7 @@ func TestRedisCache_GetOrSet_CacheHit(t *testing.T) {
 
 	// Call GetOrSet - should return existing value without calling loader
 	result, err := cache.GetOrSet(ctx, testKey, loader, 5*time.Minute)
-	
+
 	// Assertions
 	assert.NoError(t, err, "GetOrSet should not error on cache hit")
 	assert.NotNil(t, result, "GetOrSet should return existing value")
@@ -154,14 +153,14 @@ func TestRedisCache_GetOrSet_ConcurrentCacheMiss(t *testing.T) {
 	// Track loader calls - should be called exactly once despite concurrent access
 	var loaderCallCount int64
 	var loaderDuration time.Duration = 50 * time.Millisecond // Simulate some work
-	
+
 	loader := func(ctx context.Context) (*testintegration.TestSession, error) {
 		callNumber := atomic.AddInt64(&loaderCallCount, 1)
 		t.Logf("💡 Loader call #%d started", callNumber)
-		
+
 		// Simulate some work to increase likelihood of race conditions
 		time.Sleep(loaderDuration)
-		
+
 		t.Logf("💡 Loader call #%d completed", callNumber)
 		return expectedSession, nil
 	}
@@ -179,10 +178,10 @@ func TestRedisCache_GetOrSet_ConcurrentCacheMiss(t *testing.T) {
 		go func(goroutineID int) {
 			// Wait for start signal to maximize concurrency
 			<-startSignal
-			
+
 			t.Logf("🚀 Goroutine %d starting GetOrSet", goroutineID)
 			result, err := cache.GetOrSet(ctx, testKey, loader, 5*time.Minute)
-			
+
 			if err != nil {
 				t.Logf("❌ Goroutine %d error: %v", goroutineID, err)
 				errors <- err
@@ -208,11 +207,11 @@ func TestRedisCache_GetOrSet_ConcurrentCacheMiss(t *testing.T) {
 			// Verify each result matches expected value
 			assert.Equal(t, expectedSession.ID, result.ID, "Result should match expected session ID")
 			assert.Equal(t, expectedSession.UserID, result.UserID, "Result should match expected session UserID")
-			
+
 		case err := <-errors:
 			errorCount++
 			t.Errorf("Goroutine error: %v", err)
-			
+
 		case <-timeout:
 			t.Fatalf("Test timeout - deadlock or excessive wait time")
 		}
@@ -263,7 +262,7 @@ func TestRedisCache_GetOrSet_LoaderError(t *testing.T) {
 
 	// Call GetOrSet - should return loader error
 	result, err := cache.GetOrSet(ctx, testKey, loader, 5*time.Minute)
-	
+
 	// Assertions
 	assert.Error(t, err, "GetOrSet should return error when loader fails")
 	assert.Contains(t, err.Error(), "loader function failed", "Error should indicate loader failure")
@@ -284,324 +283,16 @@ func TestRedisCache_GetOrSet_LoaderError(t *testing.T) {
 // ==============================================================================
 
 // TestRedisCache_Update_ExistingKey tests Update on existing key
-func TestRedisCache_Update_ExistingKey(t *testing.T) {
-	ctx := context.Background()
-
-	// Setup test environment
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-	setup.FlushRedis(ctx, t)
-
-	// Create cache instance
-	config := testintegration.DefaultCacheConfig()
-	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Failed to create cache")
-	defer cache.Close()
-
-	testKey := "session:update:existing"
-	originalSession := &testintegration.TestSession{
-		ID:       testKey,
-		UserID:   "user123",
-		Username: "originaluser",
-		Created:  time.Now().Truncate(time.Second),
-	}
-
-	// Pre-populate cache
-	err = cache.Set(ctx, originalSession, 5*time.Minute)
-	require.NoError(t, err, "Failed to pre-populate cache")
-
-	// Track updater calls
-	var updaterCallCount int64
-	updater := func(old *testintegration.TestSession, exists bool) (*testintegration.TestSession, error) {
-		atomic.AddInt64(&updaterCallCount, 1)
-		t.Logf("🔄 Updater called - exists: %v, old username: %s", exists, old.Username)
-		
-		// Verify we received the existing value
-		assert.True(t, exists, "Updater should receive exists=true for existing key")
-		assert.Equal(t, originalSession.Username, old.Username, "Updater should receive original session")
-		
-		// Return updated session
-		updated := *old // Copy
-		updated.Username = "updateduser"
-		return &updated, nil
-	}
-
-	t.Logf("🔄 Testing Update on existing key")
-
-	// Call Update
-	result, err := cache.Update(ctx, testKey, updater, 5*time.Minute)
-	
-	// Assertions
-	assert.NoError(t, err, "Update should not error on existing key")
-	assert.NotNil(t, result, "Update should return updated value")
-	assert.Equal(t, originalSession.ID, result.ID, "Updated session should maintain same ID")
-	assert.Equal(t, originalSession.UserID, result.UserID, "Updated session should maintain same UserID")
-	assert.Equal(t, "updateduser", result.Username, "Updated session should have new username")
-	assert.Equal(t, int64(1), atomic.LoadInt64(&updaterCallCount), "Updater should be called exactly once")
-
-	// Verify updated value is stored in cache
-	cachedSession, found, err := cache.Get(ctx, testKey)
-	assert.NoError(t, err, "Follow-up GET should not error")
-	assert.True(t, found, "Updated session should be found in cache")
-	assert.Equal(t, "updateduser", cachedSession.Username, "Cached session should have updated username")
-
-	t.Logf("✅ Update existing key test successful")
-}
-
-// TestRedisCache_Update_NonExistentKey tests Update on non-existent key
-func TestRedisCache_Update_NonExistentKey(t *testing.T) {
-	ctx := context.Background()
-
-	// Setup test environment
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-	setup.FlushRedis(ctx, t)
-
-	// Create cache instance
-	config := testintegration.DefaultCacheConfig()
-	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Failed to create cache")
-	defer cache.Close()
-
-	testKey := "session:update:nonexistent"
-	newSession := &testintegration.TestSession{
-		ID:       testKey,
-		UserID:   "user456",
-		Username: "newuser",
-		Created:  time.Now().Truncate(time.Second),
-	}
-
-	// Track updater calls
-	var updaterCallCount int64
-	updater := func(old *testintegration.TestSession, exists bool) (*testintegration.TestSession, error) {
-		atomic.AddInt64(&updaterCallCount, 1)
-		t.Logf("🆕 Updater called - exists: %v", exists)
-		
-		// Verify we received exists=false
-		assert.False(t, exists, "Updater should receive exists=false for non-existent key")
-		assert.Nil(t, old, "Updater should receive nil for non-existent key")
-		
-		// Return new session
-		return newSession, nil
-	}
-
-	t.Logf("🆕 Testing Update on non-existent key")
-
-	// Call Update
-	result, err := cache.Update(ctx, testKey, updater, 5*time.Minute)
-	
-	// Assertions
-	assert.NoError(t, err, "Update should not error on non-existent key")
-	assert.NotNil(t, result, "Update should return new value")
-	assert.Equal(t, newSession.ID, result.ID, "Result should match new session")
-	assert.Equal(t, newSession.UserID, result.UserID, "Result should match new session")
-	assert.Equal(t, newSession.Username, result.Username, "Result should match new session")
-	assert.Equal(t, int64(1), atomic.LoadInt64(&updaterCallCount), "Updater should be called exactly once")
-
-	// Verify new value is stored in cache
-	cachedSession, found, err := cache.Get(ctx, testKey)
-	assert.NoError(t, err, "Follow-up GET should not error")
-	assert.True(t, found, "New session should be found in cache")
-	assert.Equal(t, newSession.Username, cachedSession.Username, "Cached session should match new session")
-
-	t.Logf("✅ Update non-existent key test successful")
-}
-
-// TestRedisCache_Update_ConcurrentUpdates tests Update race conditions
-func TestRedisCache_Update_ConcurrentUpdates(t *testing.T) {
-	ctx := context.Background()
-
-	// Setup test environment
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-	setup.FlushRedis(ctx, t)
-
-	// Create cache instance
-	config := testintegration.DefaultCacheConfig()
-	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Failed to create cache")
-	defer cache.Close()
-
-	testKey := "session:update:concurrent"
-	initialSession := &testintegration.TestSession{
-		ID:       testKey,
-		UserID:   "user789",
-		Username: "initial",
-		Created:  time.Now().Truncate(time.Second),
-	}
-
-	// Pre-populate cache with initial value
-	err = cache.Set(ctx, initialSession, 5*time.Minute)
-	require.NoError(t, err, "Failed to pre-populate cache")
-
-	const numGoroutines = 5
-	const incrementsPerGoroutine = 3
-	const totalExpectedIncrements = numGoroutines * incrementsPerGoroutine
-
-	// Track total updater calls across all goroutines
-	var totalUpdaterCalls int64
-	
-	// Create updater that appends goroutine ID to username (simulating concurrent updates)
-	createUpdater := func(goroutineID int) func(*testintegration.TestSession, bool) (*testintegration.TestSession, error) {
-		return func(old *testintegration.TestSession, exists bool) (*testintegration.TestSession, error) {
-			atomic.AddInt64(&totalUpdaterCalls, 1)
-			
-			assert.True(t, exists, "Key should exist for concurrent update test")
-			assert.NotNil(t, old, "Old value should not be nil")
-			
-			// Simulate some processing time to increase chance of race conditions
-			time.Sleep(10 * time.Millisecond)
-			
-			// Append goroutine marker to username
-			updated := *old // Copy
-			updated.Username = fmt.Sprintf("%s-g%d", old.Username, goroutineID)
-			
-			t.Logf("🔄 Goroutine %d updating: %s -> %s", goroutineID, old.Username, updated.Username)
-			return &updated, nil
-		}
-	}
-
-	t.Logf("🏁 Testing Update with %d concurrent goroutines (%d updates each)", numGoroutines, incrementsPerGoroutine)
-
-	// Use channels to coordinate goroutines
-	startSignal := make(chan struct{})
-	results := make(chan *testintegration.TestSession, totalExpectedIncrements)
-	errors := make(chan error, totalExpectedIncrements)
-
-	// Start goroutines
-	var wg sync.WaitGroup
-	for g := 0; g < numGoroutines; g++ {
-		wg.Add(1)
-		go func(goroutineID int) {
-			defer wg.Done()
-			updater := createUpdater(goroutineID)
-			
-			// Wait for start signal
-			<-startSignal
-			
-			// Perform multiple updates from this goroutine
-			for i := 0; i < incrementsPerGoroutine; i++ {
-				t.Logf("🚀 Goroutine %d starting update %d", goroutineID, i+1)
-				result, err := cache.Update(ctx, testKey, updater, 5*time.Minute)
-				
-				if err != nil {
-					t.Logf("❌ Goroutine %d update %d error: %v", goroutineID, i+1, err)
-					errors <- err
-				} else {
-					t.Logf("✅ Goroutine %d update %d success: %s", goroutineID, i+1, result.Username)
-					results <- result
-				}
-			}
-		}(g)
-	}
-
-	// Start all goroutines simultaneously
-	close(startSignal)
-
-	// Wait for all goroutines to complete
-	go func() {
-		wg.Wait()
-		close(results)
-		close(errors)
-	}()
-
-	// Collect results
-	var successCount int
-	var errorCount int
-
-	// Process all results
-	for result := range results {
-		successCount++
-		assert.NotNil(t, result, "Update result should not be nil")
-		assert.Contains(t, result.Username, "g", "Username should contain goroutine marker")
-	}
-
-	// Process all errors
-	for err := range errors {
-		errorCount++
-		t.Errorf("Update error: %v", err)
-	}
-
-	// Assertions
-	assert.Equal(t, totalExpectedIncrements, successCount, "All updates should succeed")
-	assert.Equal(t, 0, errorCount, "No updates should error")
-	assert.Equal(t, int64(totalExpectedIncrements), atomic.LoadInt64(&totalUpdaterCalls), "All updater calls should complete")
-
-	// Verify final state - should contain markers from all goroutines
-	finalSession, found, err := cache.Get(ctx, testKey)
-	assert.NoError(t, err, "Final GET should not error")
-	assert.True(t, found, "Final session should exist")
-	assert.NotEqual(t, "initial", finalSession.Username, "Username should be different from initial")
-	assert.Contains(t, finalSession.Username, "g", "Final username should contain goroutine marker")
-
-	t.Logf("✅ Update concurrent test successful - %d total updates completed", totalExpectedIncrements)
-	t.Logf("📊 Final username: %s", finalSession.Username)
-}
-
-// TestRedisCache_Update_UpdaterError tests Update when updater function fails
-func TestRedisCache_Update_UpdaterError(t *testing.T) {
-	ctx := context.Background()
-
-	// Setup test environment
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-	setup.ValidateEnvironment(ctx, t)
-	setup.FlushRedis(ctx, t)
-
-	// Create cache instance
-	config := testintegration.DefaultCacheConfig()
-	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
-	require.NoError(t, err, "Failed to create cache")
-	defer cache.Close()
-
-	testKey := "session:update:error"
-	originalSession := &testintegration.TestSession{
-		ID:       testKey,
-		UserID:   "user999",
-		Username: "original",
-		Created:  time.Now().Truncate(time.Second),
-	}
-
-	// Pre-populate cache
-	err = cache.Set(ctx, originalSession, 5*time.Minute)
-	require.NoError(t, err, "Failed to pre-populate cache")
-
-	expectedError := errors.New("simulated updater failure")
-
-	// Updater that always fails
-	var updaterCallCount int64
-	updater := func(old *testintegration.TestSession, exists bool) (*testintegration.TestSession, error) {
-		atomic.AddInt64(&updaterCallCount, 1)
-		t.Logf("💥 Updater called and failing intentionally")
-		
-		// Verify we received the existing value before failing
-		assert.True(t, exists, "Updater should receive exists=true")
-		assert.Equal(t, originalSession.Username, old.Username, "Updater should receive original session")
-		
-		return nil, expectedError
-	}
-
-	t.Logf("💥 Testing Update updater error scenario")
-
-	// Call Update - should return updater error
-	result, err := cache.Update(ctx, testKey, updater, 5*time.Minute)
-	
-	// Assertions
-	assert.Error(t, err, "Update should return error when updater fails")
-	assert.Contains(t, err.Error(), "updater function failed", "Error should indicate updater failure")
-	assert.Nil(t, result, "Update should return nil on updater error")
-	assert.Equal(t, int64(1), atomic.LoadInt64(&updaterCallCount), "Updater should be called once")
-
-	// Verify original value is still in cache (transaction should be rolled back)
-	cachedSession, found, err := cache.Get(ctx, testKey)
-	assert.NoError(t, err, "Follow-up GET should not error")
-	assert.True(t, found, "Original session should still exist in cache")
-	assert.Equal(t, originalSession.Username, cachedSession.Username, "Cached session should still have original username")
-
-	t.Logf("✅ Update updater error test successful - original value preserved")
-}
+// REMOVED: All Update method tests have been removed due to fundamental race conditions.
+// The Update method has been replaced with truly atomic operations:
+// - Increment(ctx, key, delta) for numeric increments
+// - Decrement(ctx, key, delta) for numeric decrements
+// - ExtendTTL(ctx, key, ttl) for TTL extension
+// - Touch(ctx, key, ttl) for activity tracking + TTL extension
+// - AppendToField(ctx, key, fieldPath, value, ttl) for string appends
 
 // TestRedisCache_Update_AtomicReadModifyWrite tests that Update provides atomic read-modify-write semantics
-func TestRedisCache_Update_AtomicReadModifyWrite(t *testing.T) {
+func TestRedisCache_Increment_AtomicCounter(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup test environment
@@ -615,19 +306,7 @@ func TestRedisCache_Update_AtomicReadModifyWrite(t *testing.T) {
 	require.NoError(t, err, "Failed to create cache")
 	defer cache.Close()
 
-	testKey := "session:update:atomic"
-	
-	// Create initial session with a counter in the username
-	initialSession := &testintegration.TestSession{
-		ID:       testKey,
-		UserID:   "counteruser",
-		Username: "counter-0", // Start with counter at 0
-		Created:  time.Now().Truncate(time.Second),
-	}
-
-	// Pre-populate cache
-	err = cache.Set(ctx, initialSession, 5*time.Minute)
-	require.NoError(t, err, "Failed to pre-populate cache")
+	testKey := "counter:atomic:increment"
 
 	const numGoroutines = 10
 	const incrementsPerGoroutine = 5
@@ -635,33 +314,8 @@ func TestRedisCache_Update_AtomicReadModifyWrite(t *testing.T) {
 
 	// Track successful increments
 	var successfulIncrements int64
-	
-	// Updater that increments counter in username
-	incrementUpdater := func(old *testintegration.TestSession, exists bool) (*testintegration.TestSession, error) {
-		if !exists {
-			return nil, errors.New("session should exist for increment test")
-		}
-		
-		// Parse current counter from username
-		var currentCounter int
-		_, err := fmt.Sscanf(old.Username, "counter-%d", &currentCounter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse counter: %w", err)
-		}
-		
-		// Increment counter
-		newCounter := currentCounter + 1
-		
-		// Simulate some processing time to increase chance of race conditions
-		time.Sleep(5 * time.Millisecond)
-		
-		updated := *old // Copy
-		updated.Username = fmt.Sprintf("counter-%d", newCounter)
-		
-		return &updated, nil
-	}
 
-	t.Logf("🔢 Testing Update atomic read-modify-write with %d goroutines", numGoroutines)
+	t.Logf("🔢 Testing Increment atomic counter with %d goroutines", numGoroutines)
 
 	// Use channels to coordinate goroutines
 	startSignal := make(chan struct{})
@@ -672,18 +326,18 @@ func TestRedisCache_Update_AtomicReadModifyWrite(t *testing.T) {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			
+
 			// Wait for start signal
 			<-startSignal
-			
+
 			// Perform multiple increments
 			for i := 0; i < incrementsPerGoroutine; i++ {
-				result, err := cache.Update(ctx, testKey, incrementUpdater, 5*time.Minute)
+				result, err := cache.Increment(ctx, testKey, 1)
 				if err != nil {
 					t.Errorf("Goroutine %d increment %d error: %v", goroutineID, i+1, err)
 				} else {
 					atomic.AddInt64(&successfulIncrements, 1)
-					t.Logf("✅ Goroutine %d increment %d: %s", goroutineID, i+1, result.Username)
+					t.Logf("✅ Goroutine %d increment %d: counter-%d", goroutineID, i+1, result)
 				}
 			}
 		}(g)
@@ -691,7 +345,7 @@ func TestRedisCache_Update_AtomicReadModifyWrite(t *testing.T) {
 
 	// Start all goroutines simultaneously
 	close(startSignal)
-	
+
 	// Wait for all goroutines to complete
 	wg.Wait()
 
@@ -699,20 +353,14 @@ func TestRedisCache_Update_AtomicReadModifyWrite(t *testing.T) {
 	assert.Equal(t, int64(expectedFinalCounter), successfulIncrements, "All increments should succeed")
 
 	// Verify final counter value - this is the critical test for atomicity
-	finalSession, found, err := cache.Get(ctx, testKey)
-	assert.NoError(t, err, "Final GET should not error")
-	assert.True(t, found, "Final session should exist")
+	finalCounterValue, err := cache.Increment(ctx, testKey, 0) // Add 0 to get current value
+	assert.NoError(t, err, "Final counter read should not error")
 
-	// Parse final counter
-	var finalCounter int
-	_, err = fmt.Sscanf(finalSession.Username, "counter-%d", &finalCounter)
-	assert.NoError(t, err, "Should be able to parse final counter")
-
-	// This is the key assertion: if Update provides proper atomicity,
+	// This is the key assertion: if Increment provides proper atomicity,
 	// the final counter should exactly equal the number of increments
-	assert.Equal(t, expectedFinalCounter, finalCounter, 
+	assert.Equal(t, int64(expectedFinalCounter), finalCounterValue,
 		"Final counter should equal total increments (proves atomicity)")
 
-	t.Logf("✅ Update atomic read-modify-write test successful")
-	t.Logf("📊 Expected final counter: %d, Actual final counter: %d", expectedFinalCounter, finalCounter)
+	t.Logf("✅ Increment atomic counter test successful")
+	t.Logf("📊 Expected final counter: %d, Actual final counter: %d", expectedFinalCounter, finalCounterValue)
 }

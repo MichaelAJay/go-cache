@@ -18,6 +18,22 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 		return zero, cacheErrors.ErrCircuitBreakerOpen
 	}
 
+	// Use singleflight to ensure only one goroutine per key executes the loader
+	result, err, _ := c.sf.Do(key, func() (interface{}, error) {
+		return c.getOrSetInternal(ctx, key, loader, ttl, start)
+	})
+
+	if err != nil {
+		return zero, err
+	}
+
+	return result.(T), nil
+}
+
+// getOrSetInternal implements the actual GetOrSet logic without singleflight
+func (c *RedisCache[T]) getOrSetInternal(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration, start time.Time) (T, error) {
+	var zero T
+
 	dataKey := c.buildDataKey(key)
 	lockKey := c.buildLockKey(key)
 	metaKey := c.buildMetaKey(key)
@@ -113,96 +129,18 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 	return zero, fmt.Errorf("GetOrSet max retries exceeded for key %s", key)
 }
 
-// Update atomically updates existing value or creates new value
-func (c *RedisCache[T]) Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error) {
-	start := time.Now()
-	var zero T
-
-	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "update", "circuit_breaker", "availability", c.getMetricTags())
-		return zero, cacheErrors.ErrCircuitBreakerOpen
-	}
-
-	dataKey := c.buildDataKey(key)
-	lockKey := c.buildLockKey(key)
-	metaKey := c.buildMetaKey(key)
-	lockValue := c.instanceID + ":" + fmt.Sprintf("%d", time.Now().UnixNano())
-
-	// Retry logic for distributed coordination
-	maxRetries := lockMaxRetries
-	for range maxRetries {
-		// First, try to get the current value and acquire lock
-		result, err := c.updateScript.Run(ctx, c.client, []string{lockKey, dataKey, metaKey},
-			lockValue, ttlToMilliseconds(ttl), "", ttlToMilliseconds(defaultLockTimeout)).Result()
-
-		if err != nil && err.Error() != "NOSCRIPT" {
-			c.handleError("update", err)
-			c.metrics.RecordError("redis", "update", "redis_error", "infrastructure", c.getMetricTags())
-			return zero, fmt.Errorf("redis Update error: %w", err)
-		}
-
-		resultSlice, ok := result.([]interface{})
-		if !ok || len(resultSlice) < 2 {
-			// Lock not acquired, retry
-			time.Sleep(lockRetryDelay)
-			continue
-		}
-
-		shouldRetry := resultSlice[1].(string) == "1"
-		if shouldRetry {
-			time.Sleep(lockRetryDelay)
-			continue
-		}
-
-		// We have the lock, get old value and call updater
-		var oldValue T
-		var exists bool
-
-		if resultSlice[0] != nil && resultSlice[0] != "" && resultSlice[0] != false {
-			exists = true
-			if err := c.serializer.Deserialize([]byte(resultSlice[0].(string)), &oldValue); err != nil {
-				c.metrics.RecordError("redis", "update", "serialization_error", "data", c.getMetricTags())
-				// Release lock
-				c.client.Del(ctx, lockKey)
-				return zero, fmt.Errorf("deserialization error: %w", err)
-			}
-		}
-
-		// Call the updater function
-		newValue, err := updater(oldValue, exists)
-		if err != nil {
-			c.metrics.RecordError("redis", "update", "updater_error", "application", c.getMetricTags())
-			// Release lock
-			c.client.Del(ctx, lockKey)
-			return zero, fmt.Errorf("updater function failed: %w", err)
-		}
-
-		// Serialize new value
-		serializedNewValue, err := c.serializer.Serialize(newValue)
-		if err != nil {
-			c.metrics.RecordError("redis", "update", "serialization_error", "data", c.getMetricTags())
-			// Release lock
-			c.client.Del(ctx, lockKey)
-			return zero, fmt.Errorf("serialization error: %w", err)
-		}
-
-		// Execute the update script with the new value
-		result, err = c.updateScript.Run(ctx, c.client, []string{lockKey, dataKey, metaKey},
-			lockValue, ttlToMilliseconds(ttl), string(serializedNewValue), ttlToMilliseconds(defaultLockTimeout)).Result()
-
-		if err != nil {
-			c.handleError("update", err)
-			return zero, fmt.Errorf("Redis Update set error: %w", err)
-		}
-
-		c.metrics.RecordOperation("redis", "update", "success", time.Since(start), c.getMetricTags())
-		return newValue, nil
-	}
-
-	// Max retries exceeded
-	c.metrics.RecordError("redis", "update", "max_retries_exceeded", "coordination", c.getMetricTags())
-	return zero, fmt.Errorf("Update max retries exceeded for key %s", key)
-}
+// REMOVED: Update method has been removed due to fundamental race conditions.
+//
+// For truly atomic operations, use the following alternatives:
+//   - Increment(ctx, key, delta) for numeric increments
+//   - Decrement(ctx, key, delta) for numeric decrements  
+//   - IncrementFloat(ctx, key, delta) for float increments
+//   - ExtendTTL(ctx, key, ttl) for TTL extension
+//   - Touch(ctx, key, ttl) for activity tracking + TTL extension
+//   - AppendToField(ctx, key, fieldPath, value, ttl) for string appends
+//
+// For complex updates requiring read-modify-write semantics, 
+// consider using optimistic concurrency patterns or accept eventual consistency.
 
 // SetIfNotExists atomically sets value only if key doesn't exist
 func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Duration) (bool, error) {

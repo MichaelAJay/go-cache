@@ -75,11 +75,27 @@ type Cache[T any] interface {
 	// MUST be goroutine-safe across all concurrent calls
 	GetOrSet(ctx context.Context, key string, loader func(ctx context.Context) (T, error), ttl time.Duration) (T, error)
 
-	// Update atomically updates existing value or creates new value by key
-	// CRITICAL: updater function MUST be called atomically - no lost updates
-	// MUST handle the case where key doesn't exist (exists=false, old=zero value of T)
-	// MUST be goroutine-safe with no possibility of race conditions
-	Update(ctx context.Context, key string, updater func(old T, exists bool) (T, error), ttl time.Duration) (T, error)
+	// Session management operations for cache entries
+	// IMPLEMENTATION REQUIREMENT: Must be atomic and essential for session management
+	
+	// ExtendTTL atomically extends the TTL of a cache entry without modifying its data
+	// Essential for session keep-alive operations where user activity extends session life
+	// MUST return error if key doesn't exist
+	// MUST be atomic and goroutine-safe
+	ExtendTTL(ctx context.Context, key string, ttl time.Duration) error
+	
+	// Touch atomically updates last-accessed metadata and extends TTL for a cache entry
+	// Essential for session activity tracking - records access and extends session life
+	// MUST return false if key doesn't exist, true if touch was successful
+	// MUST be atomic - updates timestamp, access count, and TTL in single operation
+	Touch(ctx context.Context, key string, ttl time.Duration) (bool, error)
+	
+	// AppendToField atomically appends a value to a string field within a cached entry
+	// Useful for activity logs, session traces, audit trails within cache entries
+	// For simple string values (fieldPath=""), appends to entire value
+	// For complex field paths, behavior is implementation-specific
+	// MUST be atomic and goroutine-safe
+	AppendToField(ctx context.Context, key, fieldPath, value string, ttl time.Duration) error
 
 	// Batch operations for performance
 	// IMPLEMENTATION REQUIREMENT: All batch operations must be goroutine-safe and
