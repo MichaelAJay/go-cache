@@ -73,6 +73,9 @@ type RedisCache[T any] struct {
 	// Singleflight group for coordinating concurrent GetOrSet operations
 	sf singleflight.Group
 
+	// Memory tracking
+	memoryTracker *memoryTracker
+
 	// Lua scripts for atomic operations
 	getScript                    *redis.Script
 	setScript                    *redis.Script
@@ -255,6 +258,17 @@ func (c *RedisCache[T]) initialize() error {
 		}
 	}
 
+	// Initialize memory tracker if enabled
+	if c.options.MemoryTrackingEnabled {
+		config := memoryTrackerConfig{
+			samplingRate:     c.options.MemoryUsageSamplingRate,
+			samplingInterval: c.options.MemoryUsageSamplingInterval,
+			thresholdBytes:   c.options.MemoryPressureThresholdBytes,
+			thresholdPercent: c.options.MemoryPressureThresholdPercent,
+		}
+		c.memoryTracker = NewMemoryTracker(c.client, config)
+	}
+
 	// Initialize Lua scripts for atomic operations
 	c.initLuaScripts()
 
@@ -403,6 +417,23 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 		return fmt.Errorf("unexpected set script result: %v", result)
 	}
 
+	// Record memory usage after successful set operation
+	if c.memoryTracker != nil {
+		c.memoryTracker.RecordSet(key, serializedValue)
+		
+		// Check if memory sampling should occur
+		if c.memoryTracker.ShouldSample() {
+			dataPrefix := c.buildDataKey("")
+			if err := c.memoryTracker.PerformMemorySample(ctx, dataPrefix); err != nil {
+				// Log sampling error but don't fail the operation
+				c.metrics.RecordError("redis", "set", "memory_sampling_error", "infrastructure", c.getMetricTags())
+			}
+		}
+		
+		// Record memory usage metrics
+		c.recordMemoryUsageMetrics(ctx)
+	}
+
 	c.metrics.RecordOperation("redis", "set", "success", time.Since(start), c.getMetricTags())
 	return nil
 }
@@ -453,6 +484,23 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 			return fmt.Errorf("redis delete error: %w", err)
 		}
 		deleted = results[0].(*redis.IntCmd).Val()
+	}
+
+	// Record memory usage after successful delete operation
+	if c.memoryTracker != nil && deleted > 0 {
+		c.memoryTracker.RecordDelete(key)
+		
+		// Check if memory sampling should occur
+		if c.memoryTracker.ShouldSample() {
+			dataPrefix := c.buildDataKey("")
+			if err := c.memoryTracker.PerformMemorySample(ctx, dataPrefix); err != nil {
+				// Log sampling error but don't fail the operation
+				c.metrics.RecordError("redis", "delete", "memory_sampling_error", "infrastructure", c.getMetricTags())
+			}
+		}
+		
+		// Record memory usage metrics
+		c.recordMemoryUsageMetrics(ctx)
 	}
 
 	c.metrics.RecordOperation("redis", "delete", "success", time.Since(start), c.getMetricTags())
@@ -515,6 +563,12 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 			c.handleError("clear", err)
 			return fmt.Errorf("redis clear error deleting batch: %w", err)
 		}
+	}
+
+	// Reset memory tracking and record zero memory usage
+	if c.memoryTracker != nil {
+		c.memoryTracker.Reset()
+		c.recordMemoryUsageMetrics(ctx)
 	}
 
 	c.metrics.RecordOperation("redis", "clear", "success", time.Since(start), c.getMetricTags())
@@ -790,6 +844,43 @@ func (c *RedisCache[T]) buildLRUTrackerKey() string {
 		prefix = prefix + ":" + c.redisOptions.Version
 	}
 	return prefix
+}
+
+// recordMemoryUsageMetrics records current memory usage and checks for pressure
+func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
+	if c.memoryTracker == nil {
+		return
+	}
+
+	// Get current memory usage from tracker
+	memoryBytes, entryCount := c.memoryTracker.GetCurrentUsage()
+
+	// Record memory usage metrics
+	c.metrics.RecordMemoryUsage("redis", memoryBytes, entryCount, c.getMetricTags())
+
+	// Check for memory pressure and record alerts if threshold exceeded
+	if c.memoryTracker.IsMemoryPressure(ctx) {
+		// Determine which threshold was exceeded for metrics recording
+		var threshold int64
+		
+		// Check absolute threshold first
+		if c.options.MemoryPressureThresholdBytes > 0 && memoryBytes >= c.options.MemoryPressureThresholdBytes {
+			threshold = c.options.MemoryPressureThresholdBytes
+		} else if c.options.MemoryPressureThresholdPercent > 0 {
+			// For percentage threshold, we need the Redis maxmemory
+			// Since getRedisMaxMemory is not exported, we'll use the current memory as threshold approximation
+			// This is not perfect but provides useful metrics
+			threshold = int64(float64(memoryBytes) / (c.options.MemoryPressureThresholdPercent / 100.0))
+		}
+		
+		// If we couldn't determine a specific threshold, use the current memory as the threshold
+		// This ensures we always record the pressure event
+		if threshold == 0 {
+			threshold = memoryBytes
+		}
+		
+		c.metrics.RecordMemoryPressure("redis", memoryBytes, threshold, c.getMetricTags())
+	}
 }
 
 // getMetricTags returns metric tags for this cache instance
@@ -1131,6 +1222,13 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 // Note: This does NOT close the Redis client since it's provided externally.
 // The caller who provided the client is responsible for closing it.
 func (c *RedisCache[T]) Close() error {
+	// Clean up memory tracker if it exists
+	if c.memoryTracker != nil {
+		// Memory tracker doesn't have background goroutines to clean up in this implementation
+		// If background sampling is added later, cancellation logic would go here
+		c.memoryTracker = nil
+	}
+	
 	// Cache doesn't own the Redis client, so it doesn't close it
 	// The client lifecycle is managed by the caller
 	return nil

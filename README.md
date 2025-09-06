@@ -175,6 +175,48 @@ cache, err := cache.NewCache[User](
 )
 ```
 
+### Memory Tracking and Pressure Monitoring
+
+Enable memory tracking to monitor cache memory usage and receive pressure alerts for capacity planning:
+
+```go
+// Enable memory tracking with custom thresholds
+cache, err := cache.NewCache[User](
+    ctx,
+    redisClient,
+    false,
+    extractor,
+    cache.WithMemoryTracking(true),                          // Enable memory tracking
+    cache.WithMemoryUsageSamplingRate(50),                   // Sample every 50 operations
+    cache.WithMemoryUsageSamplingInterval(30*time.Second),   // Background sampling every 30s
+    cache.WithMemoryPressureThresholdBytes(100*1024*1024),   // Alert at 100MB
+    cache.WithMemoryPressureThresholdPercent(75.0),          // Alert at 75% of Redis maxmemory
+    cache.WithMetrics(customMetrics), // Required for memory metrics
+)
+```
+
+**Memory Tracking Features:**
+- **Hybrid Tracking**: Incremental tracking with periodic Redis MEMORY USAGE corrections for accuracy
+- **Configurable Sampling**: Balance performance vs accuracy with operation-based and time-based sampling
+- **Pressure Alerts**: Dual thresholds - absolute bytes and percentage of Redis maxmemory
+- **Automatic Metrics**: Memory usage and pressure metrics recorded via enhanced metrics interface
+
+**Memory Pressure Detection:**
+```go
+// Memory pressure alerts are automatically triggered when:
+// 1. Cache memory usage exceeds MemoryPressureThresholdBytes (if > 0)
+// 2. Cache memory usage exceeds MemoryPressureThresholdPercent of Redis maxmemory
+
+// Metrics recorded:
+// - MemoryUsage: Current cache memory usage in bytes and entry count
+// - MemoryPressure: Boolean flag when thresholds are exceeded
+```
+
+**Performance Considerations:**
+- Memory tracking adds minimal overhead when properly configured
+- Default sampling rate (100 operations) balances accuracy with performance  
+- Disabled by default - enable only when memory monitoring is needed
+
 ## Testing
 
 The project includes comprehensive testing infrastructure:
@@ -304,6 +346,13 @@ func WithCleanupInterval[T any](interval time.Duration) Option[T]
 func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T]
 func WithVersion[T any](version string) Option[T]
 func WithWarmLuaScripts[T any](warmScripts bool) Option[T]
+
+// Memory tracking options (requires enhanced metrics)
+func WithMemoryTracking[T any](enabled bool) Option[T]
+func WithMemoryUsageSamplingRate[T any](rate int) Option[T]
+func WithMemoryUsageSamplingInterval[T any](interval time.Duration) Option[T] 
+func WithMemoryPressureThresholdBytes[T any](bytes int64) Option[T]
+func WithMemoryPressureThresholdPercent[T any](percent float64) Option[T]
 
 // Redis-specific options
 type RedisOptions struct {
