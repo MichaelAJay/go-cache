@@ -5,6 +5,7 @@ package cache_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,113 +15,174 @@ import (
 )
 
 // ==============================================================================
+// SHARED CACHE INSTANCES FOR FEATURE BENCHMARKS
+// ==============================================================================
+
+var (
+	sharedIndexingCache     interfaces.Cache[benchmarkData]
+	sharedIndexingCacheOnce sync.Once
+	
+	sharedJSONCache         interfaces.Cache[benchmarkData]
+	sharedJSONCacheOnce     sync.Once
+	
+	sharedGobCache          interfaces.Cache[benchmarkData]
+	sharedGobCacheOnce      sync.Once
+	
+	sharedMsgPackCache      interfaces.Cache[benchmarkData]
+	sharedMsgPackCacheOnce  sync.Once
+	
+	sharedScriptWarmCache   interfaces.Cache[benchmarkData]
+	sharedScriptWarmOnce    sync.Once
+	
+	sharedNoScriptWarmCache interfaces.Cache[benchmarkData]
+	sharedNoScriptWarmOnce  sync.Once
+)
+
+// getSharedIndexingCache creates and returns a shared cache with indexing enabled
+func getSharedIndexingCache() interfaces.Cache[benchmarkData] {
+	sharedIndexingCacheOnce.Do(func() {
+		ctx := context.Background()
+		setup := getSharedBenchmarkSetup()
+
+		extractor := &cache.IndexExtractor[benchmarkData]{
+			GetEntryKey: func(data benchmarkData) string { return data.GetID() },
+			GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
+		}
+
+		cacheInstance, err := cache.NewCache(
+			ctx,
+			setup.RedisClient,
+			true, // indexing enabled
+			extractor,
+			cache.WithTTL[benchmarkData](10*time.Minute),
+			cache.WithSerializer[benchmarkData]("msgpack"),
+		)
+		if err != nil {
+			panic("Failed to create shared indexing cache: " + err.Error())
+		}
+		
+		sharedIndexingCache = cacheInstance
+	})
+	return sharedIndexingCache
+}
+
+// getSharedSerializerCache creates and returns a shared cache with specific serializer
+func getSharedSerializerCache(format string) interfaces.Cache[benchmarkData] {
+	switch format {
+	case "json":
+		sharedJSONCacheOnce.Do(func() {
+			sharedJSONCache = createSerializerCache("json")
+		})
+		return sharedJSONCache
+	case "gob":
+		sharedGobCacheOnce.Do(func() {
+			sharedGobCache = createSerializerCache("gob")
+		})
+		return sharedGobCache
+	case "msgpack":
+		sharedMsgPackCacheOnce.Do(func() {
+			sharedMsgPackCache = createSerializerCache("msgpack")
+		})
+		return sharedMsgPackCache
+	default:
+		panic("Unsupported serializer format: " + format)
+	}
+}
+
+// getSharedScriptWarmingCache creates and returns a shared cache with script warming setting
+func getSharedScriptWarmingCache(warmScripts bool) interfaces.Cache[benchmarkData] {
+	if warmScripts {
+		sharedScriptWarmOnce.Do(func() {
+			sharedScriptWarmCache = createScriptWarmingCache(true)
+		})
+		return sharedScriptWarmCache
+	} else {
+		sharedNoScriptWarmOnce.Do(func() {
+			sharedNoScriptWarmCache = createScriptWarmingCache(false)
+		})
+		return sharedNoScriptWarmCache
+	}
+}
+
+// Helper to create serializer cache
+func createSerializerCache(format string) interfaces.Cache[benchmarkData] {
+	ctx := context.Background()
+	setup := getSharedBenchmarkSetup()
+
+	extractor := &cache.IndexExtractor[benchmarkData]{
+		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
+		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
+	}
+
+	cacheInstance, err := cache.NewCache(
+		ctx,
+		setup.RedisClient,
+		false, // no indexing for serializer benchmarks
+		extractor,
+		cache.WithTTL[benchmarkData](10*time.Minute),
+		cache.WithSerializer[benchmarkData](format),
+	)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create shared %s cache: %s", format, err.Error()))
+	}
+	
+	return cacheInstance
+}
+
+// Helper to create script warming cache
+func createScriptWarmingCache(warmScripts bool) interfaces.Cache[benchmarkData] {
+	ctx := context.Background()
+	setup := getSharedBenchmarkSetup()
+
+	extractor := &cache.IndexExtractor[benchmarkData]{
+		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
+		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
+	}
+
+	options := []cache.Option[benchmarkData]{
+		cache.WithTTL[benchmarkData](10*time.Minute),
+		cache.WithSerializer[benchmarkData]("msgpack"),
+	}
+	
+	// Add script warming option if available
+	if warmScripts {
+		options = append(options, cache.WithWarmLuaScripts[benchmarkData](true))
+	}
+
+	cacheInstance, err := cache.NewCache(
+		ctx,
+		setup.RedisClient,
+		false, // no indexing for script warming benchmarks
+		extractor,
+		options...,
+	)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create shared script warming cache (warm=%v): %s", warmScripts, err.Error()))
+	}
+	
+	return cacheInstance
+}
+
+// ==============================================================================
 // HELPER FUNCTIONS FOR FEATURE BENCHMARKS
 // ==============================================================================
 
 // setupBenchmarkCacheWithIndexing creates cache with indexing enabled for comparison benchmarks
 func setupBenchmarkCacheWithIndexing(b *testing.B) interfaces.Cache[benchmarkData] {
 	b.Helper()
-
-	ctx := context.Background()
-
-	// Create a temporary testing.T to satisfy the interface
-	t := &testing.T{}
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-
-	// Cleanup after benchmark
-	b.Cleanup(func() {
-		setup.TestEnv.Close()
-	})
-
-	extractor := &cache.IndexExtractor[benchmarkData]{
-		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
-		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
-	}
-
-	cacheInstance, err := cache.NewCache(
-		ctx,
-		setup.RedisClient,
-		true, // indexing enabled
-		extractor,
-		cache.WithTTL[benchmarkData](10*time.Minute),
-		cache.WithSerializer[benchmarkData]("msgpack"),
-	)
-	if err != nil {
-		b.Fatalf("Failed to create cache with indexing: %v", err)
-	}
-
-	return cacheInstance
+	return getSharedIndexingCache()
 }
 
 // setupBenchmarkCacheWithSerializer creates cache with specific serialization format
 func setupBenchmarkCacheWithSerializer(b *testing.B, format string) interfaces.Cache[benchmarkData] {
 	b.Helper()
-
-	ctx := context.Background()
-
-	// Create a temporary testing.T to satisfy the interface
-	t := &testing.T{}
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-
-	// Cleanup after benchmark
-	b.Cleanup(func() {
-		setup.TestEnv.Close()
-	})
-
-	extractor := &cache.IndexExtractor[benchmarkData]{
-		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
-		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
-	}
-
-	cacheInstance, err := cache.NewCache(
-		ctx,
-		setup.RedisClient,
-		false, // no indexing for serialization tests
-		extractor,
-		cache.WithTTL[benchmarkData](10*time.Minute),
-		cache.WithSerializer[benchmarkData](format), // specific serialization format
-	)
-	if err != nil {
-		b.Fatalf("Failed to create cache with %s serialization: %v", format, err)
-	}
-
-	return cacheInstance
+	return getSharedSerializerCache(format)
 }
 
 // setupBenchmarkCacheWithScriptWarming creates cache with Lua script warming enabled/disabled
 func setupBenchmarkCacheWithScriptWarming(b *testing.B, warmScripts bool) interfaces.Cache[benchmarkData] {
 	b.Helper()
-
-	ctx := context.Background()
-
-	// Create a temporary testing.T to satisfy the interface
-	t := &testing.T{}
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-
-	// Cleanup after benchmark
-	b.Cleanup(func() {
-		setup.TestEnv.Close()
-	})
-
-	extractor := &cache.IndexExtractor[benchmarkData]{
-		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
-		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
-	}
-
-	cacheInstance, err := cache.NewCache(
-		ctx,
-		setup.RedisClient,
-		false, // no indexing for these benchmarks
-		extractor,
-		cache.WithTTL[benchmarkData](10*time.Minute),
-		cache.WithSerializer[benchmarkData]("msgpack"),
-		cache.WithWarmLuaScripts[benchmarkData](warmScripts),
-	)
-	if err != nil {
-		b.Fatalf("Failed to create cache: %v", err)
-	}
-
-	return cacheInstance
+	return getSharedScriptWarmingCache(warmScripts)
 }
 
 // ==============================================================================

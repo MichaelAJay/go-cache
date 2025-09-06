@@ -3,6 +3,7 @@ package cache_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,40 +60,57 @@ func generateBenchmarkData100KB(id string) benchmarkData {
 	}
 }
 
-// Setup helper for benchmarks
+// Shared benchmark instances to avoid repeated setup overhead
+var (
+	sharedBenchmarkCache     interfaces.Cache[benchmarkData]
+	sharedBenchmarkCacheOnce sync.Once
+	
+	sharedBenchmarkSetup     *testintegration.TestEnvironmentSetup
+	sharedBenchmarkSetupOnce sync.Once
+)
+
+// getSharedBenchmarkSetup creates and returns a shared test environment setup
+func getSharedBenchmarkSetup() *testintegration.TestEnvironmentSetup {
+	sharedBenchmarkSetupOnce.Do(func() {
+		ctx := context.Background()
+		t := &testing.T{}
+		sharedBenchmarkSetup = testintegration.SetupTestEnvironment(ctx, t)
+	})
+	return sharedBenchmarkSetup
+}
+
+// getSharedBenchmarkCache creates and returns a shared basic benchmark cache
+func getSharedBenchmarkCache() interfaces.Cache[benchmarkData] {
+	sharedBenchmarkCacheOnce.Do(func() {
+		ctx := context.Background()
+		setup := getSharedBenchmarkSetup()
+
+		extractor := &cache.IndexExtractor[benchmarkData]{
+			GetEntryKey: func(data benchmarkData) string { return data.GetID() },
+			GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
+		}
+
+		cacheInstance, err := cache.NewCache(
+			ctx,
+			setup.RedisClient,
+			false, // no indexing for basic benchmarks
+			extractor,
+			cache.WithTTL[benchmarkData](10*time.Minute),
+			cache.WithSerializer[benchmarkData]("msgpack"),
+		)
+		if err != nil {
+			panic("Failed to create shared benchmark cache: " + err.Error())
+		}
+		
+		sharedBenchmarkCache = cacheInstance
+	})
+	return sharedBenchmarkCache
+}
+
+// Setup helper for benchmarks - now uses shared cache instance
 func setupBenchmarkCache(b *testing.B) interfaces.Cache[benchmarkData] {
 	b.Helper()
-
-	ctx := context.Background()
-
-	// Create individual test environment for each benchmark
-	// In compose mode, this will connect to shared services but reset state
-	t := &testing.T{}
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-
-	// Cleanup after benchmark
-	b.Cleanup(func() {
-		setup.TestEnv.Close()
-	})
-
-	extractor := &cache.IndexExtractor[benchmarkData]{
-		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
-		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
-	}
-
-	cacheInstance, err := cache.NewCache(
-		ctx,
-		setup.RedisClient,
-		false, // no indexing for basic benchmarks
-		extractor,
-		cache.WithTTL[benchmarkData](10*time.Minute),
-		cache.WithSerializer[benchmarkData]("msgpack"),
-	)
-	if err != nil {
-		b.Fatalf("Failed to create cache: %v", err)
-	}
-
-	return cacheInstance
+	return getSharedBenchmarkCache()
 }
 
 // 1. Basic Operation Benchmarks

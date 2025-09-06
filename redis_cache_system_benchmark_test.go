@@ -6,13 +6,51 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/MichaelAJay/go-cache/internal/testintegration"
 )
+
+// ==============================================================================
+// SHARED SYSTEM BENCHMARK CACHES
+// ==============================================================================
+
+var (
+	sharedCircuitBreakerCache     interfaces.Cache[benchmarkData]
+	sharedCircuitBreakerCacheOnce sync.Once
+)
+
+// getSharedCircuitBreakerCache creates and returns a shared circuit breaker cache
+func getSharedCircuitBreakerCache() interfaces.Cache[benchmarkData] {
+	sharedCircuitBreakerCacheOnce.Do(func() {
+		ctx := context.Background()
+		setup := getSharedBenchmarkSetup()
+
+		extractor := &cache.IndexExtractor[benchmarkData]{
+			GetEntryKey: func(data benchmarkData) string { return data.GetID() },
+			GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
+		}
+
+		cacheInstance, err := cache.NewCache(
+			ctx,
+			setup.RedisClient,
+			false, // no indexing for system benchmarks
+			extractor,
+			cache.WithTTL[benchmarkData](10*time.Minute),
+			cache.WithSerializer[benchmarkData]("msgpack"),
+			// Note: Circuit breaker configuration would be added here when available
+		)
+		if err != nil {
+			panic("Failed to create shared circuit breaker cache: " + err.Error())
+		}
+		
+		sharedCircuitBreakerCache = cacheInstance
+	})
+	return sharedCircuitBreakerCache
+}
 
 // ==============================================================================
 // CIRCUIT BREAKER PERFORMANCE BENCHMARKS
@@ -21,36 +59,7 @@ import (
 // setupCircuitBreakerCache creates a cache instance for circuit breaker testing
 func setupCircuitBreakerCache(b *testing.B) interfaces.Cache[benchmarkData] {
 	b.Helper()
-
-	ctx := context.Background()
-
-	// Create a temporary testing.T to satisfy the interface
-	t := &testing.T{}
-	setup := testintegration.SetupTestEnvironment(ctx, t)
-
-	// Cleanup after benchmark
-	b.Cleanup(func() {
-		setup.TestEnv.Close()
-	})
-
-	extractor := &cache.IndexExtractor[benchmarkData]{
-		GetEntryKey: func(data benchmarkData) string { return data.GetID() },
-		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
-	}
-
-	cacheInstance, err := cache.NewCache(
-		ctx,
-		setup.RedisClient,
-		false, // no indexing for these benchmarks
-		extractor,
-		cache.WithTTL[benchmarkData](10*time.Minute),
-		cache.WithSerializer[benchmarkData]("msgpack"),
-	)
-	if err != nil {
-		b.Fatalf("Failed to create cache: %v", err)
-	}
-
-	return cacheInstance
+	return getSharedCircuitBreakerCache()
 }
 
 // forceCircuitBreakerOpen forces the circuit breaker to open by triggering failures
