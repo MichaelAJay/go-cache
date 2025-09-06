@@ -28,6 +28,13 @@ type CacheOptions struct {
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
 
+	// Memory tracking configuration
+	MemoryTrackingEnabled            bool          // Enable memory usage tracking and metrics collection (default: false for performance)
+	MemoryUsageSamplingRate          int           // Operations between Redis MEMORY USAGE samples for accuracy correction (default: 100)
+	MemoryUsageSamplingInterval      time.Duration // Background sampling interval using Redis MEMORY USAGE command (default: 60s)
+	MemoryPressureThresholdBytes     int64         // Absolute memory threshold in bytes for pressure alerts (0 = disabled)
+	MemoryPressureThresholdPercent   float64       // Memory usage percentage threshold for pressure alerts (default: 80.0%)
+
 	WarmLuaScripts bool
 }
 
@@ -53,6 +60,13 @@ func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
 		CleanupInterval:   5 * time.Minute,
 		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
 		GlobalMetricsTags: make(metric.Tags),
+
+		// Memory tracking defaults (disabled by default for safety)
+		MemoryTrackingEnabled:          false,
+		MemoryUsageSamplingRate:        100,
+		MemoryUsageSamplingInterval:    60 * time.Second,
+		MemoryPressureThresholdBytes:   0,     // Disabled
+		MemoryPressureThresholdPercent: 80.0,
 	}
 }
 
@@ -64,6 +78,13 @@ func DefaultOptions() *CacheOptions {
 		CleanupInterval:   5 * time.Minute,
 		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
 		GlobalMetricsTags: make(metric.Tags),
+
+		// Memory tracking defaults (disabled by default for safety)
+		MemoryTrackingEnabled:          false,
+		MemoryUsageSamplingRate:        100,
+		MemoryUsageSamplingInterval:    60 * time.Second,
+		MemoryPressureThresholdBytes:   0,     // Disabled
+		MemoryPressureThresholdPercent: 80.0,
 	}
 }
 
@@ -113,5 +134,35 @@ func (o *CacheOptions) WithSerializer(format string) *CacheOptions {
 // WithRedisClient sets the Redis client (required for cache creation)
 func (o *CacheOptions) WithRedisClient(client redis.Cmdable) *CacheOptions {
 	o.RedisClient = client
+	return o
+}
+
+// WithMemoryTracking enables or disables memory usage tracking
+func (o *CacheOptions) WithMemoryTracking(enabled bool) *CacheOptions {
+	o.MemoryTrackingEnabled = enabled
+	return o
+}
+
+// WithMemoryUsageSamplingRate sets the number of operations between memory samples
+func (o *CacheOptions) WithMemoryUsageSamplingRate(rate int) *CacheOptions {
+	o.MemoryUsageSamplingRate = rate
+	return o
+}
+
+// WithMemoryUsageSamplingInterval sets the time interval for background memory sampling
+func (o *CacheOptions) WithMemoryUsageSamplingInterval(interval time.Duration) *CacheOptions {
+	o.MemoryUsageSamplingInterval = interval
+	return o
+}
+
+// WithMemoryPressureThresholdBytes sets the memory threshold in bytes for pressure alerts (0 = disabled)
+func (o *CacheOptions) WithMemoryPressureThresholdBytes(bytes int64) *CacheOptions {
+	o.MemoryPressureThresholdBytes = bytes
+	return o
+}
+
+// WithMemoryPressureThresholdPercent sets the memory threshold as percentage for pressure alerts
+func (o *CacheOptions) WithMemoryPressureThresholdPercent(percent float64) *CacheOptions {
+	o.MemoryPressureThresholdPercent = percent
 	return o
 }
