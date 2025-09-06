@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -168,7 +167,7 @@ func TestCacheBatchOperationConsistencyProperty(t *testing.T) {
 		// Generate test sessions
 		sessions := make([]*testintegration.TestSession, sessionCount)
 		keys := make([]string, sessionCount)
-		
+
 		for i := 0; i < sessionCount; i++ {
 			sessionID := fmt.Sprintf("%s_session_%d", baseKey, i)
 			sessions[i] = &testintegration.TestSession{
@@ -208,7 +207,7 @@ func TestCacheBatchOperationConsistencyProperty(t *testing.T) {
 				return false
 			}
 			if retrievedSession.UserID != session.UserID {
-				t.Logf("Session %s UserID mismatch: expected %s, got %s", 
+				t.Logf("Session %s UserID mismatch: expected %s, got %s",
 					session.ID, session.UserID, retrievedSession.UserID)
 				return false
 			}
@@ -416,9 +415,9 @@ func TestCacheKeyPatternProperty(t *testing.T) {
 
 	property := func(prefix string, suffix string) bool {
 		// Skip cases with special pattern characters or empty strings
-		if prefix == "" || suffix == "" || 
-		   strings.Contains(prefix, "*") || strings.Contains(prefix, "?") ||
-		   strings.Contains(suffix, "*") || strings.Contains(suffix, "?") {
+		if prefix == "" || suffix == "" ||
+			strings.Contains(prefix, "*") || strings.Contains(prefix, "?") ||
+			strings.Contains(suffix, "*") || strings.Contains(suffix, "?") {
 			return true
 		}
 
@@ -465,7 +464,7 @@ func TestCacheKeyPatternProperty(t *testing.T) {
 		}
 
 		if len(matchingKeys) != expectedMatches {
-			t.Logf("Pattern matching failed: pattern %s expected %d matches, got %d", 
+			t.Logf("Pattern matching failed: pattern %s expected %d matches, got %d",
 				pattern, expectedMatches, len(matchingKeys))
 			return false
 		}

@@ -18,10 +18,11 @@ func BenchmarkRedisCache_GetMany_10Keys(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
 
-	// Pre-populate cache with test data
+	// Pre-populate cache with test data using unique prefix to avoid key collisions
+	benchPrefix := fmt.Sprintf("bench:getmany:10:%d", time.Now().UnixNano())
 	keys := make([]string, 10)
-	for i := 0; i < 10; i++ {
-		testData := generateBenchmarkData1KB(fmt.Sprintf("bench:getmany:10:%d", i))
+	for i := range 10 {
+		testData := generateBenchmarkData1KB(fmt.Sprintf("%s:%d", benchPrefix, i))
 		err := cache.Set(ctx, testData, 10*time.Minute)
 		if err != nil {
 			b.Fatalf("Failed to pre-populate cache: %v", err)
@@ -48,10 +49,11 @@ func BenchmarkRedisCache_GetMany_100Keys(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
 
-	// Pre-populate cache with test data
+	// Pre-populate cache with test data using unique prefix to avoid key collisions
+	benchPrefix := fmt.Sprintf("bench:getmany:100:%d", time.Now().UnixNano())
 	keys := make([]string, 100)
 	for i := 0; i < 100; i++ {
-		testData := generateBenchmarkData1KB(fmt.Sprintf("bench:getmany:100:%d", i))
+		testData := generateBenchmarkData1KB(fmt.Sprintf("%s:%d", benchPrefix, i))
 		err := cache.Set(ctx, testData, 10*time.Minute)
 		if err != nil {
 			b.Fatalf("Failed to pre-populate cache: %v", err)
@@ -78,10 +80,11 @@ func BenchmarkRedisCache_GetMany_1000Keys(b *testing.B) {
 	cache := setupBenchmarkCache(b)
 	ctx := context.Background()
 
-	// Pre-populate cache with test data
+	// Pre-populate cache with test data using unique prefix to avoid key collisions
+	benchPrefix := fmt.Sprintf("bench:getmany:1000:%d", time.Now().UnixNano())
 	keys := make([]string, 1000)
 	for i := 0; i < 1000; i++ {
-		testData := generateBenchmarkData1KB(fmt.Sprintf("bench:getmany:1000:%d", i))
+		testData := generateBenchmarkData1KB(fmt.Sprintf("%s:%d", benchPrefix, i))
 		err := cache.Set(ctx, testData, 10*time.Minute)
 		if err != nil {
 			b.Fatalf("Failed to pre-populate cache: %v", err)
