@@ -7,6 +7,7 @@
 # Environment variables:
 #   BENCHTIME=1s      - Duration per benchmark (default: 3s)
 #   COUNT=5           - Number of runs per benchmark (default: 5) 
+#   TIMEOUT=30m       - Test timeout (default: 30m)
 #   LATENCY_MODE=enabled - Enable network latency simulation
 #   LATENCY_MS=100    - Latency in milliseconds
 
@@ -17,6 +18,7 @@ OUTPUT_FILE="${1:-benchmark_$(date +%Y%m%d_%H%M%S).txt}"
 CATEGORY="${2:-all}"
 BENCHTIME="${BENCHTIME:-3s}"
 COUNT="${COUNT:-5}"
+TIMEOUT="${TIMEOUT:-30m}"
 LATENCY_MODE="${LATENCY_MODE:-}"
 LATENCY_MS="${LATENCY_MS:-}"
 
@@ -42,46 +44,46 @@ run_category_benchmarks() {
     case $category in
         "core")
             if [ -n "$test_env" ]; then
-                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(Get|Set|Delete|Has|Clear|GetOrSet|Update|SetIf)" \
+                env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(Get$|GetOrSet|Set$|SetIf|Delete$|Has|Clear|Update)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem -v 2>&1 >> "$output_file"
             else
-                go test -tags=integration -bench="BenchmarkRedisCache_(Get|Set|Delete|Has|Clear|GetOrSet|Update|SetIf)" \
+                go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(Get$|GetOrSet|Set$|SetIf|Delete$|Has|Clear|Update)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem -v >> "$output_file" 2>&1
             fi
             ;;
         "batch")
             if [ -n "$test_env" ]; then
-                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
+                env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem 2>&1 >> "$output_file"
             else
-                go test -tags=integration -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
+                go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(GetMany|SetMany|DeleteMany|.*_Concurrent)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file" 2>&1
             fi
             ;;
         "features")
             if [ -n "$test_env" ]; then
-                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
+                env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem 2>&1 >> "$output_file"
             else
-                go test -tags=integration -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
+                go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(.*Indexing|.*Serialization|.*Script)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file" 2>&1
             fi
             ;;
         "system")
             if [ -n "$test_env" ]; then
-                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
+                env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem 2>&1 >> "$output_file"
             else
-                go test -tags=integration -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
+                go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_(CircuitBreaker|Memory|GC|Connection)" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file" 2>&1
             fi
             ;;
         "all")
             if [ -n "$test_env" ]; then
-                env $test_env go test -tags=integration -bench="BenchmarkRedisCache_" \
+                env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem 2>&1 >> "$output_file"
             else
-                go test -tags=integration -bench="BenchmarkRedisCache_" \
+                go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_" \
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file" 2>&1
             fi
             ;;
@@ -102,6 +104,7 @@ echo "Output file: $OUTPUT_PATH"
 echo "Category: $CATEGORY"
 echo "Benchtime: $BENCHTIME"
 echo "Count: $COUNT"
+echo "Timeout: $TIMEOUT"
 
 # Display latency configuration if enabled
 if [ -n "$LATENCY_MODE" ]; then
@@ -120,7 +123,7 @@ echo ""
 {
     echo "# Go Cache Benchmarks - $(date)"
     echo "# Category: $CATEGORY"
-    echo "# Benchtime: $BENCHTIME, Count: $COUNT"
+    echo "# Benchtime: $BENCHTIME, Count: $COUNT, Timeout: $TIMEOUT"
     if [ -n "$LATENCY_MODE" ]; then
         echo "# Latency: ENABLED${LATENCY_MS:+ (${LATENCY_MS}ms)}"
     else
