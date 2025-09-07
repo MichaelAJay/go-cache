@@ -54,6 +54,7 @@ type RedisCache[T any] struct {
 	serializer serializer.Serializer
 	options    *config.CacheOptions
 	metrics    metrics.EnhancedCacheMetrics
+	precomputedMetrics *metrics.PrecomputedCacheMetrics
 
 	extractor    *IndexExtractor[T] // nil = no indexing
 	indexingMode bool               // derived from extractor != nil
@@ -256,6 +257,18 @@ func (c *RedisCache[T]) initialize() error {
 		} else {
 			c.metrics = metrics.NewNoopEnhancedCacheMetrics()
 		}
+	}
+
+	// Initialize pre-computed metrics for zero-allocation operations
+	if c.options.GoMetricsRegistry != nil {
+		// Create final tags once during initialization to avoid runtime allocation
+		finalTags := make(metric.Tags)
+		if c.options.GlobalMetricsTags != nil {
+			maps.Copy(finalTags, c.options.GlobalMetricsTags)
+		}
+		finalTags["provider"] = "redis"
+		finalTags["instance_id"] = c.instanceID
+		c.precomputedMetrics = metrics.NewPrecomputedCacheMetrics(c.options.GoMetricsRegistry, finalTags)
 	}
 
 	// Initialize memory tracker if enabled
@@ -589,7 +602,11 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "has", "circuit_breaker", "availability", c.getMetricTags())
+		if c.precomputedMetrics != nil {
+			c.precomputedMetrics.HasCircuitBreakerErrorCounter().Inc()
+		} else {
+			c.metrics.RecordError("redis", "has", "circuit_breaker", "availability", c.getMetricTags())
+		}
 		return false
 	}
 
@@ -597,11 +614,21 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	exists, err := c.client.Exists(ctx, dataKey).Result()
 	if err != nil {
 		c.handleError("has", err)
-		c.metrics.RecordError("redis", "has", "redis_error", "infrastructure", c.getMetricTags())
+		if c.precomputedMetrics != nil {
+			c.precomputedMetrics.HasRedisErrorCounter().Inc()
+		} else {
+			c.metrics.RecordError("redis", "has", "redis_error", "infrastructure", c.getMetricTags())
+		}
 		return false
 	}
 
-	c.metrics.RecordOperation("redis", "has", "success", time.Since(start), c.getMetricTags())
+	duration := time.Since(start)
+	if c.precomputedMetrics != nil {
+		c.precomputedMetrics.HasTimer().Record(duration)
+		c.precomputedMetrics.HasSuccessCounter().Inc()
+	} else {
+		c.metrics.RecordOperation("redis", "has", "success", duration, c.getMetricTags())
+	}
 	return exists > 0
 }
 

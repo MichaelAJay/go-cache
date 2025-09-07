@@ -78,6 +78,15 @@ run_category_benchmarks() {
                     -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file" 2>&1
             fi
             ;;
+        "allocation")
+            if [ -n "$test_env" ]; then
+                env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_.*Allocations" \
+                    -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem 2>&1 >> "$output_file"
+            else
+                go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_.*Allocations" \
+                    -run=^$ -benchtime=$BENCHTIME -count=$COUNT -benchmem >> "$output_file" 2>&1
+            fi
+            ;;
         "all")
             if [ -n "$test_env" ]; then
                 env $test_env go test -tags=integration -timeout=$TIMEOUT -bench="BenchmarkRedisCache_" \
@@ -89,7 +98,7 @@ run_category_benchmarks() {
             ;;
         *)
             echo "Unknown category: $category"
-            echo "Available categories: core, batch, features, system, all"
+            echo "Available categories: core, batch, features, system, allocation, all"
             exit 1
             ;;
     esac
