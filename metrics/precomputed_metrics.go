@@ -20,6 +20,9 @@ type PrecomputedCacheMetrics struct {
 	decrementTimer          metric.Timer
 	incrementFloatTimer     metric.Timer
 	extendTTLTimer          metric.Timer
+	touchTimer              metric.Timer
+	appendFieldTimer        metric.Timer
+	getMetadataTimer        metric.Timer
 	getOrSetTimer           metric.Timer
 	setIfExistsTimer        metric.Timer
 	setIfNotExistsTimer     metric.Timer
@@ -44,6 +47,11 @@ type PrecomputedCacheMetrics struct {
 	decrementSuccessCounter          metric.Counter
 	incrementFloatSuccessCounter     metric.Counter
 	extendTTLSuccessCounter          metric.Counter
+	touchSuccessCounter              metric.Counter
+	appendFieldSuccessCounter        metric.Counter
+	getMetadataSuccessCounter        metric.Counter
+	getMetadataNotFoundCounter       metric.Counter
+	cleanupOrphanedMetadataSuccessCounter metric.Counter
 	getOrSetSuccessCounter           metric.Counter
 	getOrSetHitCounter               metric.Counter
 	getOrSetLoadedCounter            metric.Counter
@@ -96,6 +104,14 @@ type PrecomputedCacheMetrics struct {
 	extendTTLCircuitBreakerErrorCounter     metric.Counter
 	extendTTLRedisErrorCounter              metric.Counter
 	extendTTLKeyNotFoundErrorCounter        metric.Counter
+	touchCircuitBreakerErrorCounter         metric.Counter
+	touchRedisErrorCounter                  metric.Counter
+	touchKeyNotFoundErrorCounter            metric.Counter
+	appendFieldCircuitBreakerErrorCounter   metric.Counter
+	appendFieldRedisErrorCounter            metric.Counter
+	appendFieldUnsupportedOperationErrorCounter metric.Counter
+	getMetadataCircuitBreakerErrorCounter   metric.Counter
+	getMetadataRedisErrorCounter            metric.Counter
 	getOrSetCircuitBreakerErrorCounter      metric.Counter
 	getOrSetRedisErrorCounter               metric.Counter
 	getOrSetSerializationErrorCounter       metric.Counter
@@ -122,6 +138,11 @@ type PrecomputedCacheMetrics struct {
 	getManyBatchCounter    metric.Counter
 	setManyBatchCounter    metric.Counter
 	deleteManyBatchCounter metric.Counter
+	
+	// System operation metrics
+	memoryUsageGauge       metric.Gauge
+	memoryPressureCounter  metric.Counter
+	securityEventCounter   metric.Counter
 }
 
 // NewPrecomputedCacheMetrics creates a new PrecomputedCacheMetrics instance
@@ -154,6 +175,9 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.decrementTimer = createTimer(registry, "cache_operation_duration", "Duration of decrement operations", tags, "decrement")
 	pcm.incrementFloatTimer = createTimer(registry, "cache_operation_duration", "Duration of increment_float operations", tags, "increment_float")
 	pcm.extendTTLTimer = createTimer(registry, "cache_operation_duration", "Duration of extend_ttl operations", tags, "extend_ttl")
+	pcm.touchTimer = createTimer(registry, "cache_operation_duration", "Duration of touch operations", tags, "touch")
+	pcm.appendFieldTimer = createTimer(registry, "cache_operation_duration", "Duration of append_field operations", tags, "append_field")
+	pcm.getMetadataTimer = createTimer(registry, "cache_operation_duration", "Duration of getmetadata operations", tags, "getmetadata")
 	pcm.getOrSetTimer = createTimer(registry, "cache_operation_duration", "Duration of getorset operations", tags, "getorset")
 	pcm.setIfExistsTimer = createTimer(registry, "cache_operation_duration", "Duration of setifexists operations", tags, "setifexists")
 	pcm.setIfNotExistsTimer = createTimer(registry, "cache_operation_duration", "Duration of setifnotexists operations", tags, "setifnotexists")
@@ -178,6 +202,11 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.decrementSuccessCounter = createOperationCounter(registry, tags, "decrement", "success")
 	pcm.incrementFloatSuccessCounter = createOperationCounter(registry, tags, "increment_float", "success")
 	pcm.extendTTLSuccessCounter = createOperationCounter(registry, tags, "extend_ttl", "success")
+	pcm.touchSuccessCounter = createOperationCounter(registry, tags, "touch", "success")
+	pcm.appendFieldSuccessCounter = createOperationCounter(registry, tags, "append_field", "success")
+	pcm.getMetadataSuccessCounter = createOperationCounter(registry, tags, "getmetadata", "success")
+	pcm.getMetadataNotFoundCounter = createOperationCounter(registry, tags, "getmetadata", "not_found")
+	pcm.cleanupOrphanedMetadataSuccessCounter = createOperationCounter(registry, tags, "cleanup_orphaned_metadata", "success")
 	pcm.getOrSetSuccessCounter = createOperationCounter(registry, tags, "getorset", "success")
 	pcm.getOrSetHitCounter = createOperationCounter(registry, tags, "getorset", "hit")
 	pcm.getOrSetLoadedCounter = createOperationCounter(registry, tags, "getorset", "loaded")
@@ -230,6 +259,14 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.extendTTLCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "extend_ttl", "circuit_breaker", "availability")
 	pcm.extendTTLRedisErrorCounter = createErrorCounter(registry, tags, "extend_ttl", "redis_error", "infrastructure")
 	pcm.extendTTLKeyNotFoundErrorCounter = createErrorCounter(registry, tags, "extend_ttl", "key_not_found", "data")
+	pcm.touchCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "touch", "circuit_breaker", "availability")
+	pcm.touchRedisErrorCounter = createErrorCounter(registry, tags, "touch", "redis_error", "infrastructure")
+	pcm.touchKeyNotFoundErrorCounter = createErrorCounter(registry, tags, "touch", "key_not_found", "data")
+	pcm.appendFieldCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "append_field", "circuit_breaker", "availability")
+	pcm.appendFieldRedisErrorCounter = createErrorCounter(registry, tags, "append_field", "redis_error", "infrastructure")
+	pcm.appendFieldUnsupportedOperationErrorCounter = createErrorCounter(registry, tags, "append_field", "unsupported_operation", "application")
+	pcm.getMetadataCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "getmetadata", "circuit_breaker", "availability")
+	pcm.getMetadataRedisErrorCounter = createErrorCounter(registry, tags, "getmetadata", "redis_error", "infrastructure")
 	pcm.getOrSetCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "getorset", "circuit_breaker", "availability")
 	pcm.getOrSetRedisErrorCounter = createErrorCounter(registry, tags, "getorset", "redis_error", "infrastructure")
 	pcm.getOrSetSerializationErrorCounter = createErrorCounter(registry, tags, "getorset", "serialization_error", "data")
@@ -256,6 +293,11 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.getManyBatchCounter = createBatchOperationCounter(registry, tags, "getmany")
 	pcm.setManyBatchCounter = createBatchOperationCounter(registry, tags, "setmany")
 	pcm.deleteManyBatchCounter = createBatchOperationCounter(registry, tags, "deletemany")
+	
+	// Initialize system metrics
+	pcm.memoryUsageGauge = createMemoryUsageGauge(registry, tags)
+	pcm.memoryPressureCounter = createMemoryPressureCounter(registry, tags)
+	pcm.securityEventCounter = createSecurityEventCounter(registry, tags)
 	
 	return pcm
 }
@@ -344,6 +386,48 @@ func createBatchOperationCounter(registry metric.Registry, baseTags metric.Tags,
 	})
 }
 
+func createMemoryUsageGauge(registry metric.Registry, baseTags metric.Tags) metric.Gauge {
+	tags := make(metric.Tags, len(baseTags))
+	for k, v := range baseTags {
+		tags[k] = v
+	}
+	
+	return registry.Gauge(metric.Options{
+		Name:        "cache_memory_usage_bytes",
+		Description: "Current cache memory usage in bytes",
+		Unit:        "bytes",
+		Tags:        tags,
+	})
+}
+
+func createMemoryPressureCounter(registry metric.Registry, baseTags metric.Tags) metric.Counter {
+	tags := make(metric.Tags, len(baseTags))
+	for k, v := range baseTags {
+		tags[k] = v
+	}
+	
+	return registry.Counter(metric.Options{
+		Name:        "cache_memory_pressure_events_total",
+		Description: "Total number of cache memory pressure events",
+		Unit:        "count",
+		Tags:        tags,
+	})
+}
+
+func createSecurityEventCounter(registry metric.Registry, baseTags metric.Tags) metric.Counter {
+	tags := make(metric.Tags, len(baseTags))
+	for k, v := range baseTags {
+		tags[k] = v
+	}
+	
+	return registry.Counter(metric.Options{
+		Name:        "cache_security_events_total",
+		Description: "Total number of cache security events",
+		Unit:        "count",
+		Tags:        tags,
+	})
+}
+
 // Access methods provide zero-allocation metric access
 // All metrics are pre-computed, so these simply return the cached instances
 
@@ -360,6 +444,9 @@ func (pcm *PrecomputedCacheMetrics) IncrementTimer() metric.Timer { return pcm.i
 func (pcm *PrecomputedCacheMetrics) DecrementTimer() metric.Timer { return pcm.decrementTimer }
 func (pcm *PrecomputedCacheMetrics) IncrementFloatTimer() metric.Timer { return pcm.incrementFloatTimer }
 func (pcm *PrecomputedCacheMetrics) ExtendTTLTimer() metric.Timer { return pcm.extendTTLTimer }
+func (pcm *PrecomputedCacheMetrics) TouchTimer() metric.Timer { return pcm.touchTimer }
+func (pcm *PrecomputedCacheMetrics) AppendFieldTimer() metric.Timer { return pcm.appendFieldTimer }
+func (pcm *PrecomputedCacheMetrics) GetMetadataTimer() metric.Timer { return pcm.getMetadataTimer }
 func (pcm *PrecomputedCacheMetrics) GetOrSetTimer() metric.Timer { return pcm.getOrSetTimer }
 func (pcm *PrecomputedCacheMetrics) SetIfExistsTimer() metric.Timer { return pcm.setIfExistsTimer }
 func (pcm *PrecomputedCacheMetrics) SetIfNotExistsTimer() metric.Timer { return pcm.setIfNotExistsTimer }
@@ -384,6 +471,11 @@ func (pcm *PrecomputedCacheMetrics) IncrementSuccessCounter() metric.Counter { r
 func (pcm *PrecomputedCacheMetrics) DecrementSuccessCounter() metric.Counter { return pcm.decrementSuccessCounter }
 func (pcm *PrecomputedCacheMetrics) IncrementFloatSuccessCounter() metric.Counter { return pcm.incrementFloatSuccessCounter }
 func (pcm *PrecomputedCacheMetrics) ExtendTTLSuccessCounter() metric.Counter { return pcm.extendTTLSuccessCounter }
+func (pcm *PrecomputedCacheMetrics) TouchSuccessCounter() metric.Counter { return pcm.touchSuccessCounter }
+func (pcm *PrecomputedCacheMetrics) AppendFieldSuccessCounter() metric.Counter { return pcm.appendFieldSuccessCounter }
+func (pcm *PrecomputedCacheMetrics) GetMetadataSuccessCounter() metric.Counter { return pcm.getMetadataSuccessCounter }
+func (pcm *PrecomputedCacheMetrics) GetMetadataNotFoundCounter() metric.Counter { return pcm.getMetadataNotFoundCounter }
+func (pcm *PrecomputedCacheMetrics) CleanupOrphanedMetadataSuccessCounter() metric.Counter { return pcm.cleanupOrphanedMetadataSuccessCounter }
 func (pcm *PrecomputedCacheMetrics) GetOrSetSuccessCounter() metric.Counter { return pcm.getOrSetSuccessCounter }
 func (pcm *PrecomputedCacheMetrics) GetOrSetHitCounter() metric.Counter { return pcm.getOrSetHitCounter }
 func (pcm *PrecomputedCacheMetrics) GetOrSetLoadedCounter() metric.Counter { return pcm.getOrSetLoadedCounter }
@@ -436,6 +528,14 @@ func (pcm *PrecomputedCacheMetrics) IncrementFloatTimeoutErrorCounter() metric.C
 func (pcm *PrecomputedCacheMetrics) ExtendTTLCircuitBreakerErrorCounter() metric.Counter { return pcm.extendTTLCircuitBreakerErrorCounter }
 func (pcm *PrecomputedCacheMetrics) ExtendTTLRedisErrorCounter() metric.Counter { return pcm.extendTTLRedisErrorCounter }
 func (pcm *PrecomputedCacheMetrics) ExtendTTLKeyNotFoundErrorCounter() metric.Counter { return pcm.extendTTLKeyNotFoundErrorCounter }
+func (pcm *PrecomputedCacheMetrics) TouchCircuitBreakerErrorCounter() metric.Counter { return pcm.touchCircuitBreakerErrorCounter }
+func (pcm *PrecomputedCacheMetrics) TouchRedisErrorCounter() metric.Counter { return pcm.touchRedisErrorCounter }
+func (pcm *PrecomputedCacheMetrics) TouchKeyNotFoundErrorCounter() metric.Counter { return pcm.touchKeyNotFoundErrorCounter }
+func (pcm *PrecomputedCacheMetrics) AppendFieldCircuitBreakerErrorCounter() metric.Counter { return pcm.appendFieldCircuitBreakerErrorCounter }
+func (pcm *PrecomputedCacheMetrics) AppendFieldRedisErrorCounter() metric.Counter { return pcm.appendFieldRedisErrorCounter }
+func (pcm *PrecomputedCacheMetrics) AppendFieldUnsupportedOperationErrorCounter() metric.Counter { return pcm.appendFieldUnsupportedOperationErrorCounter }
+func (pcm *PrecomputedCacheMetrics) GetMetadataCircuitBreakerErrorCounter() metric.Counter { return pcm.getMetadataCircuitBreakerErrorCounter }
+func (pcm *PrecomputedCacheMetrics) GetMetadataRedisErrorCounter() metric.Counter { return pcm.getMetadataRedisErrorCounter }
 func (pcm *PrecomputedCacheMetrics) GetOrSetCircuitBreakerErrorCounter() metric.Counter { return pcm.getOrSetCircuitBreakerErrorCounter }
 func (pcm *PrecomputedCacheMetrics) GetOrSetRedisErrorCounter() metric.Counter { return pcm.getOrSetRedisErrorCounter }
 func (pcm *PrecomputedCacheMetrics) GetOrSetSerializationErrorCounter() metric.Counter { return pcm.getOrSetSerializationErrorCounter }
@@ -462,3 +562,8 @@ func (pcm *PrecomputedCacheMetrics) DeleteManyRedisErrorCounter() metric.Counter
 func (pcm *PrecomputedCacheMetrics) GetManyBatchCounter() metric.Counter { return pcm.getManyBatchCounter }
 func (pcm *PrecomputedCacheMetrics) SetManyBatchCounter() metric.Counter { return pcm.setManyBatchCounter }
 func (pcm *PrecomputedCacheMetrics) DeleteManyBatchCounter() metric.Counter { return pcm.deleteManyBatchCounter }
+
+// System metrics access methods
+func (pcm *PrecomputedCacheMetrics) MemoryUsageGauge() metric.Gauge { return pcm.memoryUsageGauge }
+func (pcm *PrecomputedCacheMetrics) MemoryPressureCounter() metric.Counter { return pcm.memoryPressureCounter }
+func (pcm *PrecomputedCacheMetrics) SecurityEventCounter() metric.Counter { return pcm.securityEventCounter }
