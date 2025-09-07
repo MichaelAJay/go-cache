@@ -15,6 +15,7 @@ import (
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/config"
 	"github.com/MichaelAJay/go-cache/interfaces"
+	"github.com/MichaelAJay/go-cache/internal/slicepool"
 	"github.com/MichaelAJay/go-cache/internal/stringpool"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
@@ -77,6 +78,9 @@ type RedisCache[T any] struct {
 
 	// Memory tracking
 	memoryTracker *memoryTracker
+
+	// Slice pool for batch operation optimization
+	slicePool *slicepool.SlicePool
 
 	// Lua scripts for atomic operations
 	getScript                    *redis.Script
@@ -284,6 +288,9 @@ func (c *RedisCache[T]) initialize() error {
 		}
 		c.memoryTracker = NewMemoryTracker(c.client, config)
 	}
+
+	// Initialize slice pool for batch operation optimization
+	c.slicePool = slicepool.NewSlicePool()
 
 	// Initialize Lua scripts for atomic operations
 	c.initLuaScripts()
@@ -797,18 +804,13 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 // buildDataKey constructs the Redis key for data storage
 func (c *RedisCache[T]) buildDataKey(key string) string {
-	// Fast path for no prefix/version - return raw key
-	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.DataPrefix == "") {
-		return key
-	}
-	
-	// Use pooled string builder for complex keys
+	// Use pooled string builder for all keys to ensure proper prefixing
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
 	
 	// Build the final key with version if configured
 	builder.WriteString(key)
-	if c.redisOptions.Version != "" {
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
 		builder.WriteString(":")
 		builder.WriteString(c.redisOptions.Version)
 	}
@@ -817,7 +819,7 @@ func (c *RedisCache[T]) buildDataKey(key string) string {
 	finalKey := builder.String()
 	builder.Reset()
 	
-	if c.redisOptions.DataPrefix != "" {
+	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
 		builder.WriteString(c.redisOptions.DataPrefix)
 		builder.WriteString(finalKey)
 	} else {
@@ -830,18 +832,13 @@ func (c *RedisCache[T]) buildDataKey(key string) string {
 
 // buildMetaKey constructs the Redis key for metadata storage
 func (c *RedisCache[T]) buildMetaKey(key string) string {
-	// Fast path for no prefix/version - return raw key
-	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.MetaPrefix == "") {
-		return key
-	}
-	
-	// Use pooled string builder for complex keys
+	// Use pooled string builder for all keys to ensure proper prefixing
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
 	
 	// Build the final key with version if configured
 	builder.WriteString(key)
-	if c.redisOptions.Version != "" {
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
 		builder.WriteString(":")
 		builder.WriteString(c.redisOptions.Version)
 	}
@@ -850,7 +847,7 @@ func (c *RedisCache[T]) buildMetaKey(key string) string {
 	finalKey := builder.String()
 	builder.Reset()
 	
-	if c.redisOptions.MetaPrefix != "" {
+	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
 		builder.WriteString(c.redisOptions.MetaPrefix)
 		builder.WriteString(finalKey)
 	} else {
@@ -929,6 +926,94 @@ func (c *RedisCache[T]) buildLRUTrackerKey() string {
 		prefix = prefix + ":" + c.redisOptions.Version
 	}
 	return prefix
+}
+
+// buildDataKeysMany efficiently builds multiple data keys using a single string builder
+// This reduces allocation overhead compared to calling buildDataKey individually
+func (c *RedisCache[T]) buildDataKeysMany(keys []string, dataKeys []string) {
+	if len(keys) != len(dataKeys) {
+		panic("keys and dataKeys slices must have same length")
+	}
+	
+	// Get single string builder for all operations
+	builder := stringpool.Get()
+	defer stringpool.Put(builder)
+	
+	// Determine if we have version/prefix to avoid repeated checks
+	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
+	hasPrefix := c.redisOptions != nil && c.redisOptions.DataPrefix != ""
+	
+	var dataPrefix string
+	if hasPrefix {
+		dataPrefix = c.redisOptions.DataPrefix
+	} else {
+		dataPrefix = "cache:data:"
+	}
+	
+	// Build all keys efficiently
+	for i, key := range keys {
+		builder.Reset()
+		
+		// Build the key with version if needed
+		builder.WriteString(key)
+		if hasVersion {
+			builder.WriteString(":")
+			builder.WriteString(c.redisOptions.Version)
+		}
+		
+		// Get intermediate result
+		keyWithVersion := builder.String()
+		builder.Reset()
+		
+		// Add prefix and store final result
+		builder.WriteString(dataPrefix)
+		builder.WriteString(keyWithVersion)
+		dataKeys[i] = builder.String()
+	}
+}
+
+// buildMetaKeysMany efficiently builds multiple metadata keys using a single string builder
+// This reduces allocation overhead compared to calling buildMetaKey individually
+func (c *RedisCache[T]) buildMetaKeysMany(keys []string, metaKeys []string) {
+	if len(keys) != len(metaKeys) {
+		panic("keys and metaKeys slices must have same length")
+	}
+	
+	// Get single string builder for all operations
+	builder := stringpool.Get()
+	defer stringpool.Put(builder)
+	
+	// Determine if we have version/prefix to avoid repeated checks
+	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
+	hasPrefix := c.redisOptions != nil && c.redisOptions.MetaPrefix != ""
+	
+	var metaPrefix string
+	if hasPrefix {
+		metaPrefix = c.redisOptions.MetaPrefix
+	} else {
+		metaPrefix = "cache:meta:"
+	}
+	
+	// Build all keys efficiently
+	for i, key := range keys {
+		builder.Reset()
+		
+		// Build the key with version if needed
+		builder.WriteString(key)
+		if hasVersion {
+			builder.WriteString(":")
+			builder.WriteString(c.redisOptions.Version)
+		}
+		
+		// Get intermediate result
+		keyWithVersion := builder.String()
+		builder.Reset()
+		
+		// Add prefix and store final result
+		builder.WriteString(metaPrefix)
+		builder.WriteString(keyWithVersion)
+		metaKeys[i] = builder.String()
+	}
 }
 
 // recordMemoryUsageMetrics records current memory usage and checks for pressure

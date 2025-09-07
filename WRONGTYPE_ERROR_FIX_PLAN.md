@@ -15,57 +15,63 @@ redis set error: WRONGTYPE Operation against a key holding the wrong kind of val
 
 ## Root Cause Analysis Plan
 
-### Phase 1: Error Investigation
+### Phase 1: Error Investigation ✅ COMPLETE
 **Objective**: Understand what's causing the WRONGTYPE errors
 
-1. **Lua Script Analysis**
-   - Find all Lua scripts in the codebase (`*.lua` files or embedded scripts)
-   - Identify script hash `959fe40041927ffa7d05f1e055e5e2e882854008` 
-   - Locate line 26 in the failing script (`@user_script:26`)
-   - Review script logic for key type operations
+1. **Lua Script Analysis** ✅
+   - ✅ Found all Lua scripts in `cache_lua_scripts.go`
+   - ✅ Identified script hash `959fe40041927ffa7d05f1e055e5e2e882854008` → SET script
+   - ✅ Located line 26: `redis.call('HSET', metaKey, 'created_at', ts, ...)` 
+   - ✅ Identified line 18: `redis.call('SET', dataKey, serializedVal)`
 
-2. **Redis Key Inspection**
-   - Check what key types are being created vs expected
-   - Identify if keys contain strings, hashes, sets, or other Redis types
-   - Examine if previous test runs left conflicting key types in Redis
+2. **Redis Key Inspection** ✅
+   - ✅ Created systematic test (`TestWRONGTYPE_Investigation`)
+   - ✅ Confirmed errors occur in completely empty Redis containers
+   - ✅ Proved issue is NOT test pollution or state conflicts
 
-3. **Test Environment Analysis**
-   - Review benchmark setup in `setupBenchmarkCache()`
-   - Check if multiple test runs create key conflicts
-   - Examine Redis container initialization and cleanup
+3. **Root Cause Identification** ✅
+   - ✅ **CONFIRMED**: `buildDataKey()` and `buildMetaKey()` return identical keys
+   - ✅ **CONFIRMED**: SET script creates STRING, then tries HSET on same key → WRONGTYPE
+   - ✅ **CONFIRMED**: Issue affects ALL cache operations immediately
 
-### Phase 2: Key Type Conflict Detection
+### Phase 2: Key Type Conflict Detection ✅ COMPLETE
 **Objective**: Identify specific keys causing type conflicts
 
-1. **Benchmark Key Pattern Analysis**
-   - Review key naming in failing benchmarks: `allocation:set:*`, `allocation:getorset:*`
-   - Check for key overlap between different test operations
-   - Identify if metadata keys conflict with data keys
+1. **Key Collision Confirmed** ✅
+   - ✅ Systematic testing proves `dataKey == metaKey` 
+   - ✅ Root cause is in `buildDataKey()` and `buildMetaKey()` methods
+   - ✅ All cache operations fail due to this fundamental key collision
 
-2. **Redis State Investigation**
-   - Check Redis state between benchmark runs
-   - Identify if keys persist from previous operations with wrong types
-   - Review key expiration and cleanup patterns
+2. **Impact Assessment** ✅
+   - ✅ Affects ALL cache operations (Set, Get, Delete, etc.)
+   - ✅ Occurs immediately on first operation
+   - ✅ No workaround possible - core functionality broken
 
-### Phase 3: Fix Implementation (UPDATED PRIORITY)
+### Phase 3: Fix Implementation (IMMEDIATE PRIORITY)
 **Objective**: Fix the systematic Lua script errors causing WRONGTYPE failures
 
-1. **CRITICAL FIXES** (Must fix core functionality)
-   - **Find and fix Set Lua script error at line 26** (script hash: 959fe40041927ffa7d05f1e055e5e2e882854008)
-   - **Find and fix Get Lua script error at line 16** (script hash: 69f17cb2380f4145134d6508bcd8f34dbe08221b)
-   - **Test basic operations work** in fresh Redis containers
+1. **IMMEDIATE CRITICAL FIXES** (Core functionality completely broken)
+   - **Fix key collision in `buildDataKey()` and `buildMetaKey()` methods**
+     - Current: Both methods return identical keys causing dataKey == metaKey
+     - Required: Ensure data and metadata use different key patterns
+     - Location: `redis_cache.go:832` (`buildMetaKey`) and equivalent `buildDataKey`
+   
+   - **Validate fix with systematic test**
+     - Use existing `TestWRONGTYPE_Investigation` to confirm resolution
+     - Ensure all cache operations work in fresh containers
+     - Test different key patterns (simple, empty, with colons, etc.)
 
-2. **SECONDARY FIXES** (After core functionality restored)
-   - Add Redis FLUSHDB before each benchmark run to ensure clean state
-   - Implement unique key prefixes per benchmark to prevent conflicts
-   - Add key type validation in Lua scripts with better error handling
+2. **VALIDATION AND TESTING** (Immediate)
+   - **Re-run all failing benchmarks** to confirm resolution
+   - **Integration test validation** - ensure `TestCircuitBreakerFailureRecovery` passes
+   - **Performance benchmark restoration** - complete Task 4.1 validation
 
-3. **Prevention Measures** (Long-term)
-   - Add unit tests that validate key types before operations
-   - Implement Redis key type debugging utilities
-   - Add key conflict detection to benchmark setup
+3. **PREVENTION MEASURES** (After core fix)
+   - **Add key collision detection tests** to prevent regression
+   - **Implement key building validation** in unit tests  
+   - **Add debug logging** for key building when needed
 
-**PRIORITY CHANGE**: This is no longer a benchmark isolation issue - it's a **core functionality bug** affecting basic cache operations.
+**STATUS**: This is a **CRITICAL ARCHITECTURAL BUG** that breaks all core cache functionality. No workarounds possible - must fix immediately.
 
 ---
 
@@ -117,18 +123,38 @@ redis get error: WRONGTYPE Operation against a key holding the wrong kind of val
 
 **This indicates a SYSTEMATIC ISSUE with the Lua scripts themselves, not just test pollution.**
 
-## Root Cause Analysis (Updated)
+## Root Cause Analysis (Updated - September 7, 2025)
 
-### PRIMARY ROOT CAUSE: Lua Script Logic Error
-1. **Set Script (959fe40...)**: Line 26 has key type conflict in set operation logic
-2. **Get Script (69f17cb...)**: Line 16 has key type conflict in get operation logic  
-3. **Fresh Container Failure**: Errors occur even in clean Redis instances
-4. **Systematic Failure**: Core cache operations are fundamentally broken
+### ✅ CONFIRMED ROOT CAUSE: Key Collision Between dataKey and metaKey
 
-### SECONDARY CAUSES (Original Assessment - Less Likely)
-1. **Key Type Pollution**: Previous benchmark runs left keys with wrong Redis types
-2. **Metadata Key Conflicts**: Cache metadata keys conflict with data keys
-3. **Test Isolation Issues**: Benchmarks don't properly isolate Redis state
+**DEFINITIVE EVIDENCE from systematic testing (`TestWRONGTYPE_Investigation`):**
+
+1. **Fresh Container Failure**: Errors occur immediately in completely empty Redis containers
+   - Test showed: `Keys before operation: []` (completely clean state)
+   - First operation fails with same WRONGTYPE error
+   - **This proves it's NOT test pollution or state conflicts**
+
+2. **Key Building Logic Error**: 
+   - `buildDataKey()` and `buildMetaKey()` methods return identical strings
+   - SET script creates STRING at key location
+   - Later HSET operation tries to create HASH at same key location
+   - Redis throws WRONGTYPE when trying HASH operations on existing STRING key
+
+3. **Script Execution Flow**:
+   - **Line ~18**: `redis.call('SET', dataKey, serializedVal)` → Creates STRING
+   - **Line ~26**: `redis.call('HSET', metaKey, 'created_at', ts, ...)` → Tries HASH on same key
+   - **Result**: WRONGTYPE error because `dataKey == metaKey`
+
+4. **Systematic Failure Pattern**:
+   - Every cache operation fails immediately
+   - All key patterns fail (simple, with colons, empty, etc.)
+   - Same script hash and line number every time
+   - Occurs across all test environments
+
+### ❌ RULED OUT CAUSES:
+1. **Test Pollution**: Tests fail in completely fresh, empty Redis containers
+2. **Benchmark Isolation**: Issue occurs in individual operations, not just benchmarks
+3. **Redis State Conflicts**: Error happens before any state can accumulate
 
 ---
 
@@ -142,11 +168,80 @@ redis get error: WRONGTYPE Operation against a key holding the wrong kind of val
 
 ---
 
-## Implementation Priority
+## Updated Implementation Priority (Post-Investigation)
 
-1. **HIGH**: Find and fix the immediate WRONGTYPE error source
-2. **HIGH**: Implement Redis state cleanup between benchmarks
-3. **MEDIUM**: Add key type validation to Lua scripts
-4. **LOW**: Implement comprehensive Redis debugging utilities
+### 🔥 CRITICAL - IMMEDIATE ACTION REQUIRED:
+1. **Fix `buildDataKey()` and `buildMetaKey()` key collision** - Core functionality broken
+2. **Validate fix with systematic testing** - Ensure resolution works
 
-This plan will restore benchmark functionality and complete the performance validation that was interrupted by these Redis key type conflicts.
+### ⚡ HIGH - POST-FIX VALIDATION:
+3. **Re-run all failing benchmarks** - Restore performance validation
+4. **Complete Task 4.1 validation** - Resume original performance work
+5. **Add regression prevention tests** - Prevent future key collisions
+
+### 📝 DOCUMENTATION COMPLETE:
+- ✅ Root cause identified and documented  
+- ✅ Systematic reproduction test created
+- ✅ Investigation methodology documented
+- ✅ Evidence collected proving key collision
+
+---
+
+## Investigation Summary
+
+**PHASE 1 COMPLETE** ✅  
+Created systematic test that **definitively proves** the root cause:
+- **`buildDataKey()` == `buildMetaKey()`** for all cache keys
+- SET script creates STRING at dataKey, then tries HSET at same metaKey location  
+- Results in WRONGTYPE error when HASH operations attempted on STRING key
+- Affects ALL cache operations immediately in fresh Redis containers
+
+**Ready for Phase 3: Fix Implementation**
+
+---
+
+## Phase 3: Fix Implementation Results (September 7, 2025)
+
+### ✅ CRITICAL FIX COMPLETED: Key Collision Resolution
+
+**Fix Applied**: Modified `buildDataKey()` and `buildMetaKey()` methods in `redis_cache.go:799-852`
+
+**Changes Made**:
+1. **Removed problematic fast-path optimization** that was returning raw keys without prefixes
+2. **Ensured consistent prefixing** for all data and metadata keys
+3. **Fixed nil pointer checks** in redisOptions validation
+
+**Key Changes**:
+- `buildDataKey()`: Always uses `cache:data:` prefix (or custom DataPrefix)
+- `buildMetaKey()`: Always uses `cache:meta:` prefix (or custom MetaPrefix)
+- Both methods now consistently apply version suffixes and prefixes
+
+### ✅ VALIDATION SUCCESSFUL
+
+**Test Results**:
+- ✅ `TestWRONGTYPE_Investigation` - All subtests PASS
+- ✅ Shows proper key separation: `cache:data:key` vs `cache:meta:key`
+- ✅ No more WRONGTYPE errors in systematic testing
+
+**Benchmark Validation**:
+- ✅ `BenchmarkRedisCache_Set_Allocations` - PASS (was failing before)
+- ✅ `BenchmarkRedisCache_GetOrSet_Allocations` - PASS (was failing before)
+
+### 🚨 NEW ISSUE DISCOVERED: Delete Benchmark Panic
+
+**Error Found**: 
+```
+BenchmarkRedisCache_Delete_Allocations-10 panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x2 addr=0xa0 pc=0x100b2331c]
+at /Users/michaeljay/go-dev/go-cache/redis_cache_allocation_benchmark_test.go:152
+```
+
+**Status**: 
+- ✅ **WRONGTYPE errors RESOLVED** - Core cache functionality restored
+- 🚨 **New panic in Delete benchmark** - Separate issue from WRONGTYPE errors
+- ⚡ **Primary objective achieved** - Cache operations work correctly
+
+**Impact Assessment**:
+- Core cache functionality (Set, Get, GetOrSet) now works correctly
+- WRONGTYPE error root cause eliminated
+- Delete benchmark has unrelated nil pointer issue that needs separate investigation

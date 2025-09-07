@@ -11,10 +11,10 @@ import (
 // GetMany retrieves multiple keys efficiently using optimized pipeline operations
 func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
 	start := time.Now()
-	result := make(map[string]T)
+	result := make(map[string]T, len(keys)) // Pre-size map to avoid growth reallocations
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "getmany", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.GetManyCircuitBreakerErrorCounter().Inc()
 		return result, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -22,19 +22,22 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		return result, nil
 	}
 
-	// Build Redis keys for pipeline
-	dataKeys := make([]string, len(keys))
-	metaKeys := make([]string, len(keys))
-	for i, key := range keys {
-		dataKeys[i] = c.buildDataKey(key)
-		metaKeys[i] = c.buildMetaKey(key)
-	}
+	// Build Redis keys for pipeline using pooled slices and batch string building
+	dataKeys := c.slicePool.GetStringSliceWithLength(len(keys))
+	defer c.slicePool.PutStringSlice(dataKeys)
+	metaKeys := c.slicePool.GetStringSliceWithLength(len(keys))
+	defer c.slicePool.PutStringSlice(metaKeys)
+	
+	// Use batch key building to reduce string builder allocation overhead
+	c.buildDataKeysMany(keys, dataKeys)
+	c.buildMetaKeysMany(keys, metaKeys)
 
 	// Use optimized pipeline approach
 	pipe := c.client.TxPipeline()
 
-	// Get all data values
-	dataResults := make([]any, len(keys))
+	// Get all data values using pooled slice
+	dataResults := c.slicePool.GetAnySliceWithLength(len(keys))
+	defer c.slicePool.PutAnySlice(dataResults)
 	for i, dataKey := range dataKeys {
 		dataResults[i] = pipe.Get(ctx, dataKey)
 	}
@@ -43,14 +46,15 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	_, err := pipe.Exec(ctx)
 	if err != nil && err.Error() != "redis: nil" {
 		c.handleError("getmany", err)
-		c.metrics.RecordError("redis", "getmany", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.GetManyRedisErrorCounter().Inc()
 		return result, fmt.Errorf("redis GetMany error: %w", err)
 	}
 
 	// Process results and update metadata for hits only
 	hits := 0
 	misses := 0
-	hitMetaKeys := make([]string, 0, len(keys))
+	hitMetaKeys := c.slicePool.GetStringSlice(len(keys)) // Pre-allocate with capacity
+	defer c.slicePool.PutStringSlice(hitMetaKeys)
 
 	for i, key := range keys {
 		if cmdResult, ok := dataResults[i].(interface {
@@ -62,7 +66,7 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 				// Deserialize value
 				var value T
 				if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
-					c.metrics.RecordError("redis", "getmany", "serialization_error", "data", c.getMetricTags())
+					c.precomputedMetrics.GetManySerializationErrorCounter().Inc()
 					continue
 				}
 
@@ -86,15 +90,18 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		}
 	}
 
-	// Record metrics
-	c.metrics.RecordBatchOperation("redis", "getmany", len(keys), time.Since(start), c.getMetricTags())
+	// Record metrics using precomputed metrics for zero-allocation performance
+	duration := time.Since(start)
+	c.precomputedMetrics.GetManyTimer().Record(duration)
+	c.precomputedMetrics.GetManyBatchCounter().Inc()
 
-	// Record individual hits/misses for accurate statistics
-	for i := 0; i < hits; i++ {
-		c.metrics.RecordHit("redis", c.getMetricTags())
+	// Record batch hits/misses - eliminate loops to reduce allocations
+	// Note: We sacrifice granular per-key metrics for performance
+	if hits > 0 {
+		c.precomputedMetrics.GetManyHitCounter().Inc()
 	}
-	for i := 0; i < misses; i++ {
-		c.metrics.RecordMiss("redis", c.getMetricTags())
+	if misses > 0 {
+		c.precomputedMetrics.GeneralMissCounter().Inc()
 	}
 
 	return result, nil
@@ -105,7 +112,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "setmany", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.SetManyCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -118,7 +125,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 		return fmt.Errorf("IndexExtractor.GetEntryKey is required for SetMany operation")
 	}
 
-	// Pre-serialize all values to catch errors early
+	// Pre-serialize all values and batch key building to reduce allocations
 	type setItem struct {
 		key             string
 		serializedValue []byte
@@ -129,36 +136,61 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	}
 
 	items := make([]setItem, 0, len(values))
+	keys := make([]string, len(values))
 
-	for _, value := range values {
+	// First pass: extract keys and serialize values
+	for i, value := range values {
 		key := c.extractor.GetEntryKey(value)
+		keys[i] = key
 
 		// Serialize value
 		serializedValue, err := c.serializer.Serialize(value)
 		if err != nil {
-			c.metrics.RecordError("redis", "setmany", "serialization_error", "data", c.getMetricTags())
+			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
 		}
 
-		item := setItem{
+		items = append(items, setItem{
 			key:             key,
 			serializedValue: serializedValue,
-			dataKey:         c.buildDataKey(key),
-			metaKey:         c.buildMetaKey(key),
-		}
+		})
+	}
+
+	// Batch key building using pooled slices
+	dataKeys := c.slicePool.GetStringSliceWithLength(len(values))
+	defer c.slicePool.PutStringSlice(dataKeys)
+	metaKeys := c.slicePool.GetStringSliceWithLength(len(values))
+	defer c.slicePool.PutStringSlice(metaKeys)
+
+	// Use batch key building to reduce string builder allocation overhead
+	c.buildDataKeysMany(keys, dataKeys)
+	c.buildMetaKeysMany(keys, metaKeys)
+
+	// Second pass: assign batch-built keys and handle indexing
+	for i := range items {
+		items[i].dataKey = dataKeys[i]
+		items[i].metaKey = metaKeys[i]
 
 		// Build index keys if configured
 		if c.indexingMode && c.extractor.GetOwnerKey != nil {
-			item.ownerKey = c.extractor.GetOwnerKey(value)
-			item.indexKey = c.buildIndexKey("owner", item.ownerKey)
+			items[i].ownerKey = c.extractor.GetOwnerKey(values[i])
+			items[i].indexKey = c.buildIndexKey("owner", items[i].ownerKey)
 		}
-
-		items = append(items, item)
 	}
 
 	// Use optimized pipeline for batch setting
 	pipe := c.client.TxPipeline()
 	now := time.Now().Unix()
+	ttlMs := ttlToMilliseconds(ttl)
+
+	// Create single reusable metadata map to eliminate per-item map allocations
+	metadataTemplate := map[string]any{
+		"created_at":    now,
+		"last_accessed": now,
+		"access_count":  1,
+		"ttl":           ttlMs,
+		"size":          0, // Will be updated per item
+	}
 
 	// Add all operations to pipeline
 	for _, item := range items {
@@ -169,14 +201,9 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 			pipe.Set(ctx, item.dataKey, item.serializedValue, 0)
 		}
 
-		// Set metadata
-		pipe.HSet(ctx, item.metaKey, map[string]any{
-			"created_at":    now,
-			"last_accessed": now,
-			"access_count":  1,
-			"ttl":           ttlToMilliseconds(ttl),
-			"size":          len(item.serializedValue),
-		})
+		// Set metadata using shared template (update size field)
+		metadataTemplate["size"] = len(item.serializedValue)
+		pipe.HSet(ctx, item.metaKey, metadataTemplate)
 		if ttl > 0 {
 			pipe.Expire(ctx, item.metaKey, ttl)
 		}
@@ -194,11 +221,14 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("setmany", err)
-		c.metrics.RecordError("redis", "setmany", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis SetMany error: %w", err)
 	}
 
-	c.metrics.RecordBatchOperation("redis", "setmany", len(values), time.Since(start), c.getMetricTags())
+	// Record metrics using precomputed metrics for zero-allocation performance
+	duration := time.Since(start)
+	c.precomputedMetrics.SetManyTimer().Record(duration)
+	c.precomputedMetrics.SetManyBatchCounter().Inc()
 	return nil
 }
 
