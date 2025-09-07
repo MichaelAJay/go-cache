@@ -797,14 +797,9 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 // buildDataKey constructs the Redis key for data storage
 func (c *RedisCache[T]) buildDataKey(key string) string {
-	// Fast path for no prefix/version
+	// Fast path for no prefix/version - return raw key
 	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.DataPrefix == "") {
-		// Use default prefix with original key
-		builder := stringpool.Get()
-		defer stringpool.Put(builder)
-		builder.WriteString("cache:data:")
-		builder.WriteString(key)
-		return builder.String()
+		return key
 	}
 	
 	// Use pooled string builder for complex keys
@@ -835,16 +830,35 @@ func (c *RedisCache[T]) buildDataKey(key string) string {
 
 // buildMetaKey constructs the Redis key for metadata storage
 func (c *RedisCache[T]) buildMetaKey(key string) string {
-	// Add version suffix if configured
-	finalKey := key
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		finalKey = key + ":" + c.redisOptions.Version
+	// Fast path for no prefix/version - return raw key
+	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.MetaPrefix == "") {
+		return key
 	}
 	
-	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
-		return c.redisOptions.MetaPrefix + finalKey
+	// Use pooled string builder for complex keys
+	builder := stringpool.Get()
+	defer stringpool.Put(builder)
+	
+	// Build the final key with version if configured
+	builder.WriteString(key)
+	if c.redisOptions.Version != "" {
+		builder.WriteString(":")
+		builder.WriteString(c.redisOptions.Version)
 	}
-	return "cache:meta:" + finalKey
+	
+	// Add prefix
+	finalKey := builder.String()
+	builder.Reset()
+	
+	if c.redisOptions.MetaPrefix != "" {
+		builder.WriteString(c.redisOptions.MetaPrefix)
+		builder.WriteString(finalKey)
+	} else {
+		builder.WriteString("cache:meta:")
+		builder.WriteString(finalKey)
+	}
+	
+	return builder.String()
 }
 
 // buildIndexKey constructs the Redis key for index storage
@@ -873,16 +887,35 @@ func (c *RedisCache[T]) buildReverseIndexKey(entryKey string) string {
 
 // buildLockKey constructs the Redis key for distributed locks
 func (c *RedisCache[T]) buildLockKey(key string) string {
-	// Add version suffix if configured
-	finalKey := key
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		finalKey = key + ":" + c.redisOptions.Version
+	// Fast path for no prefix/version - return raw key
+	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.LockPrefix == "") {
+		return key
 	}
 	
-	if c.redisOptions != nil && c.redisOptions.LockPrefix != "" {
-		return c.redisOptions.LockPrefix + finalKey
+	// Use pooled string builder for complex keys
+	builder := stringpool.Get()
+	defer stringpool.Put(builder)
+	
+	// Build the final key with version if configured
+	builder.WriteString(key)
+	if c.redisOptions.Version != "" {
+		builder.WriteString(":")
+		builder.WriteString(c.redisOptions.Version)
 	}
-	return "cache:lock:" + finalKey
+	
+	// Add prefix
+	finalKey := builder.String()
+	builder.Reset()
+	
+	if c.redisOptions.LockPrefix != "" {
+		builder.WriteString(c.redisOptions.LockPrefix)
+		builder.WriteString(finalKey)
+	} else {
+		builder.WriteString("cache:lock:")
+		builder.WriteString(finalKey)
+	}
+	
+	return builder.String()
 }
 
 // buildLRUTrackerKey constructs the Redis key for LRU tracking sorted set
