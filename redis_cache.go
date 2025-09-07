@@ -551,7 +551,7 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "clear", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.ClearCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -580,7 +580,8 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	}
 
 	if len(allKeys) == 0 {
-		c.metrics.RecordOperation("redis", "clear", "empty", time.Since(start), c.getMetricTags())
+		c.precomputedMetrics.ClearTimer().Record(time.Since(start))
+		c.precomputedMetrics.ClearEmptyCounter().Inc()
 		return nil
 	}
 
@@ -604,7 +605,8 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 		c.recordMemoryUsageMetrics(ctx)
 	}
 
-	c.metrics.RecordOperation("redis", "clear", "success", time.Since(start), c.getMetricTags())
+	c.precomputedMetrics.ClearTimer().Record(time.Since(start))
+	c.precomputedMetrics.ClearSuccessCounter().Inc()
 	return nil
 }
 
@@ -650,7 +652,7 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 	result := make([]T, 0)
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "getbyowner", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.GetByOwnerCircuitBreakerErrorCounter().Inc()
 		return result, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -670,14 +672,15 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 
 	if err != nil {
 		c.handleError("getbyowner", err)
-		c.metrics.RecordError("redis", "getbyowner", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.GetByOwnerRedisErrorCounter().Inc()
 		return result, fmt.Errorf("redis GetByOwner error: %w", err)
 	}
 
 	// Handle empty result
 	resultSlice, ok := scriptResult.([]any)
 	if !ok || len(resultSlice) == 0 {
-		c.metrics.RecordOperation("redis", "getbyowner", "empty", time.Since(start), c.getMetricTags())
+		c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
+		c.precomputedMetrics.GetByOwnerEmptyCounter().Inc()
 		return result, nil
 	}
 
@@ -696,7 +699,7 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 		// Deserialize the value
 		var value T
 		if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
-			c.metrics.RecordError("redis", "getbyowner", "serialization_error", "data", c.getMetricTags())
+			c.precomputedMetrics.GetByOwnerSerializationErrorCounter().Inc()
 			// Continue processing other entries instead of failing completely
 			continue
 		}
@@ -706,11 +709,13 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 
 	// Record appropriate metrics
 	if len(result) > 0 {
-		c.metrics.RecordHit("redis", c.getMetricTags())
-		c.metrics.RecordOperation("redis", "getbyowner", "success", time.Since(start), c.getMetricTags())
+		c.precomputedMetrics.GetByOwnerHitCounter().Inc()
+		c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
+		c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
 	} else {
-		c.metrics.RecordMiss("redis", c.getMetricTags())
-		c.metrics.RecordOperation("redis", "getbyowner", "empty", time.Since(start), c.getMetricTags())
+		c.precomputedMetrics.GetByOwnerMissCounter().Inc()
+		c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
+		c.precomputedMetrics.GetByOwnerEmptyCounter().Inc()
 	}
 
 	return result, nil
@@ -734,7 +739,7 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "deletebyowner", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.DeleteByOwnerCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -755,12 +760,13 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 
 	if err != nil {
 		c.handleError("deletebyowner", err)
-		c.metrics.RecordError("redis", "deletebyowner", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.DeleteByOwnerRedisErrorCounter().Inc()
 		return 0, fmt.Errorf("redis DeleteByOwner error: %w", err)
 	}
 
 	deletedCount = int(result.(int64))
-	c.metrics.RecordOperation("redis", "deletebyowner", "success", time.Since(start), c.getMetricTags())
+	c.precomputedMetrics.DeleteByOwnerTimer().Record(time.Since(start))
+	c.precomputedMetrics.DeleteByOwnerSuccessCounter().Inc()
 	return deletedCount, nil
 }
 
@@ -771,7 +777,7 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "getkeysbypattern", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.GetKeysByPatternCircuitBreakerErrorCounter().Inc()
 		return nil, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -781,7 +787,7 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 	var keys []string
 	if err := c.scanAndCollectKeys(ctx, dataPattern, &keys); err != nil {
 		c.handleError("getkeysbypattern", err)
-		c.metrics.RecordError("redis", "getkeysbypattern", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.GetKeysByPatternRedisErrorCounter().Inc()
 		return nil, fmt.Errorf("redis GetKeysByPattern error: %w", err)
 	}
 
@@ -796,7 +802,8 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 		}
 	}
 
-	c.metrics.RecordOperation("redis", "getkeysbypattern", "success", time.Since(start), c.getMetricTags())
+	c.precomputedMetrics.GetKeysByPatternTimer().Record(time.Since(start))
+	c.precomputedMetrics.GetKeysByPatternSuccessCounter().Inc()
 	return result, nil
 }
 
@@ -1023,10 +1030,10 @@ func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
 	}
 
 	// Get current memory usage from tracker
-	memoryBytes, entryCount := c.memoryTracker.GetCurrentUsage()
+	memoryBytes, _ := c.memoryTracker.GetCurrentUsage()
 
 	// Record memory usage metrics
-	c.metrics.RecordMemoryUsage("redis", memoryBytes, entryCount, c.getMetricTags())
+	c.precomputedMetrics.MemoryUsageGauge().Set(float64(memoryBytes))
 
 	// Check for memory pressure and record alerts if threshold exceeded
 	if c.memoryTracker.IsMemoryPressure(ctx) {
@@ -1049,7 +1056,7 @@ func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
 			threshold = memoryBytes
 		}
 		
-		c.metrics.RecordMemoryPressure("redis", memoryBytes, threshold, c.getMetricTags())
+		c.precomputedMetrics.MemoryPressureCounter().Inc()
 	}
 }
 
@@ -1099,7 +1106,7 @@ func (c *RedisCache[T]) handleError(operation string, err error) {
 
 	if c.failureCount >= circuitBreakerThreshold {
 		c.circuitBreakerOpen = true
-		c.metrics.RecordSecurityEvent("redis", "circuit_breaker_opened", "warning", c.getMetricTags())
+		c.precomputedMetrics.SecurityEventCounter().Inc()
 	}
 }
 
@@ -1109,7 +1116,7 @@ func (c *RedisCache[T]) handleError(operation string, err error) {
 func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) (int64, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordOperation("redis", "increment", "circuit_breaker", time.Since(time.Now()), c.getMetricTags())
+		c.precomputedMetrics.IncrementCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1132,12 +1139,17 @@ func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) 
 			errorType = "key_not_found"
 		}
 		
-		c.metrics.RecordOperation("redis", "increment", errorType, duration, c.getMetricTags())
+		if errorType == "redis_error" {
+			c.precomputedMetrics.IncrementRedisErrorCounter().Inc()
+		} else {
+			c.precomputedMetrics.IncrementTimeoutErrorCounter().Inc()
+		}
 		return 0, fmt.Errorf("increment operation failed: %w", err)
 	}
 	
 	// Record successful operation
-	c.metrics.RecordOperation("redis", "increment", "success", duration, c.getMetricTags())
+	c.precomputedMetrics.IncrementTimer().Record(duration)
+	c.precomputedMetrics.IncrementSuccessCounter().Inc()
 	
 	return result, nil
 }
@@ -1146,7 +1158,7 @@ func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) 
 func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) (int64, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordOperation("redis", "decrement", "circuit_breaker", time.Since(time.Now()), c.getMetricTags())
+		c.precomputedMetrics.DecrementCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1169,12 +1181,17 @@ func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) 
 			errorType = "key_not_found"
 		}
 		
-		c.metrics.RecordOperation("redis", "decrement", errorType, duration, c.getMetricTags())
+		if errorType == "redis_error" {
+			c.precomputedMetrics.DecrementRedisErrorCounter().Inc()
+		} else {
+			c.precomputedMetrics.DecrementTimeoutErrorCounter().Inc()
+		}
 		return 0, fmt.Errorf("decrement operation failed: %w", err)
 	}
 	
 	// Record successful operation
-	c.metrics.RecordOperation("redis", "decrement", "success", duration, c.getMetricTags())
+	c.precomputedMetrics.DecrementTimer().Record(duration)
+	c.precomputedMetrics.DecrementSuccessCounter().Inc()
 	
 	return result, nil
 }
@@ -1183,7 +1200,7 @@ func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) 
 func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta float64) (float64, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordOperation("redis", "increment_float", "circuit_breaker", time.Since(time.Now()), c.getMetricTags())
+		c.precomputedMetrics.IncrementFloatCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1206,12 +1223,17 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 			errorType = "key_not_found"
 		}
 		
-		c.metrics.RecordOperation("redis", "increment_float", errorType, duration, c.getMetricTags())
+		if errorType == "redis_error" {
+			c.precomputedMetrics.IncrementFloatRedisErrorCounter().Inc()
+		} else {
+			c.precomputedMetrics.IncrementFloatTimeoutErrorCounter().Inc()
+		}
 		return 0, fmt.Errorf("increment float operation failed: %w", err)
 	}
 	
 	// Record successful operation
-	c.metrics.RecordOperation("redis", "increment_float", "success", duration, c.getMetricTags())
+	c.precomputedMetrics.IncrementFloatTimer().Record(duration)
+	c.precomputedMetrics.IncrementFloatSuccessCounter().Inc()
 	
 	return result, nil
 }
@@ -1222,7 +1244,7 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Duration) error {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "extend_ttl", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.ExtendTTLCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1245,14 +1267,14 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 	
 	if err != nil {
 		c.handleError("extend_ttl", err)
-		c.metrics.RecordError("redis", "extend_ttl", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.ExtendTTLRedisErrorCounter().Inc()
 		return fmt.Errorf("extend TTL operation failed: %w", err)
 	}
 	
 	// Check if the key actually existed
 	dataExists, _ := dataResult.Result()
 	if !dataExists {
-		c.metrics.RecordError("redis", "extend_ttl", "key_not_found", "data", c.getMetricTags())
+		c.precomputedMetrics.ExtendTTLKeyNotFoundErrorCounter().Inc()
 		return fmt.Errorf("key does not exist: %s", key)
 	}
 	
@@ -1262,7 +1284,8 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 	}
 	
 	// Record successful operation
-	c.metrics.RecordOperation("redis", "extend_ttl", "success", duration, c.getMetricTags())
+	c.precomputedMetrics.ExtendTTLTimer().Record(duration)
+	c.precomputedMetrics.ExtendTTLSuccessCounter().Inc()
 	
 	return nil
 }
@@ -1271,7 +1294,7 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration) (bool, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "touch", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.TouchCircuitBreakerErrorCounter().Inc()
 		return false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1318,16 +1341,17 @@ func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration
 	
 	if err != nil {
 		c.handleError("touch", err)
-		c.metrics.RecordError("redis", "touch", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.TouchRedisErrorCounter().Inc()
 		return false, fmt.Errorf("touch operation failed: %w", err)
 	}
 	
 	exists := result.(int64) == 1
 	
 	if !exists {
-		c.metrics.RecordError("redis", "touch", "key_not_found", "data", c.getMetricTags())
+		c.precomputedMetrics.TouchKeyNotFoundErrorCounter().Inc()
 	} else {
-		c.metrics.RecordOperation("redis", "touch", "success", duration, c.getMetricTags())
+		c.precomputedMetrics.TouchTimer().Record(duration)
+		c.precomputedMetrics.TouchSuccessCounter().Inc()
 	}
 	
 	return exists, nil
@@ -1338,7 +1362,7 @@ func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration
 func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value string, ttl time.Duration) error {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "append_field", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.AppendFieldCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1362,7 +1386,7 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 		
 		if err != nil {
 			c.handleError("append_field", err)
-			c.metrics.RecordError("redis", "append_field", "redis_error", "infrastructure", c.getMetricTags())
+			c.precomputedMetrics.AppendFieldRedisErrorCounter().Inc()
 			return fmt.Errorf("append field operation failed: %w", err)
 		}
 		
@@ -1376,13 +1400,14 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 			)
 		}
 		
-		c.metrics.RecordOperation("redis", "append_field", "success", duration, c.getMetricTags())
+		c.precomputedMetrics.AppendFieldTimer().Record(duration)
+		c.precomputedMetrics.AppendFieldSuccessCounter().Inc()
 		return nil
 	}
 	
 	// For complex field paths, this would require JSON manipulation
 	// For now, return an error indicating this feature needs implementation
-	c.metrics.RecordError("redis", "append_field", "unsupported_operation", "application", c.getMetricTags())
+	c.precomputedMetrics.AppendFieldUnsupportedOperationErrorCounter().Inc()
 	return fmt.Errorf("complex field path operations not yet implemented: %s", fieldPath)
 }
 

@@ -237,7 +237,7 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "deletemany", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.DeleteManyCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -259,11 +259,12 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("deletemany", err)
-		c.metrics.RecordError("redis", "deletemany", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.DeleteManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis DeleteMany error: %w", err)
 	}
 
-	c.metrics.RecordBatchOperation("redis", "deletemany", len(keys), time.Since(start), c.getMetricTags())
+	c.precomputedMetrics.DeleteManyTimer().Record(time.Since(start))
+	c.precomputedMetrics.DeleteManyBatchCounter().Inc()
 
 	// Apply hooks if configured
 	if c.options.Hooks != nil && c.options.Hooks.PostDelete != nil {
