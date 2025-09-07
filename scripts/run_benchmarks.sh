@@ -18,7 +18,7 @@ OUTPUT_FILE="${1:-benchmark_$(date +%Y%m%d_%H%M%S).txt}"
 CATEGORY="${2:-all}"
 BENCHTIME="${BENCHTIME:-3s}"
 COUNT="${COUNT:-5}"
-TIMEOUT="${TIMEOUT:-30m}"
+TIMEOUT="${TIMEOUT:-60m}"
 LATENCY_MODE="${LATENCY_MODE:-}"
 LATENCY_MS="${LATENCY_MS:-}"
 

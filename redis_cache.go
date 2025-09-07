@@ -55,7 +55,6 @@ type RedisCache[T any] struct {
 	client     redis.Cmdable
 	serializer serializer.Serializer
 	options    *config.CacheOptions
-	metrics    metrics.EnhancedCacheMetrics
 	precomputedMetrics *metrics.PrecomputedCacheMetrics
 
 	extractor    *IndexExtractor[T] // nil = no indexing
@@ -114,13 +113,6 @@ func WithTTL[T any](ttl time.Duration) Option[T] {
 	}
 }
 
-// WithMetrics sets custom metrics implementation
-func WithMetrics[T any](metrics metrics.EnhancedCacheMetrics) Option[T] {
-	return func(cache *RedisCache[T]) {
-		cache.options.EnhancedMetrics = metrics
-		cache.metrics = metrics
-	}
-}
 
 // WithHooks sets lifecycle hooks
 func WithHooks[T any](hooks *config.CacheHooks) Option[T] {
@@ -253,16 +245,6 @@ func (c *RedisCache[T]) initialize() error {
 	}
 	c.serializer = ser
 
-	// Initialize metrics
-	if c.metrics == nil {
-		if c.options.EnhancedMetrics != nil {
-			c.metrics = c.options.EnhancedMetrics
-		} else if c.options.GoMetricsRegistry != nil {
-			c.metrics = metrics.NewEnhancedCacheMetrics(c.options.GoMetricsRegistry, c.options.GlobalMetricsTags)
-		} else {
-			c.metrics = metrics.NewNoopEnhancedCacheMetrics()
-		}
-	}
 
 	// Initialize pre-computed metrics for zero-allocation operations
 	// REQUIRED: All caches must have pre-computed metrics - no fallback to legacy metrics
@@ -1060,16 +1042,6 @@ func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
 	}
 }
 
-// getMetricTags returns metric tags for this cache instance
-func (c *RedisCache[T]) getMetricTags() metric.Tags {
-	tags := make(metric.Tags)
-	if c.options.GlobalMetricsTags != nil {
-		maps.Copy(tags, c.options.GlobalMetricsTags)
-	}
-	tags["provider"] = "redis"
-	tags["instance_id"] = c.instanceID
-	return tags
-}
 
 // Circuit breaker implementation
 
