@@ -15,6 +15,7 @@ import (
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/config"
 	"github.com/MichaelAJay/go-cache/interfaces"
+	"github.com/MichaelAJay/go-cache/internal/stringpool"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
@@ -260,16 +261,18 @@ func (c *RedisCache[T]) initialize() error {
 	}
 
 	// Initialize pre-computed metrics for zero-allocation operations
-	if c.options.GoMetricsRegistry != nil {
-		// Create final tags once during initialization to avoid runtime allocation
-		finalTags := make(metric.Tags)
-		if c.options.GlobalMetricsTags != nil {
-			maps.Copy(finalTags, c.options.GlobalMetricsTags)
-		}
-		finalTags["provider"] = "redis"
-		finalTags["instance_id"] = c.instanceID
-		c.precomputedMetrics = metrics.NewPrecomputedCacheMetrics(c.options.GoMetricsRegistry, finalTags)
+	// REQUIRED: All caches must have pre-computed metrics - no fallback to legacy metrics
+	if c.options.GoMetricsRegistry == nil {
+		return fmt.Errorf("GoMetricsRegistry is required - no fallback to legacy metrics supported")
 	}
+	// Create final tags once during initialization to avoid runtime allocation
+	finalTags := make(metric.Tags)
+	if c.options.GlobalMetricsTags != nil {
+		maps.Copy(finalTags, c.options.GlobalMetricsTags)
+	}
+	finalTags["provider"] = "redis"
+	finalTags["instance_id"] = c.instanceID
+	c.precomputedMetrics = metrics.NewPrecomputedCacheMetrics(c.options.GoMetricsRegistry, finalTags)
 
 	// Initialize memory tracker if enabled
 	if c.options.MemoryTrackingEnabled {
@@ -311,7 +314,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	var zero T
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "get", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.GetCircuitBreakerErrorCounter().Inc()
 		return zero, false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -323,7 +326,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	result, err := c.getScript.Run(ctx, c.client, []string{dataKey, metaKey, lruTrackerKey}, key).Result()
 	if err != nil {
 		c.handleError("get", err)
-		c.metrics.RecordError("redis", "get", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.GetRedisErrorCounter().Inc()
 		return zero, false, fmt.Errorf("redis get error: %w", err)
 	}
 
@@ -334,8 +337,10 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	// Handle empty result (cache miss)
 	if len(resultSlice) == 0 {
-		c.metrics.RecordMiss("redis", c.getMetricTags())
-		c.metrics.RecordOperation("redis", "get", "miss", time.Since(start), c.getMetricTags())
+		duration := time.Since(start)
+		c.precomputedMetrics.GetMissCounter().Inc()
+		c.precomputedMetrics.GeneralMissCounter().Inc()
+		c.precomputedMetrics.GetTimer().Record(duration)
 		return zero, false, nil
 	}
 
@@ -347,20 +352,24 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	found := resultSlice[1].(string) == "1"
 
 	if !found {
-		c.metrics.RecordMiss("redis", c.getMetricTags())
-		c.metrics.RecordOperation("redis", "get", "miss", time.Since(start), c.getMetricTags())
+		duration := time.Since(start)
+		c.precomputedMetrics.GetMissCounter().Inc()
+		c.precomputedMetrics.GeneralMissCounter().Inc()
+		c.precomputedMetrics.GetTimer().Record(duration)
 		return zero, false, nil
 	}
 
 	// Deserialize value
 	var value T
 	if err := c.serializer.Deserialize([]byte(serializedValue.(string)), &value); err != nil {
-		c.metrics.RecordError("redis", "get", "serialization_error", "data", c.getMetricTags())
+		c.precomputedMetrics.GetSerializationErrorCounter().Inc()
 		return zero, false, fmt.Errorf("deserialization error for key %s: %w", key, err)
 	}
 
-	c.metrics.RecordHit("redis", c.getMetricTags())
-	c.metrics.RecordOperation("redis", "get", "success", time.Since(start), c.getMetricTags())
+	duration := time.Since(start)
+	c.precomputedMetrics.GetHitCounter().Inc()
+	c.precomputedMetrics.GetTimer().Record(duration)
+	c.precomputedMetrics.GetSuccessCounter().Inc()
 	return value, true, nil
 }
 
@@ -374,14 +383,14 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "set", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.SetCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
 	if err != nil {
-		c.metrics.RecordError("redis", "set", "serialization_error", "data", c.getMetricTags())
+		c.precomputedMetrics.SetSerializationErrorCounter().Inc()
 		return fmt.Errorf("serialization error for key %s: %w", key, err)
 	}
 
@@ -421,7 +430,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 
 	if err != nil {
 		c.handleError("set", err)
-		c.metrics.RecordError("redis", "set", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.SetRedisErrorCounter().Inc()
 		return fmt.Errorf("redis set error: %w", err)
 	}
 
@@ -439,7 +448,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 			dataPrefix := c.buildDataKey("")
 			if err := c.memoryTracker.PerformMemorySample(ctx, dataPrefix); err != nil {
 				// Log sampling error but don't fail the operation
-				c.metrics.RecordError("redis", "set", "memory_sampling_error", "infrastructure", c.getMetricTags())
+				c.precomputedMetrics.SetMemorySamplingErrorCounter().Inc()
 			}
 		}
 		
@@ -447,7 +456,9 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 		c.recordMemoryUsageMetrics(ctx)
 	}
 
-	c.metrics.RecordOperation("redis", "set", "success", time.Since(start), c.getMetricTags())
+	duration := time.Since(start)
+	c.precomputedMetrics.SetTimer().Record(duration)
+	c.precomputedMetrics.SetSuccessCounter().Inc()
 	return nil
 }
 
@@ -456,7 +467,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "delete", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.DeleteCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -480,7 +491,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 
 		if scriptErr != nil {
 			c.handleError("delete", scriptErr)
-			c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
+			c.precomputedMetrics.DeleteRedisErrorCounter().Inc()
 			return fmt.Errorf("redis delete error: %w", scriptErr)
 		}
 		deleted = result.(int64)
@@ -493,7 +504,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		results, err := pipe.Exec(ctx)
 		if err != nil {
 			c.handleError("delete", err)
-			c.metrics.RecordError("redis", "delete", "redis_error", "infrastructure", c.getMetricTags())
+			c.precomputedMetrics.DeleteRedisErrorCounter().Inc()
 			return fmt.Errorf("redis delete error: %w", err)
 		}
 		deleted = results[0].(*redis.IntCmd).Val()
@@ -508,7 +519,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 			dataPrefix := c.buildDataKey("")
 			if err := c.memoryTracker.PerformMemorySample(ctx, dataPrefix); err != nil {
 				// Log sampling error but don't fail the operation
-				c.metrics.RecordError("redis", "delete", "memory_sampling_error", "infrastructure", c.getMetricTags())
+				c.precomputedMetrics.DeleteMemorySamplingErrorCounter().Inc()
 			}
 		}
 		
@@ -516,7 +527,9 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		c.recordMemoryUsageMetrics(ctx)
 	}
 
-	c.metrics.RecordOperation("redis", "delete", "success", time.Since(start), c.getMetricTags())
+	duration := time.Since(start)
+	c.precomputedMetrics.DeleteTimer().Record(duration)
+	c.precomputedMetrics.DeleteSuccessCounter().Inc()
 
 	// Apply hooks if configured
 	if c.options.Hooks != nil && c.options.Hooks.PostDelete != nil {
@@ -602,11 +615,7 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		if c.precomputedMetrics != nil {
-			c.precomputedMetrics.HasCircuitBreakerErrorCounter().Inc()
-		} else {
-			c.metrics.RecordError("redis", "has", "circuit_breaker", "availability", c.getMetricTags())
-		}
+		c.precomputedMetrics.HasCircuitBreakerErrorCounter().Inc()
 		return false
 	}
 
@@ -614,21 +623,13 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	exists, err := c.client.Exists(ctx, dataKey).Result()
 	if err != nil {
 		c.handleError("has", err)
-		if c.precomputedMetrics != nil {
-			c.precomputedMetrics.HasRedisErrorCounter().Inc()
-		} else {
-			c.metrics.RecordError("redis", "has", "redis_error", "infrastructure", c.getMetricTags())
-		}
+		c.precomputedMetrics.HasRedisErrorCounter().Inc()
 		return false
 	}
 
 	duration := time.Since(start)
-	if c.precomputedMetrics != nil {
-		c.precomputedMetrics.HasTimer().Record(duration)
-		c.precomputedMetrics.HasSuccessCounter().Inc()
-	} else {
-		c.metrics.RecordOperation("redis", "has", "success", duration, c.getMetricTags())
-	}
+	c.precomputedMetrics.HasTimer().Record(duration)
+	c.precomputedMetrics.HasSuccessCounter().Inc()
 	return exists > 0
 }
 
@@ -796,16 +797,40 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 // buildDataKey constructs the Redis key for data storage
 func (c *RedisCache[T]) buildDataKey(key string) string {
-	// Add version suffix if configured
-	finalKey := key
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		finalKey = key + ":" + c.redisOptions.Version
+	// Fast path for no prefix/version
+	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.DataPrefix == "") {
+		// Use default prefix with original key
+		builder := stringpool.Get()
+		defer stringpool.Put(builder)
+		builder.WriteString("cache:data:")
+		builder.WriteString(key)
+		return builder.String()
 	}
 	
-	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
-		return c.redisOptions.DataPrefix + finalKey
+	// Use pooled string builder for complex keys
+	builder := stringpool.Get()
+	defer stringpool.Put(builder)
+	
+	// Build the final key with version if configured
+	builder.WriteString(key)
+	if c.redisOptions.Version != "" {
+		builder.WriteString(":")
+		builder.WriteString(c.redisOptions.Version)
 	}
-	return "cache:data:" + finalKey
+	
+	// Add prefix
+	finalKey := builder.String()
+	builder.Reset()
+	
+	if c.redisOptions.DataPrefix != "" {
+		builder.WriteString(c.redisOptions.DataPrefix)
+		builder.WriteString(finalKey)
+	} else {
+		builder.WriteString("cache:data:")
+		builder.WriteString(finalKey)
+	}
+	
+	return builder.String()
 }
 
 // buildMetaKey constructs the Redis key for metadata storage

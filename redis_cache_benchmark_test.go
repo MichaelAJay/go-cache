@@ -10,6 +10,7 @@ import (
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
+	"github.com/MichaelAJay/go-metrics/metric"
 )
 
 // Test data structures for benchmarks
@@ -90,6 +91,10 @@ func getSharedBenchmarkCache() interfaces.Cache[benchmarkData] {
 			GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
 		}
 
+		// Create metrics registry for pre-computed metrics
+		registry := metric.NewDefaultRegistry()
+		tags := metric.Tags{"environment": "benchmark"}
+
 		cacheInstance, err := cache.NewCache(
 			ctx,
 			setup.RedisClient,
@@ -97,6 +102,7 @@ func getSharedBenchmarkCache() interfaces.Cache[benchmarkData] {
 			extractor,
 			cache.WithTTL[benchmarkData](10*time.Minute),
 			cache.WithSerializer[benchmarkData]("msgpack"),
+			cache.WithGoMetrics[benchmarkData](registry, tags),
 		)
 		if err != nil {
 			panic("Failed to create shared benchmark cache: " + err.Error())
