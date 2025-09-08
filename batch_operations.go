@@ -64,12 +64,15 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		}); ok {
 			serializedValue := cmdResult.Val()
 			if cmdResult.Err() == nil && serializedValue != "" {
-				// Deserialize value using StringDeserializer optimization if available
+				// Deserialize value using best available method
 				var value T
 				var err error
+				
+				// Try StringDeserializer first (already optimized for strings)
 				if stringDeser, ok := c.serializer.(serializer.StringDeserializer); ok {
 					err = stringDeser.DeserializeString(serializedValue, &value)
 				} else {
+					// Use standard Deserialize (which for MsgPack uses pooled decoders internally)
 					err = c.serializer.Deserialize([]byte(serializedValue), &value)
 				}
 				if err != nil {
@@ -230,6 +233,299 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 		c.handleError("setmany", err)
 		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis SetMany error: %w", err)
+	}
+
+	// Record metrics using precomputed metrics for zero-allocation performance
+	duration := time.Since(start)
+	c.precomputedMetrics.SetManyTimer().Record(duration)
+	c.precomputedMetrics.SetManyBatchCounter().Inc()
+	return nil
+}
+
+// SetManySafe stores multiple values using pooled encoders internally but returns owned bytes
+// Provides allocation reduction over individual Set calls while maintaining simple ownership
+func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Duration) error {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.precomputedMetrics.SetManyCircuitBreakerErrorCounter().Inc()
+		return cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	if len(values) == 0 {
+		return nil
+	}
+
+	// Require key extractor for SetManySafe
+	if c.extractor.GetEntryKey == nil {
+		return fmt.Errorf("IndexExtractor.GetEntryKey is required for SetManySafe operation")
+	}
+
+	// Check if serializer supports SerializeSafe
+	type safeSer interface {
+		SerializeSafe(v any) ([]byte, error)
+	}
+	safeSerializer, hasSafe := c.serializer.(safeSer)
+	
+	// Pre-serialize all values using SerializeSafe if available, otherwise fallback to standard
+	type setItem struct {
+		key             string
+		serializedValue []byte
+		dataKey         string
+		metaKey         string
+		ownerKey        string
+		indexKey        string
+	}
+
+	items := make([]setItem, 0, len(values))
+	keys := make([]string, len(values))
+
+	// First pass: extract keys and serialize values using SerializeSafe
+	for i, value := range values {
+		key := c.extractor.GetEntryKey(value)
+		keys[i] = key
+
+		// Use SerializeSafe if available for better performance
+		var serializedValue []byte
+		var err error
+		if hasSafe {
+			serializedValue, err = safeSerializer.SerializeSafe(value)
+		} else {
+			serializedValue, err = c.serializer.Serialize(value)
+		}
+		
+		if err != nil {
+			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
+			return fmt.Errorf("serialization error for key %s: %w", key, err)
+		}
+
+		items = append(items, setItem{
+			key:             key,
+			serializedValue: serializedValue,
+		})
+	}
+
+	// Batch key building using pooled slices
+	dataKeys := c.slicePool.GetStringSliceWithLength(len(values))
+	defer c.slicePool.PutStringSlice(dataKeys)
+	metaKeys := c.slicePool.GetStringSliceWithLength(len(values))
+	defer c.slicePool.PutStringSlice(metaKeys)
+
+	// Use batch key building to reduce string builder allocation overhead
+	c.buildDataKeysMany(keys, dataKeys)
+	c.buildMetaKeysMany(keys, metaKeys)
+
+	// Second pass: assign batch-built keys and handle indexing
+	for i := range items {
+		items[i].dataKey = dataKeys[i]
+		items[i].metaKey = metaKeys[i]
+
+		// Build index keys if configured
+		if c.indexingMode && c.extractor.GetOwnerKey != nil {
+			items[i].ownerKey = c.extractor.GetOwnerKey(values[i])
+			items[i].indexKey = c.buildIndexKey("owner", items[i].ownerKey)
+		}
+	}
+
+	// Use optimized pipeline for batch setting
+	pipe := c.client.TxPipeline()
+	now := time.Now().Unix()
+	ttlMs := ttlToMilliseconds(ttl)
+
+	// Create single reusable metadata map to eliminate per-item map allocations
+	metadataTemplate := map[string]any{
+		"created_at":    now,
+		"last_accessed": now,
+		"access_count":  1,
+		"ttl":           ttlMs,
+		"size":          0, // Will be updated per item
+	}
+
+	// Add all operations to pipeline
+	for _, item := range items {
+		// Set data with TTL
+		if ttl > 0 {
+			pipe.SetEX(ctx, item.dataKey, item.serializedValue, ttl)
+		} else {
+			pipe.Set(ctx, item.dataKey, item.serializedValue, 0)
+		}
+
+		// Set metadata using shared template (update size field)
+		metadataTemplate["size"] = len(item.serializedValue)
+		pipe.HSet(ctx, item.metaKey, metadataTemplate)
+		if ttl > 0 {
+			pipe.Expire(ctx, item.metaKey, ttl)
+		}
+
+		// Update indexes if configured
+		if c.indexingMode && item.ownerKey != "" {
+			pipe.SAdd(ctx, item.indexKey, item.key)
+			if ttl > 0 {
+				pipe.Expire(ctx, item.indexKey, ttl)
+			}
+		}
+	}
+
+	// Execute pipeline
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		c.handleError("setmanysafe", err)
+		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
+		return fmt.Errorf("redis SetManySafe error: %w", err)
+	}
+
+	// Record metrics using precomputed metrics for zero-allocation performance
+	duration := time.Since(start)
+	c.precomputedMetrics.SetManyTimer().Record(duration)
+	c.precomputedMetrics.SetManyBatchCounter().Inc()
+	return nil
+}
+
+// SetManyPooled stores multiple values using zero-copy pooled serialization
+// Aggressive optimization path with maximum performance and minimal allocations
+func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.Duration) error {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.precomputedMetrics.SetManyCircuitBreakerErrorCounter().Inc()
+		return cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	if len(values) == 0 {
+		return nil
+	}
+
+	// Require key extractor for SetManyPooled
+	if c.extractor.GetEntryKey == nil {
+		return fmt.Errorf("IndexExtractor.GetEntryKey is required for SetManyPooled operation")
+	}
+
+	// Check if serializer supports SerializePooled
+	type pooledSer interface {
+		SerializePooled(v any) (*serializer.PooledBuf, error)
+	}
+	pooledSerializer, hasPooled := c.serializer.(pooledSer)
+	if !hasPooled {
+		// Fallback to SetManySafe if pooled serialization not available
+		return c.SetManySafe(ctx, values, ttl)
+	}
+
+	// Pre-serialize all values using SerializePooled with proper lifecycle management
+	type pooledSetItem struct {
+		key       string
+		pooledBuf *serializer.PooledBuf
+		dataKey   string
+		metaKey   string
+		ownerKey  string
+		indexKey  string
+	}
+
+	items := make([]pooledSetItem, 0, len(values))
+	keys := make([]string, len(values))
+
+	// First pass: extract keys and serialize values using SerializePooled
+	for i, value := range values {
+		key := c.extractor.GetEntryKey(value)
+		keys[i] = key
+
+		// Use SerializePooled for zero-copy performance
+		pooledBuf, err := pooledSerializer.SerializePooled(value)
+		if err != nil {
+			// Release any already-serialized buffers on error
+			for _, item := range items {
+				if item.pooledBuf != nil {
+					item.pooledBuf.Release()
+				}
+			}
+			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
+			return fmt.Errorf("serialization error for key %s: %w", key, err)
+		}
+
+		items = append(items, pooledSetItem{
+			key:       key,
+			pooledBuf: pooledBuf,
+		})
+	}
+
+	// Batch key building using pooled slices
+	dataKeys := c.slicePool.GetStringSliceWithLength(len(values))
+	defer c.slicePool.PutStringSlice(dataKeys)
+	metaKeys := c.slicePool.GetStringSliceWithLength(len(values))
+	defer c.slicePool.PutStringSlice(metaKeys)
+
+	// Use batch key building to reduce string builder allocation overhead
+	c.buildDataKeysMany(keys, dataKeys)
+	c.buildMetaKeysMany(keys, metaKeys)
+
+	// Second pass: assign batch-built keys and handle indexing
+	for i := range items {
+		items[i].dataKey = dataKeys[i]
+		items[i].metaKey = metaKeys[i]
+
+		// Build index keys if configured
+		if c.indexingMode && c.extractor.GetOwnerKey != nil {
+			items[i].ownerKey = c.extractor.GetOwnerKey(values[i])
+			items[i].indexKey = c.buildIndexKey("owner", items[i].ownerKey)
+		}
+	}
+
+	// Execute pipeline with pooled buffers - ensure Release is called even on errors
+	defer func() {
+		// Release all pooled buffers after pipeline execution
+		for _, item := range items {
+			if item.pooledBuf != nil {
+				item.pooledBuf.Release()
+			}
+		}
+	}()
+
+	// Use optimized pipeline for batch setting
+	pipe := c.client.TxPipeline()
+	now := time.Now().Unix()
+	ttlMs := ttlToMilliseconds(ttl)
+
+	// Create single reusable metadata map to eliminate per-item map allocations
+	metadataTemplate := map[string]any{
+		"created_at":    now,
+		"last_accessed": now,
+		"access_count":  1,
+		"ttl":           ttlMs,
+		"size":          0, // Will be updated per item
+	}
+
+	// Add all operations to pipeline using pooled buffer bytes
+	for _, item := range items {
+		bytes := item.pooledBuf.Bytes()
+		
+		// Set data with TTL
+		if ttl > 0 {
+			pipe.SetEX(ctx, item.dataKey, bytes, ttl)
+		} else {
+			pipe.Set(ctx, item.dataKey, bytes, 0)
+		}
+
+		// Set metadata using shared template (update size field)
+		metadataTemplate["size"] = len(bytes)
+		pipe.HSet(ctx, item.metaKey, metadataTemplate)
+		if ttl > 0 {
+			pipe.Expire(ctx, item.metaKey, ttl)
+		}
+
+		// Update indexes if configured
+		if c.indexingMode && item.ownerKey != "" {
+			pipe.SAdd(ctx, item.indexKey, item.key)
+			if ttl > 0 {
+				pipe.Expire(ctx, item.indexKey, ttl)
+			}
+		}
+	}
+
+	// Execute pipeline
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		c.handleError("setmanypooled", err)
+		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
+		return fmt.Errorf("redis SetManyPooled error: %w", err)
 	}
 
 	// Record metrics using precomputed metrics for zero-allocation performance

@@ -78,7 +78,7 @@ Create an encoder pool that reuses MessagePack encoders and underlying buffers t
 
 ---
 
-## Step 2 — Implement pooled decoder infrastructure
+## Step 2 — Implement pooled decoder infrastructure ✅ COMPLETED
 
 **Objective**
 Reuse decoder state to minimize per-deserialize allocations and improve decode throughput.
@@ -89,17 +89,22 @@ Reuse decoder state to minimize per-deserialize allocations and improve decode t
 - Use a `sync.Pool` for decoders similar to encoders.
 - Provide `getPooledDecoder(data []byte) *pooledDecoder` which attaches the decoder to a `bytes.Reader` wrapping `data` (or a recycled buffer that copies data — see safety notes below).
 
-**Safety note:** If the decoder implementation mutates the underlying byte slice or expects persistent memory, ensure the data passed in is not from a shared pooled buffer that will be released early. Prefer to copy into a `bytes.Reader` or use the decoder’s `Reset` API which takes a `[]byte` reference.
+**Safety note:** If the decoder implementation mutates the underlying byte slice or expects persistent memory, ensure the data passed in is not from a shared pooled buffer that will be released early. Prefer to copy into a `bytes.Reader` or use the decoder's `Reset` API which takes a `[]byte` reference.
 
-**DoD**
+**DoD** ✅
 
-- `pooledDecoder` and `sync.Pool` implemented and tested.
-- Round-trip unit tests (encode then decode) pass under race detector.
-- Microbenchmark for `Deserialize` shows reduced allocations vs `msgpack.Unmarshal` baseline.
+- ✅ `pooledDecoder` and `sync.Pool` implemented and tested.
+- ✅ Round-trip unit tests (encode then decode) pass under race detector.
+- ✅ Microbenchmark for `Deserialize` shows reduced allocations vs `msgpack.Unmarshal` baseline.
+
+**Implementation Notes**
+- Implemented with `bytes.Reader` for zero-copy decoding from byte slices
+- Proper cleanup with `reader.Reset(nil)` to release data references
+- Thread-safe pool management with proper decoder reset
 
 ---
 
-## Step 3 — Implement `SerializeSafe` using pooled encoders
+## Step 3 — Implement `SerializeSafe` using pooled encoders ✅ COMPLETED
 
 **Objective**
 Provide a drop-in `Serialize(v any) ([]byte, error)` replacement that uses pooled encoder internals to reduce allocations but returns an owned `[]byte` (safe, no life-cycle constraints for callers).
@@ -116,11 +121,16 @@ Provide a drop-in `Serialize(v any) ([]byte, error)` replacement that uses poole
 
 - This avoids the encoder/bytes.Buffer allocation per call but still returns a fresh `[]byte` so callers have no ownership concerns.
 
-**DoD**
+**DoD** ✅
 
-- `SerializeSafe` implemented and used in existing call sites with minimal code changes.
-- Benchmarks show encoder-internal allocation reduction (report the `B/op` and `allocs/op` improvements).
-- Unit tests demonstrate correct encoding and zero data races.
+- ✅ `SerializeSafe` implemented and used in existing call sites with minimal code changes.
+- ✅ Benchmarks show encoder-internal allocation reduction (report the `B/op` and `allocs/op` improvements).
+- ✅ Unit tests demonstrate correct encoding and zero data races.
+
+**Implementation Notes**
+- `SerializeSafe` uses pooled encoders internally but returns owned `[]byte`
+- Main `Serialize` method delegates to `SerializeSafe` for backwards compatibility
+- Proper error handling with encoder return to pool on failure
 
 ---
 
@@ -168,15 +178,22 @@ func (p *PooledBuf) Release() { /* puts the underlying pooledEncoder back into p
   - `CopyAndRelease(pb *PooledBuf) []byte` — copies the bytes to a fresh `[]byte`, releases the pooled buffer, returns copy.
   - `UseWithPipeline(ctx, pipe redis.Pipeliner, key string, pb *PooledBuf, ttl time.Duration)` — helper which enqueues the `Set` and retains pointer to `pb` until `Exec` returns, then releases. This helper will be opinionated but safe (handles release after Exec).
 
-**DoD**
+**DoD** ✅
 
-- `PooledBuf` implemented and covered by unit tests for `Bytes()`/`Release()` semantics.
-- A `SetMany` test demonstrates using `SerializePooled` to build pipeline commands without copying and releasing buffers after `pipe.Exec()`.
-- Integration benchmark shows dramatic reduction in `allocs/op` for batch set compared to baseline.
+- ✅ `PooledBuf` implemented and covered by unit tests for `Bytes()`/`Release()` semantics.
+- ✅ A `SetMany` test demonstrates using `SerializePooled` to build pipeline commands without copying and releasing buffers after `pipe.Exec()`.
+- ✅ Integration benchmark shows dramatic reduction in `allocs/op` for batch set compared to baseline.
+
+**Implementation Notes**
+- `PooledBuf` provides zero-copy access to encoder buffers with proper lifecycle management
+- `SerializePooled` transfers encoder ownership to caller via `PooledBuf`
+- `DeserializeFromPooled` enables zero-copy decoding from pooled buffers
+- `CopyAndRelease` convenience helper for safe buffer copying and cleanup
+- Comprehensive test suite covers concurrent usage and buffer lifecycle
 
 ---
 
-## Step 5 — Implement `Deserialize` variants that use pooled decoders
+## Step 5 — Implement `Deserialize` variants that use pooled decoders ✅ COMPLETED
 
 **Objective**
 Minimize allocations on decode operations by reusing decoder state and by allowing decode into preallocated structs (when callers provide them).
@@ -187,14 +204,29 @@ Minimize allocations on decode operations by reusing decoder state and by allowi
 - Implement `DeserializeFromPooled(pb *PooledBuf, out any) error` that decodes directly from a pooled buffer without copying the bytes.
 - Provide `UnsafeDeserialize` option if a decoder mutates the underlying buffer — document constraints.
 
-**DoD**
+**DoD** ✅
 
-- `Deserialize` and `DeserializeFromPooled` implemented and unit-tested with multiple struct shapes.
-- Benchmarks show allocations reduced on decode operations.
+- ✅ `Deserialize` and `DeserializeFromPooled` implemented and unit-tested with multiple struct shapes.
+- ✅ Benchmarks show allocations reduced on decode operations.
+
+**Implementation Notes**
+- Main `Deserialize` method uses pooled decoders with proper cleanup
+- `DeserializeFromPooled` enables zero-copy decoding directly from `PooledBuf`
+- Both methods include proper nil checking and error handling
+- Decoder pool management ensures thread safety and resource cleanup
 
 ---
 
-## Step 6 — Integrate with `SetMany` and `GetMany` (example changes)
+## Step 6 — Integrate with `SetMany` and `GetMany` (NEXT: READY FOR IMPLEMENTATION)
+
+**Current Status**: Ready to begin integration with go-cache module
+
+**Context for Implementation**:
+- **go-serializer module location**: `/Users/michaeljay/go-dev/go-serializer`
+- **go-cache module location**: `/Users/michaeljay/go-dev/go-cache` 
+- **Completed serializer APIs**: `SerializeSafe`, `SerializePooled`, `PooledBuf`, `DeserializeFromPooled`, `CopyAndRelease`
+- **Current serializer interface**: Implemented in `serializer.go` with `Serializer` interface
+- **Import path**: The modules use `go.mod` with remote references (no local path dependencies)
 
 **Objective**
 Update `SetMany` and `GetMany` to use the new pooled serializer APIs and demonstrate safe patterns and extreme-performance patterns.
@@ -203,14 +235,80 @@ Update `SetMany` and `GetMany` to use the new pooled serializer APIs and demonst
 
 - **Safe path**: call `SerializeSafe` for each value; continue to pass `[]byte` to `pipe.SetEX()`; this reduces internal allocations while keeping ownership simple.
 - **Aggressive path**: call `SerializePooled` for each value, pass `pb.Bytes()` into `pipe.SetEX()` and keep track of `[]*PooledBuf` returned. After `pipe.Exec()`, iterate the pooled buffers and call `Release()` on each.
-- Provide `SetManyPooled(ctx, values []T, ttl time.Duration)` function as a high-performance variant.
+- **Provide `SetManyPooled(ctx, values []T, ttl time.Duration)` function as a high-performance variant**.
 - For `GetMany`, prefer `Get(...).Bytes()` and `DeserializeFromPooled` where possible. If go-redis copies the bytes internally, detect that and fallback to `Deserialize`.
+
+**Integration Requirements**:
+1. **Examine go-cache structure**: Identify current `SetMany`/`GetMany` implementations
+2. **Review serializer usage**: Understand how go-cache currently uses serializers
+3. **Add pooled serializer support**: Extend interfaces or add new methods as needed
+4. **Update go.mod dependencies**: Ensure go-cache can import updated go-serializer
+5. **Implement safe and pooled variants**: Both `SetManySafe` and `SetManyPooled` approaches
+6. **Add proper error handling**: Ensure pooled buffers are released even on errors
+7. **Test redis pipeline behavior**: Verify when go-redis copies bytes vs. holds references
 
 **DoD**
 
 - `SetManyPooled` added and unit-tested.
 - Integration benchmark comparing `SetMany` baseline vs `SetManySafe` vs `SetManyPooled` shows expected allocation reductions.
 - No data races with `-race`.
+- Both modules build and test successfully with updated dependencies.
+
+---
+
+## IMPLEMENTATION REFERENCE — Current Serializer API
+
+**For the next session implementer**: The go-serializer module at `/Users/michaeljay/go-dev/go-serializer` has these completed APIs:
+
+### Core Serializer Interface (serializer.go)
+```go
+type Serializer interface {
+    Serialize(v any) ([]byte, error)
+    Deserialize(data []byte, v any) error
+    SerializeTo(w io.Writer, v any) error
+    DeserializeFrom(r io.Reader, v any) error
+    ContentType() string
+}
+```
+
+### Extended MsgPack APIs (msgpack.go)
+```go
+// Safe API - returns owned []byte, uses pooled encoders internally
+func (s *MsgPackSerializer) SerializeSafe(v any) ([]byte, error)
+
+// Zero-copy API - returns PooledBuf, caller must Release()
+func (s *MsgPackSerializer) SerializePooled(v any) (*PooledBuf, error)
+
+// Zero-copy decode from PooledBuf
+func (s *MsgPackSerializer) DeserializeFromPooled(pb *PooledBuf, v any) error
+
+// Convenience helper
+func CopyAndRelease(pb *PooledBuf) []byte
+```
+
+### PooledBuf Type
+```go
+type PooledBuf struct {
+    pe *pooledEncoder // holds complete pooled encoder
+}
+
+func (p *PooledBuf) Bytes() []byte  // Access encoded bytes
+func (p *PooledBuf) Len() int       // Get length  
+func (p *PooledBuf) Release()       // MUST call when done
+```
+
+### Key Implementation Details
+- **Buffer management**: `MAX_BUF_CAP = 1 << 20` (1MB) prevents memory bloat
+- **Thread safety**: All pool operations are concurrency-safe
+- **Error handling**: Encoders returned to pool even on encoding failures
+- **Memory safety**: `PooledBuf.Release()` clears internal pointers
+- **Zero-copy design**: `SerializePooled` transfers encoder ownership to caller
+
+### Integration Strategy
+1. **Detect pooled serializer capability**: Check if serializer implements extended interface
+2. **Graceful fallback**: Use standard `Serialize`/`Deserialize` if pooled APIs unavailable  
+3. **Resource management**: Always release pooled buffers in defer blocks or after pipeline execution
+4. **Performance monitoring**: Track allocation reductions in benchmarks
 
 ---
 
