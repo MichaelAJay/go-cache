@@ -9,6 +9,7 @@ import (
 
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
+	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,9 +22,17 @@ func TestRedisCache_LRUEviction(t *testing.T) {
 	setup.FlushRedis(ctx, t)
 
 	// Create cache with MaxEntries = 3
-	sessionCache, err := cache.NewCache(ctx, setup.RedisClient, false, testintegration.TestSessionExtractor,
-		cache.WithTTL[*testintegration.TestSession](5*time.Minute),
-		cache.WithSerializer[*testintegration.TestSession]("msgpack"),
+	config := testintegration.DefaultCacheConfig()
+	
+	// Create metrics registry required for cache initialization
+	registry := metric.NewDefaultRegistry()
+	tags := metric.Tags{"environment": "test"}
+	
+	sessionCache, err := cache.NewCache(ctx, setup.RedisClient, config.IndexingMode, testintegration.TestSessionExtractor,
+		cache.WithTTL[*testintegration.TestSession](config.TTL),
+		cache.WithSerializer[*testintegration.TestSession](config.SerializerFormat),
+		cache.WithWarmLuaScripts[*testintegration.TestSession](config.WarmLuaScripts),
+		cache.WithGoMetrics[*testintegration.TestSession](registry, tags),
 		cache.WithMaxEntries[*testintegration.TestSession](3), // Set max entries to 3
 	)
 	require.NoError(t, err, "Failed to create cache")

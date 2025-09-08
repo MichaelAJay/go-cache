@@ -1,4 +1,4 @@
-//go:build integration && !short
+//go:build stability
 
 package cache_test
 
