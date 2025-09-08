@@ -106,6 +106,46 @@ func BenchmarkRedisCache_GetMany_1000Keys(b *testing.B) {
 	})
 }
 
+// BenchmarkRedisCache_GetManyRaw_1000Keys tests GetMany without deserialization
+func BenchmarkRedisCache_GetManyRaw_1000Keys(b *testing.B) {
+	cache := setupBenchmarkCache(b)
+	ctx := context.Background()
+
+	// Pre-populate cache with test data using unique prefix to avoid key collisions
+	benchPrefix := fmt.Sprintf("bench:raw:getmany:1000:%d", time.Now().UnixNano())
+	keys := make([]string, 1000)
+	for i := range 1000 {
+		testData := generateBenchmarkData1KB(fmt.Sprintf("%s:%d", benchPrefix, i))
+		err := cache.Set(ctx, testData, 10*time.Minute)
+		if err != nil {
+			b.Fatalf("Failed to pre-populate cache: %v", err)
+		}
+		keys[i] = testData.GetID()
+	}
+
+	// Force GC before benchmark to get clean starting state
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			// Type assertion to access experimental method
+			if redisCache, ok := cache.(interface {
+				ExperimentalGetManyRaw(context.Context, []string) (map[string]string, error)
+			}); ok {
+				rawResults, err := redisCache.ExperimentalGetManyRaw(ctx, keys)
+				if err != nil {
+					b.Fatalf("GetManyRaw failed: %v", err)
+				}
+				if len(rawResults) != 1000 {
+					b.Fatalf("Expected 1000 results, got %d", len(rawResults))
+				}
+			} else {
+				b.Fatalf("Cache does not support ExperimentalGetManyRaw")
+			}
+		}
+	})
+}
+
 // BenchmarkRedisCache_SetMany_10Values tests SetMany performance with 10 values
 func BenchmarkRedisCache_SetMany_10Values(b *testing.B) {
 	cache := setupBenchmarkCache(b)

@@ -75,6 +75,9 @@ func verifyTimersInitialized(t *testing.T, pcm *PrecomputedCacheMetrics) {
 		{"DecrementTimer", pcm.DecrementTimer()},
 		{"IncrementFloatTimer", pcm.IncrementFloatTimer()},
 		{"ExtendTTLTimer", pcm.ExtendTTLTimer()},
+		{"TouchTimer", pcm.TouchTimer()},
+		{"AppendFieldTimer", pcm.AppendFieldTimer()},
+		{"GetMetadataTimer", pcm.GetMetadataTimer()},
 		{"GetManyTimer", pcm.GetManyTimer()},
 		{"SetManyTimer", pcm.SetManyTimer()},
 		{"DeleteManyTimer", pcm.DeleteManyTimer()},
@@ -109,6 +112,11 @@ func verifyCountersInitialized(t *testing.T, pcm *PrecomputedCacheMetrics) {
 		{"DecrementSuccessCounter", pcm.DecrementSuccessCounter()},
 		{"IncrementFloatSuccessCounter", pcm.IncrementFloatSuccessCounter()},
 		{"ExtendTTLSuccessCounter", pcm.ExtendTTLSuccessCounter()},
+		{"TouchSuccessCounter", pcm.TouchSuccessCounter()},
+		{"AppendFieldSuccessCounter", pcm.AppendFieldSuccessCounter()},
+		{"GetMetadataSuccessCounter", pcm.GetMetadataSuccessCounter()},
+		{"GetMetadataNotFoundCounter", pcm.GetMetadataNotFoundCounter()},
+		{"CleanupOrphanedMetadataSuccessCounter", pcm.CleanupOrphanedMetadataSuccessCounter()},
 		
 		// Hit/Miss counters
 		{"GetMissCounter", pcm.GetMissCounter()},
@@ -128,6 +136,10 @@ func verifyCountersInitialized(t *testing.T, pcm *PrecomputedCacheMetrics) {
 		{"GetManyBatchCounter", pcm.GetManyBatchCounter()},
 		{"SetManyBatchCounter", pcm.SetManyBatchCounter()},
 		{"DeleteManyBatchCounter", pcm.DeleteManyBatchCounter()},
+		
+		// System counters
+		{"MemoryPressureCounter", pcm.MemoryPressureCounter()},
+		{"SecurityEventCounter", pcm.SecurityEventCounter()},
 	}
 
 	for _, counter := range counters {
@@ -179,6 +191,14 @@ func TestPrecomputedCacheMetrics_AllErrorCounters(t *testing.T) {
 		{"ExtendTTLCircuitBreakerErrorCounter", pcm.ExtendTTLCircuitBreakerErrorCounter()},
 		{"ExtendTTLRedisErrorCounter", pcm.ExtendTTLRedisErrorCounter()},
 		{"ExtendTTLKeyNotFoundErrorCounter", pcm.ExtendTTLKeyNotFoundErrorCounter()},
+		{"TouchCircuitBreakerErrorCounter", pcm.TouchCircuitBreakerErrorCounter()},
+		{"TouchRedisErrorCounter", pcm.TouchRedisErrorCounter()},
+		{"TouchKeyNotFoundErrorCounter", pcm.TouchKeyNotFoundErrorCounter()},
+		{"AppendFieldCircuitBreakerErrorCounter", pcm.AppendFieldCircuitBreakerErrorCounter()},
+		{"AppendFieldRedisErrorCounter", pcm.AppendFieldRedisErrorCounter()},
+		{"AppendFieldUnsupportedOperationErrorCounter", pcm.AppendFieldUnsupportedOperationErrorCounter()},
+		{"GetMetadataCircuitBreakerErrorCounter", pcm.GetMetadataCircuitBreakerErrorCounter()},
+		{"GetMetadataRedisErrorCounter", pcm.GetMetadataRedisErrorCounter()},
 		{"GetManyCircuitBreakerErrorCounter", pcm.GetManyCircuitBreakerErrorCounter()},
 		{"GetManyRedisErrorCounter", pcm.GetManyRedisErrorCounter()},
 		{"GetManySerializationErrorCounter", pcm.GetManySerializationErrorCounter()},
@@ -194,6 +214,63 @@ func TestPrecomputedCacheMetrics_AllErrorCounters(t *testing.T) {
 			t.Errorf("%s is nil", errorCounter.name)
 		}
 	}
+}
+
+func TestPrecomputedCacheMetrics_SystemMetrics(t *testing.T) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+
+	// Test all system metrics are non-nil
+	systemMetrics := []struct {
+		name   string
+		metric interface{}
+	}{
+		{"MemoryUsageGauge", pcm.MemoryUsageGauge()},
+		{"MemoryPressureCounter", pcm.MemoryPressureCounter()},
+		{"SecurityEventCounter", pcm.SecurityEventCounter()},
+	}
+
+	for _, metric := range systemMetrics {
+		if metric.metric == nil {
+			t.Errorf("%s is nil", metric.name)
+		}
+	}
+}
+
+func TestPrecomputedCacheMetrics_NewMetricsFunctionality(t *testing.T) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+
+	// Test new timers can record durations
+	pcm.TouchTimer().Record(time.Millisecond)
+	pcm.AppendFieldTimer().Record(2 * time.Millisecond)
+	pcm.GetMetadataTimer().Record(3 * time.Millisecond)
+	
+	// Test new success counters can increment
+	pcm.TouchSuccessCounter().Inc()
+	pcm.AppendFieldSuccessCounter().Inc()
+	pcm.GetMetadataSuccessCounter().Inc()
+	pcm.GetMetadataNotFoundCounter().Inc()
+	pcm.CleanupOrphanedMetadataSuccessCounter().Inc()
+	
+	// Test new error counters can increment
+	pcm.TouchCircuitBreakerErrorCounter().Inc()
+	pcm.TouchRedisErrorCounter().Inc()
+	pcm.TouchKeyNotFoundErrorCounter().Inc()
+	pcm.AppendFieldCircuitBreakerErrorCounter().Inc()
+	pcm.AppendFieldRedisErrorCounter().Inc()
+	pcm.AppendFieldUnsupportedOperationErrorCounter().Inc()
+	pcm.GetMetadataCircuitBreakerErrorCounter().Inc()
+	pcm.GetMetadataRedisErrorCounter().Inc()
+	
+	// Test system metrics functionality
+	pcm.MemoryUsageGauge().Set(1024.0)
+	pcm.MemoryPressureCounter().Inc()
+	pcm.SecurityEventCounter().Inc()
+
+	// No panics or errors expected - all new metrics should work normally
 }
 
 func TestPrecomputedCacheMetrics_ZeroAllocationAccess(t *testing.T) {
@@ -339,6 +416,48 @@ func TestCreateBatchOperationCounter(t *testing.T) {
 	counter.Inc()
 }
 
+func TestCreateMemoryUsageGauge(t *testing.T) {
+	registry := metric.NewDefaultRegistry()
+	baseTags := metric.Tags{"provider": "redis"}
+	
+	gauge := createMemoryUsageGauge(registry, baseTags)
+	
+	if gauge == nil {
+		t.Error("createMemoryUsageGauge should return non-nil gauge")
+	}
+	
+	// Test gauge functionality
+	gauge.Set(1024.0)
+}
+
+func TestCreateMemoryPressureCounter(t *testing.T) {
+	registry := metric.NewDefaultRegistry()
+	baseTags := metric.Tags{"provider": "redis"}
+	
+	counter := createMemoryPressureCounter(registry, baseTags)
+	
+	if counter == nil {
+		t.Error("createMemoryPressureCounter should return non-nil counter")
+	}
+	
+	// Test counter functionality
+	counter.Inc()
+}
+
+func TestCreateSecurityEventCounter(t *testing.T) {
+	registry := metric.NewDefaultRegistry()
+	baseTags := metric.Tags{"provider": "redis"}
+	
+	counter := createSecurityEventCounter(registry, baseTags)
+	
+	if counter == nil {
+		t.Error("createSecurityEventCounter should return non-nil counter")
+	}
+	
+	// Test counter functionality
+	counter.Inc()
+}
+
 // Benchmark tests to verify zero allocation behavior
 
 func BenchmarkPrecomputedMetrics_TimerAccess(b *testing.B) {
@@ -406,4 +525,176 @@ func BenchmarkPrecomputedMetrics_CounterInc(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		counter.Inc()
 	}
+}
+
+// Benchmark tests for new metrics to verify zero allocation behavior
+
+func BenchmarkPrecomputedMetrics_NewTimerAccess(b *testing.B) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+
+	b.Run("TouchTimer", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.TouchTimer()
+		}
+	})
+
+	b.Run("AppendFieldTimer", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.AppendFieldTimer()
+		}
+	})
+
+	b.Run("GetMetadataTimer", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.GetMetadataTimer()
+		}
+	})
+}
+
+func BenchmarkPrecomputedMetrics_NewCounterAccess(b *testing.B) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+
+	b.Run("TouchSuccessCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.TouchSuccessCounter()
+		}
+	})
+
+	b.Run("AppendFieldSuccessCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.AppendFieldSuccessCounter()
+		}
+	})
+
+	b.Run("GetMetadataSuccessCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.GetMetadataSuccessCounter()
+		}
+	})
+
+	b.Run("GetMetadataNotFoundCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.GetMetadataNotFoundCounter()
+		}
+	})
+
+	b.Run("CleanupOrphanedMetadataSuccessCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.CleanupOrphanedMetadataSuccessCounter()
+		}
+	})
+}
+
+func BenchmarkPrecomputedMetrics_NewErrorCounterAccess(b *testing.B) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+
+	b.Run("TouchCircuitBreakerErrorCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.TouchCircuitBreakerErrorCounter()
+		}
+	})
+
+	b.Run("AppendFieldUnsupportedOperationErrorCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.AppendFieldUnsupportedOperationErrorCounter()
+		}
+	})
+
+	b.Run("GetMetadataRedisErrorCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.GetMetadataRedisErrorCounter()
+		}
+	})
+}
+
+func BenchmarkPrecomputedMetrics_SystemMetricsAccess(b *testing.B) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+
+	b.Run("MemoryUsageGauge", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.MemoryUsageGauge()
+		}
+	})
+
+	b.Run("MemoryPressureCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.MemoryPressureCounter()
+		}
+	})
+
+	b.Run("SecurityEventCounter", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = pcm.SecurityEventCounter()
+		}
+	})
+}
+
+func BenchmarkPrecomputedMetrics_NewMetricOperations(b *testing.B) {
+	registry := metric.NewDefaultRegistry()
+	finalTags := metric.Tags{"provider": "redis", "instance_id": "test"}
+	pcm := NewPrecomputedCacheMetrics(registry, finalTags)
+	
+	touchTimer := pcm.TouchTimer()
+	touchCounter := pcm.TouchSuccessCounter()
+	memoryGauge := pcm.MemoryUsageGauge()
+
+	b.Run("TouchTimerRecord", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			touchTimer.Record(time.Microsecond)
+		}
+	})
+
+	b.Run("TouchCounterInc", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			touchCounter.Inc()
+		}
+	})
+
+	b.Run("MemoryGaugeSet", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			memoryGauge.Set(1024.0)
+		}
+	})
 }

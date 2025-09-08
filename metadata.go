@@ -15,7 +15,7 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.metrics.RecordError("redis", "getmetadata", "circuit_breaker", "availability", c.getMetricTags())
+		c.precomputedMetrics.GetMetadataCircuitBreakerErrorCounter().Inc()
 		return nil, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -26,7 +26,7 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 	exists, err := c.client.Exists(ctx, dataKey).Result()
 	if err != nil {
 		c.handleError("getmetadata", err)
-		c.metrics.RecordError("redis", "getmetadata", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.GetMetadataRedisErrorCounter().Inc()
 		return nil, fmt.Errorf("Redis GetMetadata existence check error: %w", err)
 	}
 
@@ -48,11 +48,12 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 			c.handleError("cleanup_orphaned_metadata", err)
 		} else if cleanedInt, ok := cleaned.(int64); ok && cleanedInt > 0 {
 			// Record successful cleanup for monitoring
-			c.metrics.RecordOperation("redis", "cleanup_orphaned_metadata", "success", time.Since(start), c.getMetricTags())
+			c.precomputedMetrics.CleanupOrphanedMetadataSuccessCounter().Inc()
 		}
 
 		// Key doesn't exist, return nil (not an error according to interface contract)
-		c.metrics.RecordOperation("redis", "getmetadata", "not_found", time.Since(start), c.getMetricTags())
+		c.precomputedMetrics.GetMetadataTimer().Record(time.Since(start))
+		c.precomputedMetrics.GetMetadataNotFoundCounter().Inc()
 		return nil, nil
 	}
 
@@ -60,7 +61,7 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 	metadataFields, err := c.client.HGetAll(ctx, metaKey).Result()
 	if err != nil {
 		c.handleError("getmetadata", err)
-		c.metrics.RecordError("redis", "getmetadata", "redis_error", "infrastructure", c.getMetricTags())
+		c.precomputedMetrics.GetMetadataRedisErrorCounter().Inc()
 		return nil, fmt.Errorf("Redis GetMetadata HGetAll error: %w", err)
 	}
 
@@ -136,6 +137,7 @@ func (c *RedisCache[T]) GetMetadata(ctx context.Context, key string) (*interface
 		metadata.Tags = tags
 	}
 
-	c.metrics.RecordOperation("redis", "getmetadata", "success", time.Since(start), c.getMetricTags())
+	c.precomputedMetrics.GetMetadataTimer().Record(time.Since(start))
+	c.precomputedMetrics.GetMetadataSuccessCounter().Inc()
 	return metadata, nil
 }

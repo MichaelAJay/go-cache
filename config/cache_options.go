@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/redis/go-redis/v9"
 )
@@ -23,7 +22,6 @@ type CacheOptions struct {
 	SerializerFormat string // "json", "gob", "msgpack"
 
 	// Enterprise features
-	EnhancedMetrics   metrics.EnhancedCacheMetrics // Custom metrics implementation
 	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
 	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
 	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
@@ -106,11 +104,6 @@ func (o *CacheOptions) WithCleanupInterval(interval time.Duration) *CacheOptions
 	return o
 }
 
-// WithMetrics sets custom metrics implementation
-func (o *CacheOptions) WithMetrics(metrics metrics.EnhancedCacheMetrics) *CacheOptions {
-	o.EnhancedMetrics = metrics
-	return o
-}
 
 // WithGoMetrics sets go-metrics registry for built-in metrics
 func (o *CacheOptions) WithGoMetrics(registry metric.Registry, tags metric.Tags) *CacheOptions {

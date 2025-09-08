@@ -160,7 +160,6 @@ func TestLargeEntryMemoryPressure(t *testing.T) {
 		
 		// Create large string value
 		largeValue := strings.Repeat("A", size)
-		key := fmt.Sprintf("large_entry_%d", size)
 		
 		// Test setting large entry
 		start := time.Now()
@@ -170,9 +169,9 @@ func TestLargeEntryMemoryPressure(t *testing.T) {
 		require.NoError(t, err, "Set should succeed for %d byte entry", size)
 		t.Logf("Set operation took %v for %d byte entry", duration, size)
 		
-		// Test retrieving large entry
+		// Test retrieving large entry - use largeValue as key since that's what stringExtractor uses
 		start = time.Now()
-		retrieved, found, err := cache.Get(ctx, key)
+		retrieved, found, err := cache.Get(ctx, largeValue)
 		duration = time.Since(start)
 		
 		require.NoError(t, err, "Get should succeed for %d byte entry", size)
@@ -181,7 +180,7 @@ func TestLargeEntryMemoryPressure(t *testing.T) {
 		t.Logf("Get operation took %v for %d byte entry", duration, size)
 		
 		// Clean up large entry
-		err = cache.Delete(ctx, key)
+		err = cache.Delete(ctx, largeValue)
 		require.NoError(t, err, "Delete should succeed for large entry")
 	}
 
