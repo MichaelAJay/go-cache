@@ -348,9 +348,15 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		return zero, false, nil
 	}
 
-	// Deserialize value
+	// Deserialize value using StringDeserializer optimization if available
 	var value T
-	if err := c.serializer.Deserialize([]byte(serializedValue.(string)), &value); err != nil {
+	serializedString := serializedValue.(string)
+	if stringDeser, ok := c.serializer.(serializer.StringDeserializer); ok {
+		err = stringDeser.DeserializeString(serializedString, &value)
+	} else {
+		err = c.serializer.Deserialize([]byte(serializedString), &value)
+	}
+	if err != nil {
 		c.precomputedMetrics.GetSerializationErrorCounter().Inc()
 		return zero, false, fmt.Errorf("deserialization error for key %s: %w", key, err)
 	}

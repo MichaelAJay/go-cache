@@ -6,6 +6,7 @@ import (
 	"time"
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
+	"github.com/MichaelAJay/go-serializer"
 )
 
 // GetMany retrieves multiple keys efficiently using optimized pipeline operations
@@ -63,9 +64,15 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		}); ok {
 			serializedValue := cmdResult.Val()
 			if cmdResult.Err() == nil && serializedValue != "" {
-				// Deserialize value
+				// Deserialize value using StringDeserializer optimization if available
 				var value T
-				if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
+				var err error
+				if stringDeser, ok := c.serializer.(serializer.StringDeserializer); ok {
+					err = stringDeser.DeserializeString(serializedValue, &value)
+				} else {
+					err = c.serializer.Deserialize([]byte(serializedValue), &value)
+				}
+				if err != nil {
 					c.precomputedMetrics.GetManySerializationErrorCounter().Inc()
 					continue
 				}
