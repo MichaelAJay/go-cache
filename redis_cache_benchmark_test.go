@@ -65,7 +65,7 @@ func generateBenchmarkData100KB(id string) benchmarkData {
 var (
 	sharedBenchmarkCache     interfaces.Cache[benchmarkData]
 	sharedBenchmarkCacheOnce sync.Once
-	
+
 	sharedBenchmarkSetup     *testintegration.TestEnvironmentSetup
 	sharedBenchmarkSetupOnce sync.Once
 )
@@ -107,7 +107,7 @@ func getSharedBenchmarkCache() interfaces.Cache[benchmarkData] {
 		if err != nil {
 			panic("Failed to create shared benchmark cache: " + err.Error())
 		}
-		
+
 		sharedBenchmarkCache = cacheInstance
 	})
 	return sharedBenchmarkCache

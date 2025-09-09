@@ -120,6 +120,10 @@ func createSerializerCache(format string) interfaces.Cache[benchmarkData] {
 		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
 	}
 
+	// Create metrics registry for serializer benchmarks
+	registry := metric.NewDefaultRegistry()
+	tags := metric.Tags{"environment": "benchmark", "serializer": format}
+
 	cacheInstance, err := cache.NewCache(
 		ctx,
 		setup.RedisClient,
@@ -127,6 +131,7 @@ func createSerializerCache(format string) interfaces.Cache[benchmarkData] {
 		extractor,
 		cache.WithTTL[benchmarkData](10*time.Minute),
 		cache.WithSerializer[benchmarkData](format),
+		cache.WithGoMetrics[benchmarkData](registry, tags),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create shared %s cache: %s", format, err.Error()))
@@ -145,9 +150,14 @@ func createScriptWarmingCache(warmScripts bool) interfaces.Cache[benchmarkData] 
 		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
 	}
 
+	// Create metrics registry for script warming benchmarks
+	registry := metric.NewDefaultRegistry()
+	tags := metric.Tags{"environment": "benchmark", "script_warming": fmt.Sprintf("%v", warmScripts)}
+
 	options := []cache.Option[benchmarkData]{
 		cache.WithTTL[benchmarkData](10*time.Minute),
 		cache.WithSerializer[benchmarkData]("msgpack"),
+		cache.WithGoMetrics[benchmarkData](registry, tags),
 	}
 	
 	// Add script warming option if available
@@ -312,7 +322,7 @@ func BenchmarkRedisCache_DeleteByOwner_100Entries(b *testing.B) {
 	for i := range b.N {
 		b.StopTimer()
 		// Pre-populate cache with 100 entries for this iteration
-		ownerKey := fmt.Sprintf("deletebench:user%d", i)
+		ownerKey := fmt.Sprintf("deletebench-user%d", i)
 		for entryID := range 100 {
 			testData := generateBenchmarkData1KB(fmt.Sprintf("%s:entry%d", ownerKey, entryID))
 			err := cache.Set(ctx, testData, 10*time.Minute)

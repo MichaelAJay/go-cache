@@ -245,9 +245,8 @@ func (c *RedisCache[T]) initialize() error {
 	c.serializer = ser
 
 	// Initialize pre-computed metrics for zero-allocation operations
-	// REQUIRED: All caches must have pre-computed metrics - no fallback to legacy metrics
 	if c.options.GoMetricsRegistry == nil {
-		return fmt.Errorf("GoMetricsRegistry is required - no fallback to legacy metrics supported")
+		return fmt.Errorf("GoMetricsRegistry is required")
 	}
 	// Create final tags once during initialization to avoid runtime allocation
 	finalTags := make(metric.Tags)

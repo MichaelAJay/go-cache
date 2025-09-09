@@ -28,7 +28,7 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	defer c.slicePool.PutStringSlice(dataKeys)
 	metaKeys := c.slicePool.GetStringSliceWithLength(len(keys))
 	defer c.slicePool.PutStringSlice(metaKeys)
-	
+
 	// Use batch key building to reduce string builder allocation overhead
 	c.buildDataKeysMany(keys, dataKeys)
 	c.buildMetaKeysMany(keys, metaKeys)
@@ -67,7 +67,7 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 				// Deserialize value using best available method
 				var value T
 				var err error
-				
+
 				// Try StringDeserializer first (already optimized for strings)
 				if stringDeser, ok := c.serializer.(serializer.StringDeserializer); ok {
 					err = stringDeser.DeserializeString(serializedValue, &value)
@@ -135,7 +135,7 @@ func (c *RedisCache[T]) GetManyRaw(ctx context.Context, keys []string) (map[stri
 	// Build Redis keys for pipeline using pooled slices and batch string building
 	dataKeys := c.slicePool.GetStringSliceWithLength(len(keys))
 	defer c.slicePool.PutStringSlice(dataKeys)
-	
+
 	// Use batch key building to reduce string builder allocation overhead
 	c.buildDataKeysMany(keys, dataKeys)
 
@@ -344,7 +344,7 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 		SerializeSafe(v any) ([]byte, error)
 	}
 	safeSerializer, hasSafe := c.serializer.(safeSer)
-	
+
 	// Pre-serialize all values using SerializeSafe if available, otherwise fallback to standard
 	type setItem struct {
 		key             string
@@ -371,7 +371,7 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 		} else {
 			serializedValue, err = c.serializer.Serialize(value)
 		}
-		
+
 		if err != nil {
 			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
@@ -574,7 +574,7 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 	// Add all operations to pipeline using pooled buffer bytes
 	for _, item := range items {
 		bytes := item.pooledBuf.Bytes()
-		
+
 		// Set data with TTL
 		if ttl > 0 {
 			pipe.SetEX(ctx, item.dataKey, bytes, ttl)
