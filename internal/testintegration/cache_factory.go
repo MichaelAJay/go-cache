@@ -73,7 +73,7 @@ func CreateTestSessionCache(ctx context.Context, client redis.Cmdable, config *C
 		cache.WithGoMetrics[*TestSession](registry, tags),
 	}
 
-	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, 0, opts...)
+	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, 128, opts...)
 }
 
 // CreateStringCache creates a simple string-based cache for basic testing

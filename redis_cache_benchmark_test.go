@@ -104,7 +104,7 @@ func getSharedBenchmarkCache() interfaces.Cache[benchmarkData] {
 			setup.RedisClient,
 			false, // no indexing for basic benchmarks
 			extractor,
-			0, // no pool warming for baseline benchmarks
+			128, // no pool warming for baseline benchmarks
 			cache.WithTTL[benchmarkData](10*time.Minute),
 			cache.WithSerializer[benchmarkData](serializer),
 			cache.WithGoMetrics[benchmarkData](registry, tags),
