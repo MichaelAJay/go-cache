@@ -8,12 +8,13 @@ import (
 func TestVersionSuffixKeyBuilding(t *testing.T) {
 
 	t.Run("buildDataKey with version suffix", func(t *testing.T) {
-		// Create cache with version
+		// Create cache with version and initialize prefixes
 		cache := &RedisCache[string]{
 			redisOptions: &RedisOptions{
 				Version: "v2",
 			},
 		}
+		cache.precomputePrefixes()
 
 		key := cache.buildDataKey("testkey")
 		expected := "cache:data:testkey:v2"
@@ -23,10 +24,11 @@ func TestVersionSuffixKeyBuilding(t *testing.T) {
 	})
 
 	t.Run("buildDataKey without version suffix", func(t *testing.T) {
-		// Create cache without version
+		// Create cache without version and initialize prefixes
 		cache := &RedisCache[string]{
 			redisOptions: nil,
 		}
+		cache.precomputePrefixes()
 
 		key := cache.buildDataKey("testkey")
 		expected := "cache:data:testkey" // Default prefix is applied when no custom prefix
@@ -36,13 +38,14 @@ func TestVersionSuffixKeyBuilding(t *testing.T) {
 	})
 
 	t.Run("buildDataKey with custom prefix and version", func(t *testing.T) {
-		// Create cache with custom prefix and version
+		// Create cache with custom prefix and version and initialize prefixes
 		cache := &RedisCache[string]{
 			redisOptions: &RedisOptions{
 				DataPrefix: "session:",
 				Version:    "v3",
 			},
 		}
+		cache.precomputePrefixes()
 
 		key := cache.buildDataKey("abc123")
 		expected := "session:abc123:v3"
@@ -52,12 +55,13 @@ func TestVersionSuffixKeyBuilding(t *testing.T) {
 	})
 
 	t.Run("buildMetaKey with version suffix", func(t *testing.T) {
-		// Create cache with version
+		// Create cache with version and initialize prefixes
 		cache := &RedisCache[string]{
 			redisOptions: &RedisOptions{
 				Version: "v2",
 			},
 		}
+		cache.precomputePrefixes()
 
 		key := cache.buildMetaKey("testkey")
 		expected := "cache:meta:testkey:v2"
@@ -67,12 +71,13 @@ func TestVersionSuffixKeyBuilding(t *testing.T) {
 	})
 
 	t.Run("buildReverseIndexKey with version suffix", func(t *testing.T) {
-		// Create cache with version
+		// Create cache with version and initialize prefixes
 		cache := &RedisCache[string]{
 			redisOptions: &RedisOptions{
 				Version: "v2",
 			},
 		}
+		cache.precomputePrefixes()
 
 		key := cache.buildReverseIndexKey("testkey")
 		expected := "cache:reverse:testkey:v2"
@@ -82,12 +87,13 @@ func TestVersionSuffixKeyBuilding(t *testing.T) {
 	})
 
 	t.Run("buildLockKey with version suffix", func(t *testing.T) {
-		// Create cache with version
+		// Create cache with version and initialize prefixes
 		cache := &RedisCache[string]{
 			redisOptions: &RedisOptions{
 				Version: "v2",
 			},
 		}
+		cache.precomputePrefixes()
 
 		key := cache.buildLockKey("testkey")
 		expected := "cache:lock:testkey:v2"
@@ -100,9 +106,12 @@ func TestVersionSuffixKeyBuilding(t *testing.T) {
 		cache1 := &RedisCache[string]{
 			redisOptions: &RedisOptions{Version: "v1"},
 		}
+		cache1.precomputePrefixes()
+		
 		cache2 := &RedisCache[string]{
 			redisOptions: &RedisOptions{Version: "v2"},
 		}
+		cache2.precomputePrefixes()
 
 		key1 := cache1.buildDataKey("samekey")
 		key2 := cache2.buildDataKey("samekey")

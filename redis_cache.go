@@ -963,97 +963,45 @@ func (c *RedisCache[T]) buildLRUTrackerKey() string {
 	return c.lruTrackerKey
 }
 
-// buildDataKeysMany efficiently builds multiple data keys using a single string builder
-// This reduces allocation overhead compared to calling buildDataKey individually
+// buildDataKeysMany efficiently builds multiple data keys using simple string concatenation
+// This matches the optimized buildDataKey approach (1 allocation per key)
 func (c *RedisCache[T]) buildDataKeysMany(keys []string, dataKeys []string) {
 	if len(keys) != len(dataKeys) {
 		panic("keys and dataKeys slices must have same length")
 	}
 
-	// Get single string builder for all operations
-	builder := c.builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		c.builderPool.Put(builder)
-	}()
-
-	// Determine if we have version/prefix to avoid repeated checks
-	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
-	hasPrefix := c.redisOptions != nil && c.redisOptions.DataPrefix != ""
-
-	var dataPrefix string
-	if hasPrefix {
-		dataPrefix = c.redisOptions.DataPrefix
-	} else {
-		dataPrefix = "cache:data:"
-	}
-
-	// Build all keys efficiently
-	for i, key := range keys {
-		builder.Reset()
-
-		// Build the key with version if needed
-		builder.WriteString(key)
-		if hasVersion {
-			builder.WriteString(":")
-			builder.WriteString(c.redisOptions.Version)
+	// Use same optimized approach as buildDataKey
+	if c.versionSuffix == "" {
+		// Fast path: prefix + key (1 allocation per key)
+		for i, key := range keys {
+			dataKeys[i] = c.dataPrefix + key
 		}
-
-		// Get intermediate result
-		keyWithVersion := builder.String()
-		builder.Reset()
-
-		// Add prefix and store final result
-		builder.WriteString(dataPrefix)
-		builder.WriteString(keyWithVersion)
-		dataKeys[i] = builder.String()
+	} else {
+		// Version path: prefix + key + versionSuffix (1 allocation per key)
+		for i, key := range keys {
+			dataKeys[i] = c.dataPrefix + key + c.versionSuffix
+		}
 	}
 }
 
-// buildMetaKeysMany efficiently builds multiple metadata keys using a single string builder
-// This reduces allocation overhead compared to calling buildMetaKey individually
+// buildMetaKeysMany efficiently builds multiple metadata keys using simple string concatenation
+// This matches the optimized buildMetaKey approach (1 allocation per key)
 func (c *RedisCache[T]) buildMetaKeysMany(keys []string, metaKeys []string) {
 	if len(keys) != len(metaKeys) {
 		panic("keys and metaKeys slices must have same length")
 	}
 
-	// Get single string builder for all operations
-	builder := c.builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		c.builderPool.Put(builder)
-	}()
-
-	// Determine if we have version/prefix to avoid repeated checks
-	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
-	hasPrefix := c.redisOptions != nil && c.redisOptions.MetaPrefix != ""
-
-	var metaPrefix string
-	if hasPrefix {
-		metaPrefix = c.redisOptions.MetaPrefix
-	} else {
-		metaPrefix = "cache:meta:"
-	}
-
-	// Build all keys efficiently
-	for i, key := range keys {
-		builder.Reset()
-
-		// Build the key with version if needed
-		builder.WriteString(key)
-		if hasVersion {
-			builder.WriteString(":")
-			builder.WriteString(c.redisOptions.Version)
+	// Use same optimized approach as buildMetaKey
+	if c.versionSuffix == "" {
+		// Fast path: prefix + key (1 allocation per key)
+		for i, key := range keys {
+			metaKeys[i] = c.metaPrefix + key
 		}
-
-		// Get intermediate result
-		keyWithVersion := builder.String()
-		builder.Reset()
-
-		// Add prefix and store final result
-		builder.WriteString(metaPrefix)
-		builder.WriteString(keyWithVersion)
-		metaKeys[i] = builder.String()
+	} else {
+		// Version path: prefix + key + versionSuffix (1 allocation per key)
+		for i, key := range keys {
+			metaKeys[i] = c.metaPrefix + key + c.versionSuffix
+		}
 	}
 }
 
@@ -1123,6 +1071,10 @@ func (c *RedisCache[T]) isCircuitBreakerOpen() bool {
 func (c *RedisCache[T]) handleError(operation string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Parameters used for future logging/debugging functionality
+	_ = operation
+	_ = err
 
 	c.failureCount++
 	c.lastFailureTime = time.Now()

@@ -626,14 +626,22 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		return nil
 	}
 
+	// Build Redis keys for pipeline using pooled slices and batch string building
+	dataKeys := c.slicePool.GetStringSliceWithLength(len(keys))
+	defer c.slicePool.PutStringSlice(dataKeys)
+	metaKeys := c.slicePool.GetStringSliceWithLength(len(keys))
+	defer c.slicePool.PutStringSlice(metaKeys)
+
+	// Use batch key building to reduce string concatenation overhead
+	c.buildDataKeysMany(keys, dataKeys)
+	c.buildMetaKeysMany(keys, metaKeys)
+
 	// Use optimized pipeline for batch deletion
 	pipe := c.client.TxPipeline()
 
-	// Add all deletions to pipeline
-	for _, key := range keys {
-		dataKey := c.buildDataKey(key)
-		metaKey := c.buildMetaKey(key)
-		pipe.Del(ctx, dataKey, metaKey)
+	// Add all deletions to pipeline using batch-built keys
+	for i := range keys {
+		pipe.Del(ctx, dataKeys[i], metaKeys[i])
 	}
 
 	// Execute pipeline
