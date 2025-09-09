@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 	"github.com/MichaelAJay/go-cache/config"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/internal/slicepool"
-	"github.com/MichaelAJay/go-cache/internal/stringpool"
 	"github.com/MichaelAJay/go-cache/metrics"
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
@@ -80,6 +80,9 @@ type RedisCache[T any] struct {
 
 	// Slice pool for batch operation optimization
 	slicePool *slicepool.SlicePool
+
+	// String builder pool for key construction optimization
+	builderPool sync.Pool
 
 	// Lua scripts for atomic operations
 	getScript                     *redis.Script
@@ -170,10 +173,11 @@ func WithWarmLuaScripts[T any](warmScripts bool) Option[T] {
 // NewCache creates a new Redis cache instance with clean abstraction
 // indexingMode explicitly controls whether indexing features are enabled
 // extractor provides key extraction functions - GetEntryKey always required, GetOwnerKey only when indexing enabled
+// warmPoolCount pre-warms pools with specified number of items to reduce initial allocation overhead
 // Valid combinations:
 //   - indexingMode=false, extractor with GetEntryKey (basic caching)
 //   - indexingMode=true, extractor with GetEntryKey & GetOwnerKey (indexed caching)
-func NewCache[T any](ctx context.Context, client redis.Cmdable, indexingMode bool, extractor *IndexExtractor[T], opts ...Option[T]) (interfaces.Cache[T], error) {
+func NewCache[T any](ctx context.Context, client redis.Cmdable, indexingMode bool, extractor *IndexExtractor[T], warmPoolCount int, opts ...Option[T]) (interfaces.Cache[T], error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis client cannot be nil")
 	}
@@ -199,7 +203,7 @@ func NewCache[T any](ctx context.Context, client redis.Cmdable, indexingMode boo
 	}
 
 	// Initialize the cache (serializer, metrics, scripts, etc.)
-	if err := cache.initialize(); err != nil {
+	if err := cache.initialize(warmPoolCount); err != nil {
 		return nil, fmt.Errorf("failed to initialize cache: %w", err)
 	}
 
@@ -225,13 +229,13 @@ func (c *RedisCache[T]) validateIndexingConfig() error {
 }
 
 // initialize sets up the cache instance with serializer, metrics, and Lua scripts
-func (c *RedisCache[T]) initialize() error {
+func (c *RedisCache[T]) initialize(warmPoolCount int) error {
 	// Initialize serializer
 	var ser serializer.Serializer
 	if c.options.SerializerFormat != "" {
 		switch c.options.SerializerFormat {
 		case "json":
-			ser = serializer.NewJSONSerializer()
+			ser = serializer.NewJSONSerializer(32 * 1064)
 		case "gob", "binary":
 			ser = serializer.NewGobSerializer()
 		case "msgpack":
@@ -271,10 +275,44 @@ func (c *RedisCache[T]) initialize() error {
 	// Initialize slice pool for batch operation optimization
 	c.slicePool = slicepool.NewSlicePool()
 
+	// Initialize string builder pool for key construction optimization
+	c.builderPool = sync.Pool{
+		New: func() any {
+			return &strings.Builder{}
+		},
+	}
+
 	// Initialize Lua scripts for atomic operations
 	c.initLuaScripts()
 
+	// Pre-warm pools to reduce initial allocation overhead
+	if warmPoolCount > 0 {
+		c.warmPools(warmPoolCount)
+	}
+
 	return nil
+}
+
+// warmPools pre-warms both slice pool and string pool with the specified number of items
+// This reduces allocation overhead during the first operations by pre-allocating pool items
+func (c *RedisCache[T]) warmPools(warmCount int) {
+	// Warm []string pool
+	for range warmCount {
+		s := make([]string, 0, 16) // capacity = 16
+		c.slicePool.PutStringSlice(s)
+	}
+
+	// Warm []any pool
+	for range warmCount {
+		a := make([]any, 0, 16) // capacity = 16
+		c.slicePool.PutAnySlice(a)
+	}
+
+	// Warm string builder pool
+	for range warmCount {
+		b := &strings.Builder{}
+		c.builderPool.Put(b)
+	}
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
@@ -308,8 +346,18 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	metaKey := c.buildMetaKey(key)
 	lruTrackerKey := c.buildLRUTrackerKey()
 
+	// Get pooled slice for script arguments to avoid allocation
+	scriptArgs := c.slicePool.GetStringSlice(3)
+	defer c.slicePool.PutStringSlice(scriptArgs)
+
+	// Extend slice to required length
+	scriptArgs = scriptArgs[:3]
+	scriptArgs[0] = dataKey
+	scriptArgs[1] = metaKey
+	scriptArgs[2] = lruTrackerKey
+
 	// Use Lua script for atomic get and metadata update with LRU tracking
-	result, err := c.getScript.Run(ctx, c.client, []string{dataKey, metaKey, lruTrackerKey}, key).Result()
+	result, err := c.getScript.Run(ctx, c.client, scriptArgs, key).Result()
 	if err != nil {
 		c.handleError("get", err)
 		c.precomputedMetrics.GetRedisErrorCounter().Inc()
@@ -797,8 +845,11 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 // buildDataKey constructs the Redis key for data storage
 func (c *RedisCache[T]) buildDataKey(key string) string {
 	// Use pooled string builder for all keys to ensure proper prefixing
-	builder := stringpool.Get()
-	defer stringpool.Put(builder)
+	builder := c.builderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		c.builderPool.Put(builder)
+	}()
 
 	// Build the final key with version if configured
 	builder.WriteString(key)
@@ -825,8 +876,11 @@ func (c *RedisCache[T]) buildDataKey(key string) string {
 // buildMetaKey constructs the Redis key for metadata storage
 func (c *RedisCache[T]) buildMetaKey(key string) string {
 	// Use pooled string builder for all keys to ensure proper prefixing
-	builder := stringpool.Get()
-	defer stringpool.Put(builder)
+	builder := c.builderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		c.builderPool.Put(builder)
+	}()
 
 	// Build the final key with version if configured
 	builder.WriteString(key)
@@ -882,8 +936,11 @@ func (c *RedisCache[T]) buildLockKey(key string) string {
 	}
 
 	// Use pooled string builder for complex keys
-	builder := stringpool.Get()
-	defer stringpool.Put(builder)
+	builder := c.builderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		c.builderPool.Put(builder)
+	}()
 
 	// Build the final key with version if configured
 	builder.WriteString(key)
@@ -909,15 +966,27 @@ func (c *RedisCache[T]) buildLockKey(key string) string {
 
 // buildLRUTrackerKey constructs the Redis key for LRU tracking sorted set
 func (c *RedisCache[T]) buildLRUTrackerKey() string {
-	prefix := "cache:lru:tracker"
+	// Use pooled string builder to avoid concatenation allocations
+	builder := c.builderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		c.builderPool.Put(builder)
+	}()
+
 	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
 		// Use data prefix to ensure LRU tracker is scoped to the same cache instance
-		prefix = c.redisOptions.DataPrefix + "lru:tracker"
+		builder.WriteString(c.redisOptions.DataPrefix)
+		builder.WriteString("lru:tracker")
+	} else {
+		builder.WriteString("cache:lru:tracker")
 	}
+
 	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		prefix = prefix + ":" + c.redisOptions.Version
+		builder.WriteString(":")
+		builder.WriteString(c.redisOptions.Version)
 	}
-	return prefix
+
+	return builder.String()
 }
 
 // buildDataKeysMany efficiently builds multiple data keys using a single string builder
@@ -928,8 +997,11 @@ func (c *RedisCache[T]) buildDataKeysMany(keys []string, dataKeys []string) {
 	}
 
 	// Get single string builder for all operations
-	builder := stringpool.Get()
-	defer stringpool.Put(builder)
+	builder := c.builderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		c.builderPool.Put(builder)
+	}()
 
 	// Determine if we have version/prefix to avoid repeated checks
 	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
@@ -972,8 +1044,11 @@ func (c *RedisCache[T]) buildMetaKeysMany(keys []string, metaKeys []string) {
 	}
 
 	// Get single string builder for all operations
-	builder := stringpool.Get()
-	defer stringpool.Put(builder)
+	builder := c.builderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		c.builderPool.Put(builder)
+	}()
 
 	// Determine if we have version/prefix to avoid repeated checks
 	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""

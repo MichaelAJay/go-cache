@@ -13,6 +13,10 @@ import (
 	"github.com/MichaelAJay/go-metrics/metric"
 )
 
+const (
+	serializer = "msgpack"
+)
+
 // Test data structures for benchmarks
 type benchmarkData struct {
 	ID      string            `json:"id"`
@@ -100,8 +104,9 @@ func getSharedBenchmarkCache() interfaces.Cache[benchmarkData] {
 			setup.RedisClient,
 			false, // no indexing for basic benchmarks
 			extractor,
+			0, // no pool warming for baseline benchmarks
 			cache.WithTTL[benchmarkData](10*time.Minute),
-			cache.WithSerializer[benchmarkData]("msgpack"),
+			cache.WithSerializer[benchmarkData](serializer),
 			cache.WithGoMetrics[benchmarkData](registry, tags),
 		)
 		if err != nil {

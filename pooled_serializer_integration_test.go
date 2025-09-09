@@ -41,7 +41,7 @@ func TestSetManySafePooledIntegration(t *testing.T) {
 	registry := metric.NewDefaultRegistry()
 	tags := metric.Tags{"environment": "test"}
 	
-	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor,
+	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor, 0,
 		cache.WithTTL[TestStruct](time.Minute),
 		cache.WithSerializer[TestStruct](config.SerializerFormat),
 		cache.WithGoMetrics[TestStruct](registry, tags),
@@ -123,7 +123,7 @@ func TestSerializerFallback(t *testing.T) {
 	registry := metric.NewDefaultRegistry()
 	tags := metric.Tags{"environment": "test"}
 	
-	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor,
+	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor, 0,
 		cache.WithTTL[TestStruct](time.Minute),
 		cache.WithSerializer[TestStruct]("json"), // JSON doesn't have pooled APIs
 		cache.WithGoMetrics[TestStruct](registry, tags),

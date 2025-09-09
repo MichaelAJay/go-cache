@@ -39,6 +39,7 @@ func getSharedCircuitBreakerCache() interfaces.Cache[benchmarkData] {
 			setup.RedisClient,
 			false, // no indexing for system benchmarks
 			extractor,
+			0, // no pool warming for baseline benchmarks
 			cache.WithTTL[benchmarkData](10*time.Minute),
 			cache.WithSerializer[benchmarkData]("msgpack"),
 			// Note: Circuit breaker configuration would be added here when available

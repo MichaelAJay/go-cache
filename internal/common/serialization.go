@@ -18,7 +18,7 @@ import (
 func GetSerializer(format serializer.Format) (serializer.Serializer, error) {
 	switch format {
 	case serializer.JSON:
-		return serializer.NewJSONSerializer(), nil
+		return serializer.NewJSONSerializer(32 * 1024), nil
 	case serializer.Binary:
 		return serializer.NewGobSerializer(), nil
 	case serializer.Msgpack:
@@ -40,10 +40,10 @@ func GetDefaultSerializerFormat() serializer.Format {
 // Size Estimation Algorithm:
 // 1. Handles nil values: returns 0
 // 2. Type-specific estimates:
-//    - string/[]byte: actual byte length
-//    - numeric types: 8 bytes (covers most cases)
-//    - bool: 1 byte
-//    - complex types: 100 bytes (rough estimate)
+//   - string/[]byte: actual byte length
+//   - numeric types: 8 bytes (covers most cases)
+//   - bool: 1 byte
+//   - complex types: 100 bytes (rough estimate)
 //
 // Note: This provides rough estimates for memory planning. For exact sizes,
 // actual serialization would be required, which would impact performance.

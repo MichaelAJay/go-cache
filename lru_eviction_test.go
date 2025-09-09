@@ -28,7 +28,7 @@ func TestRedisCache_LRUEviction(t *testing.T) {
 	registry := metric.NewDefaultRegistry()
 	tags := metric.Tags{"environment": "test"}
 	
-	sessionCache, err := cache.NewCache(ctx, setup.RedisClient, config.IndexingMode, testintegration.TestSessionExtractor,
+	sessionCache, err := cache.NewCache(ctx, setup.RedisClient, config.IndexingMode, testintegration.TestSessionExtractor, 0,
 		cache.WithTTL[*testintegration.TestSession](config.TTL),
 		cache.WithSerializer[*testintegration.TestSession](config.SerializerFormat),
 		cache.WithWarmLuaScripts[*testintegration.TestSession](config.WarmLuaScripts),

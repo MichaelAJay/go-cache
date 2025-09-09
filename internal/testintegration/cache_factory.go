@@ -6,8 +6,12 @@ import (
 
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/go-redis/redis/v8"
 	"github.com/MichaelAJay/go-metrics/metric"
+	"github.com/go-redis/redis/v8"
+)
+
+const (
+	serializer = "msgpack"
 )
 
 // TestSession represents a simple test data structure for cache testing
@@ -40,7 +44,7 @@ type CacheConfig struct {
 func DefaultCacheConfig() *CacheConfig {
 	return &CacheConfig{
 		IndexingMode:     false,
-		SerializerFormat: "msgpack",
+		SerializerFormat: serializer,
 		WarmLuaScripts:   true,
 		TTL:              5 * time.Minute,
 	}
@@ -50,7 +54,7 @@ func DefaultCacheConfig() *CacheConfig {
 func IndexedCacheConfig() *CacheConfig {
 	return &CacheConfig{
 		IndexingMode:     true,
-		SerializerFormat: "msgpack",
+		SerializerFormat: serializer,
 		WarmLuaScripts:   true,
 		TTL:              5 * time.Minute,
 	}
@@ -69,7 +73,7 @@ func CreateTestSessionCache(ctx context.Context, client redis.Cmdable, config *C
 		cache.WithGoMetrics[*TestSession](registry, tags),
 	}
 
-	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, opts...)
+	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, 0, opts...)
 }
 
 // CreateStringCache creates a simple string-based cache for basic testing
@@ -95,7 +99,7 @@ func CreateStringCache(ctx context.Context, client redis.Cmdable, config *CacheC
 
 	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
 
-	return cache.NewCache(ctx, client, config.IndexingMode, stringExtractor, opts...)
+	return cache.NewCache(ctx, client, config.IndexingMode, stringExtractor, 0, opts...)
 }
 
 // CreateTestCounterCache creates a RedisCache[int64] for counter testing
@@ -121,7 +125,7 @@ func CreateTestCounterCache(ctx context.Context, client redis.Cmdable, config *C
 
 	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
 
-	return cache.NewCache(ctx, client, config.IndexingMode, counterExtractor, opts...)
+	return cache.NewCache(ctx, client, config.IndexingMode, counterExtractor, 0, opts...)
 }
 
 // CreateTestFloatCounterCache creates a RedisCache[float64] for float counter testing
@@ -147,5 +151,5 @@ func CreateTestFloatCounterCache(ctx context.Context, client redis.Cmdable, conf
 
 	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
 
-	return cache.NewCache(ctx, client, config.IndexingMode, floatCounterExtractor, opts...)
+	return cache.NewCache(ctx, client, config.IndexingMode, floatCounterExtractor, 0, opts...)
 }

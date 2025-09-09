@@ -59,6 +59,7 @@ func getSharedIndexingCache() interfaces.Cache[benchmarkData] {
 			setup.RedisClient,
 			true, // indexing enabled
 			extractor,
+			0, // no pool warming for baseline benchmarks
 			cache.WithTTL[benchmarkData](10*time.Minute),
 			cache.WithSerializer[benchmarkData]("msgpack"),
 			cache.WithGoMetrics[benchmarkData](registry, tags),
@@ -129,6 +130,7 @@ func createSerializerCache(format string) interfaces.Cache[benchmarkData] {
 		setup.RedisClient,
 		false, // no indexing for serializer benchmarks
 		extractor,
+		0, // no pool warming for baseline benchmarks
 		cache.WithTTL[benchmarkData](10*time.Minute),
 		cache.WithSerializer[benchmarkData](format),
 		cache.WithGoMetrics[benchmarkData](registry, tags),
@@ -170,6 +172,7 @@ func createScriptWarmingCache(warmScripts bool) interfaces.Cache[benchmarkData] 
 		setup.RedisClient,
 		false, // no indexing for script warming benchmarks
 		extractor,
+		0, // no pool warming for baseline benchmarks
 		options...,
 	)
 	if err != nil {
@@ -521,6 +524,7 @@ func BenchmarkRedisCache_ColdStart_FirstCall(b *testing.B) {
 			setup.RedisClient,
 			false, // no indexing for these benchmarks
 			extractor,
+			0, // no pool warming for baseline benchmarks
 			cache.WithTTL[benchmarkData](10*time.Minute),
 			cache.WithSerializer[benchmarkData]("msgpack"),
 			cache.WithWarmLuaScripts[benchmarkData](false),
