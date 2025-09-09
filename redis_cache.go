@@ -52,9 +52,9 @@ const (
 
 // RedisCache implements the Cache[T] interface with distributed Redis backend
 type RedisCache[T any] struct {
-	client     redis.Cmdable
-	serializer serializer.Serializer
-	options    *config.CacheOptions
+	client             redis.Cmdable
+	serializer         serializer.Serializer
+	options            *config.CacheOptions
 	precomputedMetrics *metrics.PrecomputedCacheMetrics
 
 	extractor    *IndexExtractor[T] // nil = no indexing
@@ -82,17 +82,17 @@ type RedisCache[T any] struct {
 	slicePool *slicepool.SlicePool
 
 	// Lua scripts for atomic operations
-	getScript                    *redis.Script
-	setScript                    *redis.Script
-	getOrSetScript               *redis.Script
-	updateScript                 *redis.Script
-	deleteByIndexScript          *redis.Script
-	deleteByEntryScript          *redis.Script
-	getByOwnerScript             *redis.Script
-	deleteByOwnerScript          *redis.Script
-	setIfExistsScript            *redis.Script
-	setIfNotExistsScript         *redis.Script
-	getManyMetadataUpdateScript  *redis.Script
+	getScript                     *redis.Script
+	setScript                     *redis.Script
+	getOrSetScript                *redis.Script
+	updateScript                  *redis.Script
+	deleteByIndexScript           *redis.Script
+	deleteByEntryScript           *redis.Script
+	getByOwnerScript              *redis.Script
+	deleteByOwnerScript           *redis.Script
+	setIfExistsScript             *redis.Script
+	setIfNotExistsScript          *redis.Script
+	getManyMetadataUpdateScript   *redis.Script
 	cleanupOrphanedMetadataScript *redis.Script
 }
 
@@ -112,7 +112,6 @@ func WithTTL[T any](ttl time.Duration) Option[T] {
 		cache.options.DefaultTTL = ttl
 	}
 }
-
 
 // WithHooks sets lifecycle hooks
 func WithHooks[T any](hooks *config.CacheHooks) Option[T] {
@@ -245,11 +244,9 @@ func (c *RedisCache[T]) initialize() error {
 	}
 	c.serializer = ser
 
-
 	// Initialize pre-computed metrics for zero-allocation operations
-	// REQUIRED: All caches must have pre-computed metrics - no fallback to legacy metrics
 	if c.options.GoMetricsRegistry == nil {
-		return fmt.Errorf("GoMetricsRegistry is required - no fallback to legacy metrics supported")
+		return fmt.Errorf("GoMetricsRegistry is required")
 	}
 	// Create final tags once during initialization to avoid runtime allocation
 	finalTags := make(metric.Tags)
@@ -398,7 +395,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	var ownerKey string
 	var indexKey string
 	var reverseKey string
-	
+
 	if c.indexingMode {
 		// Indexing enabled - validate and extract owner key
 		if c.extractor.GetOwnerKey == nil {
@@ -418,7 +415,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	lruTrackerKey := c.buildLRUTrackerKey()
 	dataPrefix := c.buildDataKey("")
 	metaPrefix := c.buildMetaKey("")
-	
+
 	result, err := c.setScript.Run(ctx, c.client,
 		[]string{dataKey, metaKey, indexKey, reverseKey, lruTrackerKey},
 		string(serializedValue), ttlInMilliseconds, key, ownerKey, fmt.Sprintf("%t", c.indexingMode), c.options.MaxEntries, dataPrefix, metaPrefix).Result()
@@ -437,7 +434,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 	// Record memory usage after successful set operation
 	if c.memoryTracker != nil {
 		c.memoryTracker.RecordSet(key, serializedValue)
-		
+
 		// Check if memory sampling should occur
 		if c.memoryTracker.ShouldSample() {
 			dataPrefix := c.buildDataKey("")
@@ -446,7 +443,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 				c.precomputedMetrics.SetMemorySamplingErrorCounter().Inc()
 			}
 		}
-		
+
 		// Record memory usage metrics
 		c.recordMemoryUsageMetrics(ctx)
 	}
@@ -508,7 +505,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 	// Record memory usage after successful delete operation
 	if c.memoryTracker != nil && deleted > 0 {
 		c.memoryTracker.RecordDelete(key)
-		
+
 		// Check if memory sampling should occur
 		if c.memoryTracker.ShouldSample() {
 			dataPrefix := c.buildDataKey("")
@@ -517,7 +514,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 				c.precomputedMetrics.DeleteMemorySamplingErrorCounter().Inc()
 			}
 		}
-		
+
 		// Record memory usage metrics
 		c.recordMemoryUsageMetrics(ctx)
 	}
@@ -802,18 +799,18 @@ func (c *RedisCache[T]) buildDataKey(key string) string {
 	// Use pooled string builder for all keys to ensure proper prefixing
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
-	
+
 	// Build the final key with version if configured
 	builder.WriteString(key)
 	if c.redisOptions != nil && c.redisOptions.Version != "" {
 		builder.WriteString(":")
 		builder.WriteString(c.redisOptions.Version)
 	}
-	
+
 	// Add prefix
 	finalKey := builder.String()
 	builder.Reset()
-	
+
 	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
 		builder.WriteString(c.redisOptions.DataPrefix)
 		builder.WriteString(finalKey)
@@ -821,7 +818,7 @@ func (c *RedisCache[T]) buildDataKey(key string) string {
 		builder.WriteString("cache:data:")
 		builder.WriteString(finalKey)
 	}
-	
+
 	return builder.String()
 }
 
@@ -830,18 +827,18 @@ func (c *RedisCache[T]) buildMetaKey(key string) string {
 	// Use pooled string builder for all keys to ensure proper prefixing
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
-	
+
 	// Build the final key with version if configured
 	builder.WriteString(key)
 	if c.redisOptions != nil && c.redisOptions.Version != "" {
 		builder.WriteString(":")
 		builder.WriteString(c.redisOptions.Version)
 	}
-	
+
 	// Add prefix
 	finalKey := builder.String()
 	builder.Reset()
-	
+
 	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
 		builder.WriteString(c.redisOptions.MetaPrefix)
 		builder.WriteString(finalKey)
@@ -849,7 +846,7 @@ func (c *RedisCache[T]) buildMetaKey(key string) string {
 		builder.WriteString("cache:meta:")
 		builder.WriteString(finalKey)
 	}
-	
+
 	return builder.String()
 }
 
@@ -869,7 +866,7 @@ func (c *RedisCache[T]) buildReverseIndexKey(entryKey string) string {
 	if c.redisOptions != nil && c.redisOptions.Version != "" {
 		finalKey = entryKey + ":" + c.redisOptions.Version
 	}
-	
+
 	prefix := "cache:reverse:"
 	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
 		prefix = c.redisOptions.IndexPrefix + "reverse:"
@@ -883,22 +880,22 @@ func (c *RedisCache[T]) buildLockKey(key string) string {
 	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.LockPrefix == "") {
 		return key
 	}
-	
+
 	// Use pooled string builder for complex keys
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
-	
+
 	// Build the final key with version if configured
 	builder.WriteString(key)
 	if c.redisOptions.Version != "" {
 		builder.WriteString(":")
 		builder.WriteString(c.redisOptions.Version)
 	}
-	
+
 	// Add prefix
 	finalKey := builder.String()
 	builder.Reset()
-	
+
 	if c.redisOptions.LockPrefix != "" {
 		builder.WriteString(c.redisOptions.LockPrefix)
 		builder.WriteString(finalKey)
@@ -906,7 +903,7 @@ func (c *RedisCache[T]) buildLockKey(key string) string {
 		builder.WriteString("cache:lock:")
 		builder.WriteString(finalKey)
 	}
-	
+
 	return builder.String()
 }
 
@@ -929,37 +926,37 @@ func (c *RedisCache[T]) buildDataKeysMany(keys []string, dataKeys []string) {
 	if len(keys) != len(dataKeys) {
 		panic("keys and dataKeys slices must have same length")
 	}
-	
+
 	// Get single string builder for all operations
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
-	
+
 	// Determine if we have version/prefix to avoid repeated checks
 	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
 	hasPrefix := c.redisOptions != nil && c.redisOptions.DataPrefix != ""
-	
+
 	var dataPrefix string
 	if hasPrefix {
 		dataPrefix = c.redisOptions.DataPrefix
 	} else {
 		dataPrefix = "cache:data:"
 	}
-	
+
 	// Build all keys efficiently
 	for i, key := range keys {
 		builder.Reset()
-		
+
 		// Build the key with version if needed
 		builder.WriteString(key)
 		if hasVersion {
 			builder.WriteString(":")
 			builder.WriteString(c.redisOptions.Version)
 		}
-		
+
 		// Get intermediate result
 		keyWithVersion := builder.String()
 		builder.Reset()
-		
+
 		// Add prefix and store final result
 		builder.WriteString(dataPrefix)
 		builder.WriteString(keyWithVersion)
@@ -973,37 +970,37 @@ func (c *RedisCache[T]) buildMetaKeysMany(keys []string, metaKeys []string) {
 	if len(keys) != len(metaKeys) {
 		panic("keys and metaKeys slices must have same length")
 	}
-	
+
 	// Get single string builder for all operations
 	builder := stringpool.Get()
 	defer stringpool.Put(builder)
-	
+
 	// Determine if we have version/prefix to avoid repeated checks
 	hasVersion := c.redisOptions != nil && c.redisOptions.Version != ""
 	hasPrefix := c.redisOptions != nil && c.redisOptions.MetaPrefix != ""
-	
+
 	var metaPrefix string
 	if hasPrefix {
 		metaPrefix = c.redisOptions.MetaPrefix
 	} else {
 		metaPrefix = "cache:meta:"
 	}
-	
+
 	// Build all keys efficiently
 	for i, key := range keys {
 		builder.Reset()
-		
+
 		// Build the key with version if needed
 		builder.WriteString(key)
 		if hasVersion {
 			builder.WriteString(":")
 			builder.WriteString(c.redisOptions.Version)
 		}
-		
+
 		// Get intermediate result
 		keyWithVersion := builder.String()
 		builder.Reset()
-		
+
 		// Add prefix and store final result
 		builder.WriteString(metaPrefix)
 		builder.WriteString(keyWithVersion)
@@ -1027,7 +1024,7 @@ func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
 	if c.memoryTracker.IsMemoryPressure(ctx) {
 		// Determine which threshold was exceeded for metrics recording
 		var threshold int64
-		
+
 		// Check absolute threshold first
 		if c.options.MemoryPressureThresholdBytes > 0 && memoryBytes >= c.options.MemoryPressureThresholdBytes {
 			threshold = c.options.MemoryPressureThresholdBytes
@@ -1037,17 +1034,16 @@ func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
 			// This is not perfect but provides useful metrics
 			threshold = int64(float64(memoryBytes) / (c.options.MemoryPressureThresholdPercent / 100.0))
 		}
-		
+
 		// If we couldn't determine a specific threshold, use the current memory as the threshold
 		// This ensures we always record the pressure event
 		if threshold == 0 {
 			threshold = memoryBytes
 		}
-		
+
 		c.precomputedMetrics.MemoryPressureCounter().Inc()
 	}
 }
-
 
 // Circuit breaker implementation
 
@@ -1099,24 +1095,24 @@ func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) 
 	}
 
 	start := time.Now()
-	
+
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
-	
+
 	// Use Redis INCRBY for atomic increment
 	result, err := c.client.IncrBy(ctx, dataKey, delta).Result()
-	
+
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		c.handleError("increment", err)
-		
+
 		// Categorize error for metrics
 		errorType := "redis_error"
 		if err == redis.Nil {
 			errorType = "key_not_found"
 		}
-		
+
 		if errorType == "redis_error" {
 			c.precomputedMetrics.IncrementRedisErrorCounter().Inc()
 		} else {
@@ -1124,11 +1120,11 @@ func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) 
 		}
 		return 0, fmt.Errorf("increment operation failed: %w", err)
 	}
-	
+
 	// Record successful operation
 	c.precomputedMetrics.IncrementTimer().Record(duration)
 	c.precomputedMetrics.IncrementSuccessCounter().Inc()
-	
+
 	return result, nil
 }
 
@@ -1141,24 +1137,24 @@ func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) 
 	}
 
 	start := time.Now()
-	
+
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
-	
+
 	// Use Redis DECRBY for atomic decrement
 	result, err := c.client.DecrBy(ctx, dataKey, delta).Result()
-	
+
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		c.handleError("decrement", err)
-		
+
 		// Categorize error for metrics
 		errorType := "redis_error"
 		if err == redis.Nil {
 			errorType = "key_not_found"
 		}
-		
+
 		if errorType == "redis_error" {
 			c.precomputedMetrics.DecrementRedisErrorCounter().Inc()
 		} else {
@@ -1166,11 +1162,11 @@ func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) 
 		}
 		return 0, fmt.Errorf("decrement operation failed: %w", err)
 	}
-	
+
 	// Record successful operation
 	c.precomputedMetrics.DecrementTimer().Record(duration)
 	c.precomputedMetrics.DecrementSuccessCounter().Inc()
-	
+
 	return result, nil
 }
 
@@ -1183,24 +1179,24 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 	}
 
 	start := time.Now()
-	
+
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
-	
+
 	// Use Redis INCRBYFLOAT for atomic float increment
 	result, err := c.client.IncrByFloat(ctx, dataKey, delta).Result()
-	
+
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		c.handleError("increment_float", err)
-		
+
 		// Categorize error for metrics
 		errorType := "redis_error"
 		if err == redis.Nil {
 			errorType = "key_not_found"
 		}
-		
+
 		if errorType == "redis_error" {
 			c.precomputedMetrics.IncrementFloatRedisErrorCounter().Inc()
 		} else {
@@ -1208,11 +1204,11 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 		}
 		return 0, fmt.Errorf("increment float operation failed: %w", err)
 	}
-	
+
 	// Record successful operation
 	c.precomputedMetrics.IncrementFloatTimer().Record(duration)
 	c.precomputedMetrics.IncrementFloatSuccessCounter().Inc()
-	
+
 	return result, nil
 }
 
@@ -1227,44 +1223,44 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 	}
 
 	start := time.Now()
-	
+
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
-	
+
 	// Use Redis PEXPIRE for atomic TTL extension with millisecond precision
 	ttlMs := ttl.Milliseconds()
-	
+
 	// Set TTL on both data and metadata keys
 	pipe := c.client.Pipeline()
 	dataResult := pipe.PExpire(ctx, dataKey, ttl)
 	metaResult := pipe.PExpire(ctx, metaKey, ttl)
 	_, err := pipe.Exec(ctx)
-	
+
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		c.handleError("extend_ttl", err)
 		c.precomputedMetrics.ExtendTTLRedisErrorCounter().Inc()
 		return fmt.Errorf("extend TTL operation failed: %w", err)
 	}
-	
+
 	// Check if the key actually existed
 	dataExists, _ := dataResult.Result()
 	if !dataExists {
 		c.precomputedMetrics.ExtendTTLKeyNotFoundErrorCounter().Inc()
 		return fmt.Errorf("key does not exist: %s", key)
 	}
-	
+
 	// Update metadata TTL field
 	if metaExists, _ := metaResult.Result(); metaExists {
 		c.client.HSet(ctx, metaKey, "ttl", fmt.Sprintf("%d", ttlMs))
 	}
-	
+
 	// Record successful operation
 	c.precomputedMetrics.ExtendTTLTimer().Record(duration)
 	c.precomputedMetrics.ExtendTTLSuccessCounter().Inc()
-	
+
 	return nil
 }
 
@@ -1277,11 +1273,11 @@ func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration
 	}
 
 	start := time.Now()
-	
+
 	// Build the keys
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
-	
+
 	// Use Lua script for atomic touch operation
 	script := `
 		local dataKey = KEYS[1]
@@ -1311,27 +1307,27 @@ func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration
 		
 		return 1
 	`
-	
+
 	ttlMs := ttl.Milliseconds()
 	result, err := c.client.Eval(ctx, script, []string{dataKey, metaKey}, ttlMs).Result()
-	
+
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		c.handleError("touch", err)
 		c.precomputedMetrics.TouchRedisErrorCounter().Inc()
 		return false, fmt.Errorf("touch operation failed: %w", err)
 	}
-	
+
 	exists := result.(int64) == 1
-	
+
 	if !exists {
 		c.precomputedMetrics.TouchKeyNotFoundErrorCounter().Inc()
 	} else {
 		c.precomputedMetrics.TouchTimer().Record(duration)
 		c.precomputedMetrics.TouchSuccessCounter().Inc()
 	}
-	
+
 	return exists, nil
 }
 
@@ -1345,11 +1341,11 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 	}
 
 	start := time.Now()
-	
+
 	// Build the keys
 	dataKey := c.buildDataKey(key)
 	metaKey := c.buildMetaKey(key)
-	
+
 	// For simple string append, use Redis APPEND command
 	// This works for simple string fields, not complex JSON paths
 	if fieldPath == "" {
@@ -1359,30 +1355,30 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 		pipe.PExpire(ctx, dataKey, ttl)
 		pipe.PExpire(ctx, metaKey, ttl)
 		_, err := pipe.Exec(ctx)
-		
+
 		duration := time.Since(start)
-		
+
 		if err != nil {
 			c.handleError("append_field", err)
 			c.precomputedMetrics.AppendFieldRedisErrorCounter().Inc()
 			return fmt.Errorf("append field operation failed: %w", err)
 		}
-		
+
 		// Update metadata
 		if appendResult.Val() > 0 {
 			now := time.Now().Unix()
-			c.client.HSet(ctx, metaKey, 
+			c.client.HSet(ctx, metaKey,
 				"last_accessed", fmt.Sprintf("%d", now),
 				"ttl", fmt.Sprintf("%d", ttl.Milliseconds()),
 				"size", fmt.Sprintf("%d", appendResult.Val()),
 			)
 		}
-		
+
 		c.precomputedMetrics.AppendFieldTimer().Record(duration)
 		c.precomputedMetrics.AppendFieldSuccessCounter().Inc()
 		return nil
 	}
-	
+
 	// For complex field paths, this would require JSON manipulation
 	// For now, return an error indicating this feature needs implementation
 	c.precomputedMetrics.AppendFieldUnsupportedOperationErrorCounter().Inc()
@@ -1401,7 +1397,7 @@ func (c *RedisCache[T]) Close() error {
 		// If background sampling is added later, cancellation logic would go here
 		c.memoryTracker = nil
 	}
-	
+
 	// Cache doesn't own the Redis client, so it doesn't close it
 	// The client lifecycle is managed by the caller
 	return nil

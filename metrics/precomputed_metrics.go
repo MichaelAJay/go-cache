@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"maps"
+
 	"github.com/MichaelAJay/go-metrics/metric"
 )
 
@@ -8,141 +10,141 @@ import (
 // All metrics are pre-computed with final tags baked in to eliminate runtime allocations
 type PrecomputedCacheMetrics struct {
 	// Core operation timers (pre-computed with final tags)
-	hasTimer                metric.Timer
-	getTimer                metric.Timer
-	setTimer                metric.Timer
-	deleteTimer             metric.Timer
-	clearTimer              metric.Timer
-	getByOwnerTimer         metric.Timer
-	deleteByOwnerTimer      metric.Timer
-	getKeysByPatternTimer   metric.Timer
-	incrementTimer          metric.Timer
-	decrementTimer          metric.Timer
-	incrementFloatTimer     metric.Timer
-	extendTTLTimer          metric.Timer
-	touchTimer              metric.Timer
-	appendFieldTimer        metric.Timer
-	getMetadataTimer        metric.Timer
-	getOrSetTimer           metric.Timer
-	setIfExistsTimer        metric.Timer
-	setIfNotExistsTimer     metric.Timer
-	
+	hasTimer              metric.Timer
+	getTimer              metric.Timer
+	setTimer              metric.Timer
+	deleteTimer           metric.Timer
+	clearTimer            metric.Timer
+	getByOwnerTimer       metric.Timer
+	deleteByOwnerTimer    metric.Timer
+	getKeysByPatternTimer metric.Timer
+	incrementTimer        metric.Timer
+	decrementTimer        metric.Timer
+	incrementFloatTimer   metric.Timer
+	extendTTLTimer        metric.Timer
+	touchTimer            metric.Timer
+	appendFieldTimer      metric.Timer
+	getMetadataTimer      metric.Timer
+	getOrSetTimer         metric.Timer
+	setIfExistsTimer      metric.Timer
+	setIfNotExistsTimer   metric.Timer
+
 	// Batch operation timers
 	getManyTimer    metric.Timer
 	setManyTimer    metric.Timer
 	deleteManyTimer metric.Timer
-	
+
 	// Success/status counters
-	hasSuccessCounter                metric.Counter
-	getSuccessCounter                metric.Counter
-	setSuccessCounter                metric.Counter
-	deleteSuccessCounter             metric.Counter
-	clearSuccessCounter              metric.Counter
-	clearEmptyCounter                metric.Counter
-	getByOwnerSuccessCounter         metric.Counter
-	getByOwnerEmptyCounter           metric.Counter
-	deleteByOwnerSuccessCounter      metric.Counter
-	getKeysByPatternSuccessCounter   metric.Counter
-	incrementSuccessCounter          metric.Counter
-	decrementSuccessCounter          metric.Counter
-	incrementFloatSuccessCounter     metric.Counter
-	extendTTLSuccessCounter          metric.Counter
-	touchSuccessCounter              metric.Counter
-	appendFieldSuccessCounter        metric.Counter
-	getMetadataSuccessCounter        metric.Counter
-	getMetadataNotFoundCounter       metric.Counter
+	hasSuccessCounter                     metric.Counter
+	getSuccessCounter                     metric.Counter
+	setSuccessCounter                     metric.Counter
+	deleteSuccessCounter                  metric.Counter
+	clearSuccessCounter                   metric.Counter
+	clearEmptyCounter                     metric.Counter
+	getByOwnerSuccessCounter              metric.Counter
+	getByOwnerEmptyCounter                metric.Counter
+	deleteByOwnerSuccessCounter           metric.Counter
+	getKeysByPatternSuccessCounter        metric.Counter
+	incrementSuccessCounter               metric.Counter
+	decrementSuccessCounter               metric.Counter
+	incrementFloatSuccessCounter          metric.Counter
+	extendTTLSuccessCounter               metric.Counter
+	touchSuccessCounter                   metric.Counter
+	appendFieldSuccessCounter             metric.Counter
+	getMetadataSuccessCounter             metric.Counter
+	getMetadataNotFoundCounter            metric.Counter
 	cleanupOrphanedMetadataSuccessCounter metric.Counter
-	getOrSetSuccessCounter           metric.Counter
-	getOrSetHitCounter               metric.Counter
-	getOrSetLoadedCounter            metric.Counter
-	setIfExistsSuccessCounter        metric.Counter
-	setIfNotExistsSuccessCounter     metric.Counter
-	
+	getOrSetSuccessCounter                metric.Counter
+	getOrSetHitCounter                    metric.Counter
+	getOrSetLoadedCounter                 metric.Counter
+	setIfExistsSuccessCounter             metric.Counter
+	setIfNotExistsSuccessCounter          metric.Counter
+
 	// Miss counters
-	getMissCounter                   metric.Counter
-	getByOwnerMissCounter           metric.Counter
-	getOrSetMissCounter             metric.Counter
-	
-	// Hit counters  
-	getHitCounter                    metric.Counter
-	getByOwnerHitCounter            metric.Counter
-	getManyHitCounter               metric.Counter
-	
+	getMissCounter        metric.Counter
+	getByOwnerMissCounter metric.Counter
+	getOrSetMissCounter   metric.Counter
+
+	// Hit counters
+	getHitCounter        metric.Counter
+	getByOwnerHitCounter metric.Counter
+	getManyHitCounter    metric.Counter
+
 	// Miss counter (general)
-	generalMissCounter               metric.Counter
-	
+	generalMissCounter metric.Counter
+
 	// Error counters by operation and error type
-	hasCircuitBreakerErrorCounter           metric.Counter
-	hasRedisErrorCounter                    metric.Counter
-	getCircuitBreakerErrorCounter           metric.Counter
-	getRedisErrorCounter                    metric.Counter
-	getSerializationErrorCounter            metric.Counter
-	setCircuitBreakerErrorCounter           metric.Counter
-	setRedisErrorCounter                    metric.Counter
-	setSerializationErrorCounter            metric.Counter
-	setMemorySamplingErrorCounter           metric.Counter
-	deleteCircuitBreakerErrorCounter        metric.Counter
-	deleteRedisErrorCounter                 metric.Counter
-	deleteMemorySamplingErrorCounter        metric.Counter
-	clearCircuitBreakerErrorCounter         metric.Counter
-	getByOwnerCircuitBreakerErrorCounter    metric.Counter
-	getByOwnerRedisErrorCounter             metric.Counter
-	getByOwnerSerializationErrorCounter     metric.Counter
-	deleteByOwnerCircuitBreakerErrorCounter metric.Counter
-	deleteByOwnerRedisErrorCounter          metric.Counter
-	getKeysByPatternCircuitBreakerErrorCounter metric.Counter
-	getKeysByPatternRedisErrorCounter       metric.Counter
-	incrementCircuitBreakerErrorCounter     metric.Counter
-	incrementRedisErrorCounter              metric.Counter
-	incrementTimeoutErrorCounter            metric.Counter
-	decrementCircuitBreakerErrorCounter     metric.Counter
-	decrementRedisErrorCounter              metric.Counter
-	decrementTimeoutErrorCounter            metric.Counter
-	incrementFloatCircuitBreakerErrorCounter metric.Counter
-	incrementFloatRedisErrorCounter         metric.Counter
-	incrementFloatTimeoutErrorCounter       metric.Counter
-	extendTTLCircuitBreakerErrorCounter     metric.Counter
-	extendTTLRedisErrorCounter              metric.Counter
-	extendTTLKeyNotFoundErrorCounter        metric.Counter
-	touchCircuitBreakerErrorCounter         metric.Counter
-	touchRedisErrorCounter                  metric.Counter
-	touchKeyNotFoundErrorCounter            metric.Counter
-	appendFieldCircuitBreakerErrorCounter   metric.Counter
-	appendFieldRedisErrorCounter            metric.Counter
+	hasCircuitBreakerErrorCounter               metric.Counter
+	hasRedisErrorCounter                        metric.Counter
+	getCircuitBreakerErrorCounter               metric.Counter
+	getRedisErrorCounter                        metric.Counter
+	getSerializationErrorCounter                metric.Counter
+	setCircuitBreakerErrorCounter               metric.Counter
+	setRedisErrorCounter                        metric.Counter
+	setSerializationErrorCounter                metric.Counter
+	setMemorySamplingErrorCounter               metric.Counter
+	deleteCircuitBreakerErrorCounter            metric.Counter
+	deleteRedisErrorCounter                     metric.Counter
+	deleteMemorySamplingErrorCounter            metric.Counter
+	clearCircuitBreakerErrorCounter             metric.Counter
+	getByOwnerCircuitBreakerErrorCounter        metric.Counter
+	getByOwnerRedisErrorCounter                 metric.Counter
+	getByOwnerSerializationErrorCounter         metric.Counter
+	deleteByOwnerCircuitBreakerErrorCounter     metric.Counter
+	deleteByOwnerRedisErrorCounter              metric.Counter
+	getKeysByPatternCircuitBreakerErrorCounter  metric.Counter
+	getKeysByPatternRedisErrorCounter           metric.Counter
+	incrementCircuitBreakerErrorCounter         metric.Counter
+	incrementRedisErrorCounter                  metric.Counter
+	incrementTimeoutErrorCounter                metric.Counter
+	decrementCircuitBreakerErrorCounter         metric.Counter
+	decrementRedisErrorCounter                  metric.Counter
+	decrementTimeoutErrorCounter                metric.Counter
+	incrementFloatCircuitBreakerErrorCounter    metric.Counter
+	incrementFloatRedisErrorCounter             metric.Counter
+	incrementFloatTimeoutErrorCounter           metric.Counter
+	extendTTLCircuitBreakerErrorCounter         metric.Counter
+	extendTTLRedisErrorCounter                  metric.Counter
+	extendTTLKeyNotFoundErrorCounter            metric.Counter
+	touchCircuitBreakerErrorCounter             metric.Counter
+	touchRedisErrorCounter                      metric.Counter
+	touchKeyNotFoundErrorCounter                metric.Counter
+	appendFieldCircuitBreakerErrorCounter       metric.Counter
+	appendFieldRedisErrorCounter                metric.Counter
 	appendFieldUnsupportedOperationErrorCounter metric.Counter
-	getMetadataCircuitBreakerErrorCounter   metric.Counter
-	getMetadataRedisErrorCounter            metric.Counter
-	getOrSetCircuitBreakerErrorCounter      metric.Counter
-	getOrSetRedisErrorCounter               metric.Counter
-	getOrSetSerializationErrorCounter       metric.Counter
-	getOrSetLoaderErrorCounter              metric.Counter
-	getOrSetMaxRetriesErrorCounter          metric.Counter
-	setIfExistsCircuitBreakerErrorCounter   metric.Counter
-	setIfExistsRedisErrorCounter            metric.Counter
-	setIfExistsSerializationErrorCounter    metric.Counter
-	setIfNotExistsCircuitBreakerErrorCounter metric.Counter
-	setIfNotExistsRedisErrorCounter         metric.Counter
-	setIfNotExistsSerializationErrorCounter metric.Counter
-	
+	getMetadataCircuitBreakerErrorCounter       metric.Counter
+	getMetadataRedisErrorCounter                metric.Counter
+	getOrSetCircuitBreakerErrorCounter          metric.Counter
+	getOrSetRedisErrorCounter                   metric.Counter
+	getOrSetSerializationErrorCounter           metric.Counter
+	getOrSetLoaderErrorCounter                  metric.Counter
+	getOrSetMaxRetriesErrorCounter              metric.Counter
+	setIfExistsCircuitBreakerErrorCounter       metric.Counter
+	setIfExistsRedisErrorCounter                metric.Counter
+	setIfExistsSerializationErrorCounter        metric.Counter
+	setIfNotExistsCircuitBreakerErrorCounter    metric.Counter
+	setIfNotExistsRedisErrorCounter             metric.Counter
+	setIfNotExistsSerializationErrorCounter     metric.Counter
+
 	// Batch operation error counters
-	getManyCircuitBreakerErrorCounter      metric.Counter
-	getManyRedisErrorCounter               metric.Counter
-	getManySerializationErrorCounter       metric.Counter
-	setManyCircuitBreakerErrorCounter      metric.Counter
-	setManyRedisErrorCounter               metric.Counter
-	setManySerializationErrorCounter       metric.Counter
-	deleteManyCircuitBreakerErrorCounter   metric.Counter
-	deleteManyRedisErrorCounter            metric.Counter
-	
-	// Batch operation counters 
+	getManyCircuitBreakerErrorCounter    metric.Counter
+	getManyRedisErrorCounter             metric.Counter
+	getManySerializationErrorCounter     metric.Counter
+	setManyCircuitBreakerErrorCounter    metric.Counter
+	setManyRedisErrorCounter             metric.Counter
+	setManySerializationErrorCounter     metric.Counter
+	deleteManyCircuitBreakerErrorCounter metric.Counter
+	deleteManyRedisErrorCounter          metric.Counter
+
+	// Batch operation counters
 	getManyBatchCounter    metric.Counter
 	setManyBatchCounter    metric.Counter
 	deleteManyBatchCounter metric.Counter
-	
+
 	// System operation metrics
-	memoryUsageGauge       metric.Gauge
-	memoryPressureCounter  metric.Counter
-	securityEventCounter   metric.Counter
+	memoryUsageGauge      metric.Gauge
+	memoryPressureCounter metric.Counter
+	securityEventCounter  metric.Counter
 }
 
 // NewPrecomputedCacheMetrics creates a new PrecomputedCacheMetrics instance
@@ -151,17 +153,15 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	if registry == nil {
 		registry = metric.NewDefaultRegistry()
 	}
-	
+
 	// Create a copy of tags to avoid external modifications
 	tags := make(metric.Tags)
 	if finalTags != nil {
-		for k, v := range finalTags {
-			tags[k] = v
-		}
+		maps.Copy(tags, finalTags)
 	}
-	
+
 	pcm := &PrecomputedCacheMetrics{}
-	
+
 	// Initialize operation timers
 	pcm.hasTimer = createTimer(registry, "cache_operation_duration", "Duration of has operations", tags, "has")
 	pcm.getTimer = createTimer(registry, "cache_operation_duration", "Duration of get operations", tags, "get")
@@ -181,13 +181,13 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.getOrSetTimer = createTimer(registry, "cache_operation_duration", "Duration of getorset operations", tags, "getorset")
 	pcm.setIfExistsTimer = createTimer(registry, "cache_operation_duration", "Duration of setifexists operations", tags, "setifexists")
 	pcm.setIfNotExistsTimer = createTimer(registry, "cache_operation_duration", "Duration of setifnotexists operations", tags, "setifnotexists")
-	
+
 	// Initialize batch operation timers
 	pcm.getManyTimer = createTimer(registry, "cache_operation_duration", "Duration of getmany operations", tags, "getmany")
 	pcm.setManyTimer = createTimer(registry, "cache_operation_duration", "Duration of setmany operations", tags, "setmany")
 	pcm.deleteManyTimer = createTimer(registry, "cache_operation_duration", "Duration of deletemany operations", tags, "deletemany")
-	
-	// Initialize success counters  
+
+	// Initialize success counters
 	pcm.hasSuccessCounter = createOperationCounter(registry, tags, "has", "success")
 	pcm.getSuccessCounter = createOperationCounter(registry, tags, "get", "success")
 	pcm.setSuccessCounter = createOperationCounter(registry, tags, "set", "success")
@@ -212,20 +212,20 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.getOrSetLoadedCounter = createOperationCounter(registry, tags, "getorset", "loaded")
 	pcm.setIfExistsSuccessCounter = createOperationCounter(registry, tags, "setifexists", "success")
 	pcm.setIfNotExistsSuccessCounter = createOperationCounter(registry, tags, "setifnotexists", "success")
-	
+
 	// Initialize miss counters
 	pcm.getMissCounter = createOperationCounter(registry, tags, "get", "miss")
 	pcm.getByOwnerMissCounter = createOperationCounter(registry, tags, "getbyowner", "empty")
 	pcm.getOrSetMissCounter = createOperationCounter(registry, tags, "getorset", "miss")
-	
+
 	// Initialize hit counters
 	pcm.getHitCounter = createHitCounter(registry, tags)
 	pcm.getByOwnerHitCounter = createHitCounter(registry, tags)
 	pcm.getManyHitCounter = createHitCounter(registry, tags)
-	
+
 	// Initialize general miss counter
 	pcm.generalMissCounter = createMissCounter(registry, tags)
-	
+
 	// Initialize error counters
 	pcm.hasCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "has", "circuit_breaker", "availability")
 	pcm.hasRedisErrorCounter = createErrorCounter(registry, tags, "has", "redis_error", "infrastructure")
@@ -278,7 +278,7 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.setIfNotExistsCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "setifnotexists", "circuit_breaker", "availability")
 	pcm.setIfNotExistsRedisErrorCounter = createErrorCounter(registry, tags, "setifnotexists", "redis_error", "infrastructure")
 	pcm.setIfNotExistsSerializationErrorCounter = createErrorCounter(registry, tags, "setifnotexists", "serialization_error", "data")
-	
+
 	// Initialize batch operation error counters
 	pcm.getManyCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "getmany", "circuit_breaker", "availability")
 	pcm.getManyRedisErrorCounter = createErrorCounter(registry, tags, "getmany", "redis_error", "infrastructure")
@@ -288,17 +288,17 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.setManySerializationErrorCounter = createErrorCounter(registry, tags, "setmany", "serialization_error", "data")
 	pcm.deleteManyCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "deletemany", "circuit_breaker", "availability")
 	pcm.deleteManyRedisErrorCounter = createErrorCounter(registry, tags, "deletemany", "redis_error", "infrastructure")
-	
+
 	// Initialize batch operation counters
 	pcm.getManyBatchCounter = createBatchOperationCounter(registry, tags, "getmany")
 	pcm.setManyBatchCounter = createBatchOperationCounter(registry, tags, "setmany")
 	pcm.deleteManyBatchCounter = createBatchOperationCounter(registry, tags, "deletemany")
-	
+
 	// Initialize system metrics
 	pcm.memoryUsageGauge = createMemoryUsageGauge(registry, tags)
 	pcm.memoryPressureCounter = createMemoryPressureCounter(registry, tags)
 	pcm.securityEventCounter = createSecurityEventCounter(registry, tags)
-	
+
 	return pcm
 }
 
@@ -306,11 +306,9 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 
 func createTimer(registry metric.Registry, name, description string, baseTags metric.Tags, operation string) metric.Timer {
 	tags := make(metric.Tags, len(baseTags)+1)
-	for k, v := range baseTags {
-		tags[k] = v
-	}
+	maps.Copy(tags, baseTags)
 	tags["operation"] = operation
-	
+
 	return registry.Timer(metric.Options{
 		Name:        name,
 		Description: description,
@@ -321,12 +319,10 @@ func createTimer(registry metric.Registry, name, description string, baseTags me
 
 func createOperationCounter(registry metric.Registry, baseTags metric.Tags, operation, status string) metric.Counter {
 	tags := make(metric.Tags, len(baseTags)+2)
-	for k, v := range baseTags {
-		tags[k] = v
-	}
+	maps.Copy(tags, baseTags)
 	tags["operation"] = operation
 	tags["status"] = status
-	
+
 	return registry.Counter(metric.Options{
 		Name:        "cache_operations_total",
 		Description: "Total number of cache operations",
@@ -361,7 +357,7 @@ func createErrorCounter(registry metric.Registry, baseTags metric.Tags, operatio
 	tags["operation"] = operation
 	tags["error_type"] = errorType
 	tags["error_category"] = errorCategory
-	
+
 	return registry.Counter(metric.Options{
 		Name:        "cache_security_events_total",
 		Description: "Total number of cache security events",
@@ -377,7 +373,7 @@ func createBatchOperationCounter(registry metric.Registry, baseTags metric.Tags,
 	}
 	tags["operation"] = "batch_" + operation
 	tags["status"] = "completed"
-	
+
 	return registry.Counter(metric.Options{
 		Name:        "cache_operations_total",
 		Description: "Total number of cache operations",
@@ -391,7 +387,7 @@ func createMemoryUsageGauge(registry metric.Registry, baseTags metric.Tags) metr
 	for k, v := range baseTags {
 		tags[k] = v
 	}
-	
+
 	return registry.Gauge(metric.Options{
 		Name:        "cache_memory_usage_bytes",
 		Description: "Current cache memory usage in bytes",
@@ -405,7 +401,7 @@ func createMemoryPressureCounter(registry metric.Registry, baseTags metric.Tags)
 	for k, v := range baseTags {
 		tags[k] = v
 	}
-	
+
 	return registry.Counter(metric.Options{
 		Name:        "cache_memory_pressure_events_total",
 		Description: "Total number of cache memory pressure events",
@@ -419,7 +415,7 @@ func createSecurityEventCounter(registry metric.Registry, baseTags metric.Tags) 
 	for k, v := range baseTags {
 		tags[k] = v
 	}
-	
+
 	return registry.Counter(metric.Options{
 		Name:        "cache_security_events_total",
 		Description: "Total number of cache security events",
@@ -432,138 +428,320 @@ func createSecurityEventCounter(registry metric.Registry, baseTags metric.Tags) 
 // All metrics are pre-computed, so these simply return the cached instances
 
 // Timer access methods
-func (pcm *PrecomputedCacheMetrics) HasTimer() metric.Timer { return pcm.hasTimer }
-func (pcm *PrecomputedCacheMetrics) GetTimer() metric.Timer { return pcm.getTimer }
-func (pcm *PrecomputedCacheMetrics) SetTimer() metric.Timer { return pcm.setTimer }
-func (pcm *PrecomputedCacheMetrics) DeleteTimer() metric.Timer { return pcm.deleteTimer }
-func (pcm *PrecomputedCacheMetrics) ClearTimer() metric.Timer { return pcm.clearTimer }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerTimer() metric.Timer { return pcm.getByOwnerTimer }
+func (pcm *PrecomputedCacheMetrics) HasTimer() metric.Timer           { return pcm.hasTimer }
+func (pcm *PrecomputedCacheMetrics) GetTimer() metric.Timer           { return pcm.getTimer }
+func (pcm *PrecomputedCacheMetrics) SetTimer() metric.Timer           { return pcm.setTimer }
+func (pcm *PrecomputedCacheMetrics) DeleteTimer() metric.Timer        { return pcm.deleteTimer }
+func (pcm *PrecomputedCacheMetrics) ClearTimer() metric.Timer         { return pcm.clearTimer }
+func (pcm *PrecomputedCacheMetrics) GetByOwnerTimer() metric.Timer    { return pcm.getByOwnerTimer }
 func (pcm *PrecomputedCacheMetrics) DeleteByOwnerTimer() metric.Timer { return pcm.deleteByOwnerTimer }
-func (pcm *PrecomputedCacheMetrics) GetKeysByPatternTimer() metric.Timer { return pcm.getKeysByPatternTimer }
+func (pcm *PrecomputedCacheMetrics) GetKeysByPatternTimer() metric.Timer {
+	return pcm.getKeysByPatternTimer
+}
 func (pcm *PrecomputedCacheMetrics) IncrementTimer() metric.Timer { return pcm.incrementTimer }
 func (pcm *PrecomputedCacheMetrics) DecrementTimer() metric.Timer { return pcm.decrementTimer }
-func (pcm *PrecomputedCacheMetrics) IncrementFloatTimer() metric.Timer { return pcm.incrementFloatTimer }
-func (pcm *PrecomputedCacheMetrics) ExtendTTLTimer() metric.Timer { return pcm.extendTTLTimer }
-func (pcm *PrecomputedCacheMetrics) TouchTimer() metric.Timer { return pcm.touchTimer }
+func (pcm *PrecomputedCacheMetrics) IncrementFloatTimer() metric.Timer {
+	return pcm.incrementFloatTimer
+}
+func (pcm *PrecomputedCacheMetrics) ExtendTTLTimer() metric.Timer   { return pcm.extendTTLTimer }
+func (pcm *PrecomputedCacheMetrics) TouchTimer() metric.Timer       { return pcm.touchTimer }
 func (pcm *PrecomputedCacheMetrics) AppendFieldTimer() metric.Timer { return pcm.appendFieldTimer }
 func (pcm *PrecomputedCacheMetrics) GetMetadataTimer() metric.Timer { return pcm.getMetadataTimer }
-func (pcm *PrecomputedCacheMetrics) GetOrSetTimer() metric.Timer { return pcm.getOrSetTimer }
+func (pcm *PrecomputedCacheMetrics) GetOrSetTimer() metric.Timer    { return pcm.getOrSetTimer }
 func (pcm *PrecomputedCacheMetrics) SetIfExistsTimer() metric.Timer { return pcm.setIfExistsTimer }
-func (pcm *PrecomputedCacheMetrics) SetIfNotExistsTimer() metric.Timer { return pcm.setIfNotExistsTimer }
+func (pcm *PrecomputedCacheMetrics) SetIfNotExistsTimer() metric.Timer {
+	return pcm.setIfNotExistsTimer
+}
 
 // Batch timer access methods
-func (pcm *PrecomputedCacheMetrics) GetManyTimer() metric.Timer { return pcm.getManyTimer }
-func (pcm *PrecomputedCacheMetrics) SetManyTimer() metric.Timer { return pcm.setManyTimer }
+func (pcm *PrecomputedCacheMetrics) GetManyTimer() metric.Timer    { return pcm.getManyTimer }
+func (pcm *PrecomputedCacheMetrics) SetManyTimer() metric.Timer    { return pcm.setManyTimer }
 func (pcm *PrecomputedCacheMetrics) DeleteManyTimer() metric.Timer { return pcm.deleteManyTimer }
 
 // Success counter access methods
 func (pcm *PrecomputedCacheMetrics) HasSuccessCounter() metric.Counter { return pcm.hasSuccessCounter }
 func (pcm *PrecomputedCacheMetrics) GetSuccessCounter() metric.Counter { return pcm.getSuccessCounter }
 func (pcm *PrecomputedCacheMetrics) SetSuccessCounter() metric.Counter { return pcm.setSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteSuccessCounter() metric.Counter { return pcm.deleteSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) ClearSuccessCounter() metric.Counter { return pcm.clearSuccessCounter }
+func (pcm *PrecomputedCacheMetrics) DeleteSuccessCounter() metric.Counter {
+	return pcm.deleteSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) ClearSuccessCounter() metric.Counter {
+	return pcm.clearSuccessCounter
+}
 func (pcm *PrecomputedCacheMetrics) ClearEmptyCounter() metric.Counter { return pcm.clearEmptyCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerSuccessCounter() metric.Counter { return pcm.getByOwnerSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerEmptyCounter() metric.Counter { return pcm.getByOwnerEmptyCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteByOwnerSuccessCounter() metric.Counter { return pcm.deleteByOwnerSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) GetKeysByPatternSuccessCounter() metric.Counter { return pcm.getKeysByPatternSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementSuccessCounter() metric.Counter { return pcm.incrementSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) DecrementSuccessCounter() metric.Counter { return pcm.decrementSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementFloatSuccessCounter() metric.Counter { return pcm.incrementFloatSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) ExtendTTLSuccessCounter() metric.Counter { return pcm.extendTTLSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) TouchSuccessCounter() metric.Counter { return pcm.touchSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) AppendFieldSuccessCounter() metric.Counter { return pcm.appendFieldSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) GetMetadataSuccessCounter() metric.Counter { return pcm.getMetadataSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) GetMetadataNotFoundCounter() metric.Counter { return pcm.getMetadataNotFoundCounter }
-func (pcm *PrecomputedCacheMetrics) CleanupOrphanedMetadataSuccessCounter() metric.Counter { return pcm.cleanupOrphanedMetadataSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetSuccessCounter() metric.Counter { return pcm.getOrSetSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetHitCounter() metric.Counter { return pcm.getOrSetHitCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetLoadedCounter() metric.Counter { return pcm.getOrSetLoadedCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfExistsSuccessCounter() metric.Counter { return pcm.setIfExistsSuccessCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfNotExistsSuccessCounter() metric.Counter { return pcm.setIfNotExistsSuccessCounter }
+func (pcm *PrecomputedCacheMetrics) GetByOwnerSuccessCounter() metric.Counter {
+	return pcm.getByOwnerSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetByOwnerEmptyCounter() metric.Counter {
+	return pcm.getByOwnerEmptyCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteByOwnerSuccessCounter() metric.Counter {
+	return pcm.deleteByOwnerSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetKeysByPatternSuccessCounter() metric.Counter {
+	return pcm.getKeysByPatternSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementSuccessCounter() metric.Counter {
+	return pcm.incrementSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) DecrementSuccessCounter() metric.Counter {
+	return pcm.decrementSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementFloatSuccessCounter() metric.Counter {
+	return pcm.incrementFloatSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) ExtendTTLSuccessCounter() metric.Counter {
+	return pcm.extendTTLSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) TouchSuccessCounter() metric.Counter {
+	return pcm.touchSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) AppendFieldSuccessCounter() metric.Counter {
+	return pcm.appendFieldSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetMetadataSuccessCounter() metric.Counter {
+	return pcm.getMetadataSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetMetadataNotFoundCounter() metric.Counter {
+	return pcm.getMetadataNotFoundCounter
+}
+func (pcm *PrecomputedCacheMetrics) CleanupOrphanedMetadataSuccessCounter() metric.Counter {
+	return pcm.cleanupOrphanedMetadataSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetSuccessCounter() metric.Counter {
+	return pcm.getOrSetSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetHitCounter() metric.Counter {
+	return pcm.getOrSetHitCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetLoadedCounter() metric.Counter {
+	return pcm.getOrSetLoadedCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfExistsSuccessCounter() metric.Counter {
+	return pcm.setIfExistsSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfNotExistsSuccessCounter() metric.Counter {
+	return pcm.setIfNotExistsSuccessCounter
+}
 
 // Miss counter access methods
 func (pcm *PrecomputedCacheMetrics) GetMissCounter() metric.Counter { return pcm.getMissCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerMissCounter() metric.Counter { return pcm.getByOwnerMissCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetMissCounter() metric.Counter { return pcm.getOrSetMissCounter }
+func (pcm *PrecomputedCacheMetrics) GetByOwnerMissCounter() metric.Counter {
+	return pcm.getByOwnerMissCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetMissCounter() metric.Counter {
+	return pcm.getOrSetMissCounter
+}
 
 // Hit counter access methods
 func (pcm *PrecomputedCacheMetrics) GetHitCounter() metric.Counter { return pcm.getHitCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerHitCounter() metric.Counter { return pcm.getByOwnerHitCounter }
+func (pcm *PrecomputedCacheMetrics) GetByOwnerHitCounter() metric.Counter {
+	return pcm.getByOwnerHitCounter
+}
 func (pcm *PrecomputedCacheMetrics) GetManyHitCounter() metric.Counter { return pcm.getManyHitCounter }
 
 // General miss counter
-func (pcm *PrecomputedCacheMetrics) GeneralMissCounter() metric.Counter { return pcm.generalMissCounter }
+func (pcm *PrecomputedCacheMetrics) GeneralMissCounter() metric.Counter {
+	return pcm.generalMissCounter
+}
 
 // Error counter access methods
-func (pcm *PrecomputedCacheMetrics) HasCircuitBreakerErrorCounter() metric.Counter { return pcm.hasCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) HasRedisErrorCounter() metric.Counter { return pcm.hasRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetCircuitBreakerErrorCounter() metric.Counter { return pcm.getCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetRedisErrorCounter() metric.Counter { return pcm.getRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetSerializationErrorCounter() metric.Counter { return pcm.getSerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetCircuitBreakerErrorCounter() metric.Counter { return pcm.setCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetRedisErrorCounter() metric.Counter { return pcm.setRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetSerializationErrorCounter() metric.Counter { return pcm.setSerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetMemorySamplingErrorCounter() metric.Counter { return pcm.setMemorySamplingErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteCircuitBreakerErrorCounter() metric.Counter { return pcm.deleteCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteRedisErrorCounter() metric.Counter { return pcm.deleteRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteMemorySamplingErrorCounter() metric.Counter { return pcm.deleteMemorySamplingErrorCounter }
-func (pcm *PrecomputedCacheMetrics) ClearCircuitBreakerErrorCounter() metric.Counter { return pcm.clearCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerCircuitBreakerErrorCounter() metric.Counter { return pcm.getByOwnerCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerRedisErrorCounter() metric.Counter { return pcm.getByOwnerRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetByOwnerSerializationErrorCounter() metric.Counter { return pcm.getByOwnerSerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteByOwnerCircuitBreakerErrorCounter() metric.Counter { return pcm.deleteByOwnerCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteByOwnerRedisErrorCounter() metric.Counter { return pcm.deleteByOwnerRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetKeysByPatternCircuitBreakerErrorCounter() metric.Counter { return pcm.getKeysByPatternCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetKeysByPatternRedisErrorCounter() metric.Counter { return pcm.getKeysByPatternRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementCircuitBreakerErrorCounter() metric.Counter { return pcm.incrementCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementRedisErrorCounter() metric.Counter { return pcm.incrementRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementTimeoutErrorCounter() metric.Counter { return pcm.incrementTimeoutErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DecrementCircuitBreakerErrorCounter() metric.Counter { return pcm.decrementCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DecrementRedisErrorCounter() metric.Counter { return pcm.decrementRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DecrementTimeoutErrorCounter() metric.Counter { return pcm.decrementTimeoutErrorCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementFloatCircuitBreakerErrorCounter() metric.Counter { return pcm.incrementFloatCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementFloatRedisErrorCounter() metric.Counter { return pcm.incrementFloatRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) IncrementFloatTimeoutErrorCounter() metric.Counter { return pcm.incrementFloatTimeoutErrorCounter }
-func (pcm *PrecomputedCacheMetrics) ExtendTTLCircuitBreakerErrorCounter() metric.Counter { return pcm.extendTTLCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) ExtendTTLRedisErrorCounter() metric.Counter { return pcm.extendTTLRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) ExtendTTLKeyNotFoundErrorCounter() metric.Counter { return pcm.extendTTLKeyNotFoundErrorCounter }
-func (pcm *PrecomputedCacheMetrics) TouchCircuitBreakerErrorCounter() metric.Counter { return pcm.touchCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) TouchRedisErrorCounter() metric.Counter { return pcm.touchRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) TouchKeyNotFoundErrorCounter() metric.Counter { return pcm.touchKeyNotFoundErrorCounter }
-func (pcm *PrecomputedCacheMetrics) AppendFieldCircuitBreakerErrorCounter() metric.Counter { return pcm.appendFieldCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) AppendFieldRedisErrorCounter() metric.Counter { return pcm.appendFieldRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) AppendFieldUnsupportedOperationErrorCounter() metric.Counter { return pcm.appendFieldUnsupportedOperationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetMetadataCircuitBreakerErrorCounter() metric.Counter { return pcm.getMetadataCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetMetadataRedisErrorCounter() metric.Counter { return pcm.getMetadataRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetCircuitBreakerErrorCounter() metric.Counter { return pcm.getOrSetCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetRedisErrorCounter() metric.Counter { return pcm.getOrSetRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetSerializationErrorCounter() metric.Counter { return pcm.getOrSetSerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetLoaderErrorCounter() metric.Counter { return pcm.getOrSetLoaderErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetOrSetMaxRetriesErrorCounter() metric.Counter { return pcm.getOrSetMaxRetriesErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfExistsCircuitBreakerErrorCounter() metric.Counter { return pcm.setIfExistsCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfExistsRedisErrorCounter() metric.Counter { return pcm.setIfExistsRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfExistsSerializationErrorCounter() metric.Counter { return pcm.setIfExistsSerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfNotExistsCircuitBreakerErrorCounter() metric.Counter { return pcm.setIfNotExistsCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfNotExistsRedisErrorCounter() metric.Counter { return pcm.setIfNotExistsRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetIfNotExistsSerializationErrorCounter() metric.Counter { return pcm.setIfNotExistsSerializationErrorCounter }
+func (pcm *PrecomputedCacheMetrics) HasCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.hasCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) HasRedisErrorCounter() metric.Counter {
+	return pcm.hasRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetRedisErrorCounter() metric.Counter {
+	return pcm.getRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetSerializationErrorCounter() metric.Counter {
+	return pcm.getSerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.setCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetRedisErrorCounter() metric.Counter {
+	return pcm.setRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetSerializationErrorCounter() metric.Counter {
+	return pcm.setSerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetMemorySamplingErrorCounter() metric.Counter {
+	return pcm.setMemorySamplingErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.deleteCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteRedisErrorCounter() metric.Counter {
+	return pcm.deleteRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteMemorySamplingErrorCounter() metric.Counter {
+	return pcm.deleteMemorySamplingErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) ClearCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.clearCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetByOwnerCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getByOwnerCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetByOwnerRedisErrorCounter() metric.Counter {
+	return pcm.getByOwnerRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetByOwnerSerializationErrorCounter() metric.Counter {
+	return pcm.getByOwnerSerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteByOwnerCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.deleteByOwnerCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteByOwnerRedisErrorCounter() metric.Counter {
+	return pcm.deleteByOwnerRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetKeysByPatternCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getKeysByPatternCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetKeysByPatternRedisErrorCounter() metric.Counter {
+	return pcm.getKeysByPatternRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.incrementCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementRedisErrorCounter() metric.Counter {
+	return pcm.incrementRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementTimeoutErrorCounter() metric.Counter {
+	return pcm.incrementTimeoutErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DecrementCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.decrementCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DecrementRedisErrorCounter() metric.Counter {
+	return pcm.decrementRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DecrementTimeoutErrorCounter() metric.Counter {
+	return pcm.decrementTimeoutErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementFloatCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.incrementFloatCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementFloatRedisErrorCounter() metric.Counter {
+	return pcm.incrementFloatRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) IncrementFloatTimeoutErrorCounter() metric.Counter {
+	return pcm.incrementFloatTimeoutErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) ExtendTTLCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.extendTTLCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) ExtendTTLRedisErrorCounter() metric.Counter {
+	return pcm.extendTTLRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) ExtendTTLKeyNotFoundErrorCounter() metric.Counter {
+	return pcm.extendTTLKeyNotFoundErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) TouchCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.touchCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) TouchRedisErrorCounter() metric.Counter {
+	return pcm.touchRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) TouchKeyNotFoundErrorCounter() metric.Counter {
+	return pcm.touchKeyNotFoundErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) AppendFieldCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.appendFieldCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) AppendFieldRedisErrorCounter() metric.Counter {
+	return pcm.appendFieldRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) AppendFieldUnsupportedOperationErrorCounter() metric.Counter {
+	return pcm.appendFieldUnsupportedOperationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetMetadataCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getMetadataCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetMetadataRedisErrorCounter() metric.Counter {
+	return pcm.getMetadataRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getOrSetCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetRedisErrorCounter() metric.Counter {
+	return pcm.getOrSetRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetSerializationErrorCounter() metric.Counter {
+	return pcm.getOrSetSerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetLoaderErrorCounter() metric.Counter {
+	return pcm.getOrSetLoaderErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOrSetMaxRetriesErrorCounter() metric.Counter {
+	return pcm.getOrSetMaxRetriesErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfExistsCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.setIfExistsCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfExistsRedisErrorCounter() metric.Counter {
+	return pcm.setIfExistsRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfExistsSerializationErrorCounter() metric.Counter {
+	return pcm.setIfExistsSerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfNotExistsCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.setIfNotExistsCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfNotExistsRedisErrorCounter() metric.Counter {
+	return pcm.setIfNotExistsRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetIfNotExistsSerializationErrorCounter() metric.Counter {
+	return pcm.setIfNotExistsSerializationErrorCounter
+}
 
 // Batch operation error counter access methods
-func (pcm *PrecomputedCacheMetrics) GetManyCircuitBreakerErrorCounter() metric.Counter { return pcm.getManyCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetManyRedisErrorCounter() metric.Counter { return pcm.getManyRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) GetManySerializationErrorCounter() metric.Counter { return pcm.getManySerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetManyCircuitBreakerErrorCounter() metric.Counter { return pcm.setManyCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetManyRedisErrorCounter() metric.Counter { return pcm.setManyRedisErrorCounter }
-func (pcm *PrecomputedCacheMetrics) SetManySerializationErrorCounter() metric.Counter { return pcm.setManySerializationErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteManyCircuitBreakerErrorCounter() metric.Counter { return pcm.deleteManyCircuitBreakerErrorCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteManyRedisErrorCounter() metric.Counter { return pcm.deleteManyRedisErrorCounter }
+func (pcm *PrecomputedCacheMetrics) GetManyCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getManyCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetManyRedisErrorCounter() metric.Counter {
+	return pcm.getManyRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetManySerializationErrorCounter() metric.Counter {
+	return pcm.getManySerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetManyCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.setManyCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetManyRedisErrorCounter() metric.Counter {
+	return pcm.setManyRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetManySerializationErrorCounter() metric.Counter {
+	return pcm.setManySerializationErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteManyCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.deleteManyCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteManyRedisErrorCounter() metric.Counter {
+	return pcm.deleteManyRedisErrorCounter
+}
 
-// Batch operation counter access methods  
-func (pcm *PrecomputedCacheMetrics) GetManyBatchCounter() metric.Counter { return pcm.getManyBatchCounter }
-func (pcm *PrecomputedCacheMetrics) SetManyBatchCounter() metric.Counter { return pcm.setManyBatchCounter }
-func (pcm *PrecomputedCacheMetrics) DeleteManyBatchCounter() metric.Counter { return pcm.deleteManyBatchCounter }
+// Batch operation counter access methods
+func (pcm *PrecomputedCacheMetrics) GetManyBatchCounter() metric.Counter {
+	return pcm.getManyBatchCounter
+}
+func (pcm *PrecomputedCacheMetrics) SetManyBatchCounter() metric.Counter {
+	return pcm.setManyBatchCounter
+}
+func (pcm *PrecomputedCacheMetrics) DeleteManyBatchCounter() metric.Counter {
+	return pcm.deleteManyBatchCounter
+}
 
 // System metrics access methods
 func (pcm *PrecomputedCacheMetrics) MemoryUsageGauge() metric.Gauge { return pcm.memoryUsageGauge }
-func (pcm *PrecomputedCacheMetrics) MemoryPressureCounter() metric.Counter { return pcm.memoryPressureCounter }
-func (pcm *PrecomputedCacheMetrics) SecurityEventCounter() metric.Counter { return pcm.securityEventCounter }
+func (pcm *PrecomputedCacheMetrics) MemoryPressureCounter() metric.Counter {
+	return pcm.memoryPressureCounter
+}
+func (pcm *PrecomputedCacheMetrics) SecurityEventCounter() metric.Counter {
+	return pcm.securityEventCounter
+}

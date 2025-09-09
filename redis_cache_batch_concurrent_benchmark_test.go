@@ -128,11 +128,11 @@ func BenchmarkRedisCache_GetManyRaw_1000Keys(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			// Type assertion to access experimental method
+			// Type assertion to access GetManyRaw method
 			if redisCache, ok := cache.(interface {
-				ExperimentalGetManyRaw(context.Context, []string) (map[string]string, error)
+				GetManyRaw(context.Context, []string) (map[string]string, error)
 			}); ok {
-				rawResults, err := redisCache.ExperimentalGetManyRaw(ctx, keys)
+				rawResults, err := redisCache.GetManyRaw(ctx, keys)
 				if err != nil {
 					b.Fatalf("GetManyRaw failed: %v", err)
 				}
@@ -140,7 +140,7 @@ func BenchmarkRedisCache_GetManyRaw_1000Keys(b *testing.B) {
 					b.Fatalf("Expected 1000 results, got %d", len(rawResults))
 				}
 			} else {
-				b.Fatalf("Cache does not support ExperimentalGetManyRaw")
+				b.Fatalf("Cache does not support GetManyRaw")
 			}
 		}
 	})

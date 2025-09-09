@@ -111,6 +111,16 @@ type Cache[T any] interface {
 	// MUST update indexes for each value if indexing enabled
 	SetMany(ctx context.Context, values []T, ttl time.Duration) error
 
+	// SetManySafe stores multiple values using pooled encoders internally but returns owned bytes
+	// Provides allocation reduction over individual Set calls while maintaining simple ownership
+	// MUST be goroutine-safe and atomic where possible (all-or-nothing preferred)
+	SetManySafe(ctx context.Context, values []T, ttl time.Duration) error
+
+	// SetManyPooled stores multiple values using zero-copy pooled serialization 
+	// Aggressive optimization path with maximum performance and minimal allocations
+	// MUST be goroutine-safe with proper pooled buffer lifecycle management
+	SetManyPooled(ctx context.Context, values []T, ttl time.Duration) error
+
 	// DeleteMany removes multiple elements by keys
 	// MUST be goroutine-safe and idempotent (no errors for missing keys)
 	// MUST clean up indexes for all deleted elements
