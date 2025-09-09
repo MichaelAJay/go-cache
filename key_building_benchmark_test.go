@@ -9,14 +9,21 @@ func BenchmarkBuildDataKey_FastPath(b *testing.B) {
 	cache := &RedisCache[string]{
 		redisOptions: nil, // Fast path - no prefix or version
 	}
+	cache.precomputePrefixes() // Initialize precomputed prefixes
 	
 	key := "test_key"
+	var result string
 	
 	b.ReportAllocs()
 	b.ResetTimer()
 	
 	for i := 0; i < b.N; i++ {
-		_ = cache.buildDataKey(key)
+		result = cache.buildDataKey(key)
+	}
+	
+	// Force the compiler to keep the result
+	if len(result) == 0 {
+		b.Fatal("unexpected empty result")
 	}
 }
 
@@ -26,14 +33,21 @@ func BenchmarkBuildDataKey_WithVersion(b *testing.B) {
 			Version: "v1",
 		},
 	}
+	cache.precomputePrefixes() // Initialize precomputed prefixes
 	
 	key := "test_key"
+	var result string
 	
 	b.ReportAllocs()
 	b.ResetTimer()
 	
 	for i := 0; i < b.N; i++ {
-		_ = cache.buildDataKey(key)
+		result = cache.buildDataKey(key)
+	}
+	
+	// Force the compiler to keep the result
+	if len(result) == 0 {
+		b.Fatal("unexpected empty result")
 	}
 }
 

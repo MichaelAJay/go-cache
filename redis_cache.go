@@ -62,6 +62,15 @@ type RedisCache[T any] struct {
 
 	// Redis-specific options
 	redisOptions *RedisOptions
+	
+	// Precomputed prefixes for optimal key building (1 allocation per key)
+	dataPrefix     string
+	metaPrefix     string
+	indexPrefix    string
+	lockPrefix     string
+	reversePrefix  string
+	lruTrackerKey  string
+	versionSuffix  string
 
 	// Circuit breaker state
 	mu                 sync.RWMutex
@@ -290,6 +299,9 @@ func (c *RedisCache[T]) initialize(warmPoolCount int) error {
 		c.warmPools(warmPoolCount)
 	}
 
+	// Precompute prefixes for optimal key building (1 allocation per key instead of 2-3)
+	c.precomputePrefixes()
+
 	return nil
 }
 
@@ -313,6 +325,69 @@ func (c *RedisCache[T]) warmPools(warmCount int) {
 		b := &strings.Builder{}
 		c.builderPool.Put(b)
 	}
+}
+
+// precomputePrefixes calculates final prefixes once at initialization to enable 1-allocation key building
+func (c *RedisCache[T]) precomputePrefixes() {
+	// Determine base prefixes
+	var baseDataPrefix, baseMetaPrefix, baseIndexPrefix, baseLockPrefix string
+	
+	if c.redisOptions != nil {
+		if c.redisOptions.DataPrefix != "" {
+			baseDataPrefix = c.redisOptions.DataPrefix
+		} else {
+			baseDataPrefix = "cache:data:"
+		}
+		
+		if c.redisOptions.MetaPrefix != "" {
+			baseMetaPrefix = c.redisOptions.MetaPrefix
+		} else {
+			baseMetaPrefix = "cache:meta:"
+		}
+		
+		if c.redisOptions.IndexPrefix != "" {
+			baseIndexPrefix = c.redisOptions.IndexPrefix
+		} else {
+			baseIndexPrefix = "cache:index:"
+		}
+		
+		if c.redisOptions.LockPrefix != "" {
+			baseLockPrefix = c.redisOptions.LockPrefix
+		} else {
+			baseLockPrefix = "cache:lock:"
+		}
+	} else {
+		baseDataPrefix = "cache:data:"
+		baseMetaPrefix = "cache:meta:"
+		baseIndexPrefix = "cache:index:"
+		baseLockPrefix = "cache:lock:"
+	}
+	
+	// Add version suffix if configured
+	var versionSuffix string
+	if c.redisOptions != nil && c.redisOptions.Version != "" {
+		versionSuffix = ":" + c.redisOptions.Version
+	}
+	
+	// Precompute final prefixes (these become the effective prefixes for runtime concatenation)
+	c.dataPrefix = baseDataPrefix    // Will concatenate: dataPrefix + key + versionSuffix
+	c.metaPrefix = baseMetaPrefix    // Will concatenate: metaPrefix + key + versionSuffix  
+	c.indexPrefix = baseIndexPrefix
+	c.lockPrefix = baseLockPrefix    
+	c.reversePrefix = "cache:reverse:"
+	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+		c.reversePrefix = c.redisOptions.IndexPrefix + "reverse:"
+	}
+	
+	// Precompute LRU tracker key (fully static, no per-operation building needed)
+	if baseDataPrefix == "cache:data:" {
+		c.lruTrackerKey = "cache:lru:tracker" + versionSuffix
+	} else {
+		c.lruTrackerKey = baseDataPrefix + "lru:tracker" + versionSuffix
+	}
+	
+	// Store version suffix for use in key building methods
+	c.versionSuffix = versionSuffix
 }
 
 // generateInstanceID creates a unique identifier for this cache instance
@@ -842,151 +917,50 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 
 // Helper methods
 
-// buildDataKey constructs the Redis key for data storage
+// buildDataKey constructs the Redis key for data storage using precomputed prefix (1 allocation)
 func (c *RedisCache[T]) buildDataKey(key string) string {
-	// Use pooled string builder for all keys to ensure proper prefixing
-	builder := c.builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		c.builderPool.Put(builder)
-	}()
-
-	// Build the final key with version if configured
-	builder.WriteString(key)
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		builder.WriteString(":")
-		builder.WriteString(c.redisOptions.Version)
+	if c.versionSuffix == "" {
+		// Fast path: prefix + key (1 allocation)
+		return c.dataPrefix + key
 	}
-
-	// Add prefix
-	finalKey := builder.String()
-	builder.Reset()
-
-	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
-		builder.WriteString(c.redisOptions.DataPrefix)
-		builder.WriteString(finalKey)
-	} else {
-		builder.WriteString("cache:data:")
-		builder.WriteString(finalKey)
-	}
-
-	return builder.String()
+	// Version path: prefix + key + versionSuffix (1 allocation)
+	return c.dataPrefix + key + c.versionSuffix
 }
 
-// buildMetaKey constructs the Redis key for metadata storage
+// buildMetaKey constructs the Redis key for metadata storage using precomputed prefix (1 allocation)
 func (c *RedisCache[T]) buildMetaKey(key string) string {
-	// Use pooled string builder for all keys to ensure proper prefixing
-	builder := c.builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		c.builderPool.Put(builder)
-	}()
-
-	// Build the final key with version if configured
-	builder.WriteString(key)
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		builder.WriteString(":")
-		builder.WriteString(c.redisOptions.Version)
+	if c.versionSuffix == "" {
+		// Fast path: prefix + key (1 allocation)
+		return c.metaPrefix + key
 	}
-
-	// Add prefix
-	finalKey := builder.String()
-	builder.Reset()
-
-	if c.redisOptions != nil && c.redisOptions.MetaPrefix != "" {
-		builder.WriteString(c.redisOptions.MetaPrefix)
-		builder.WriteString(finalKey)
-	} else {
-		builder.WriteString("cache:meta:")
-		builder.WriteString(finalKey)
-	}
-
-	return builder.String()
+	// Version path: prefix + key + versionSuffix (1 allocation)
+	return c.metaPrefix + key + c.versionSuffix
 }
 
-// buildIndexKey constructs the Redis key for index storage
+// buildIndexKey constructs the Redis key for index storage using precomputed prefix (1 allocation)
 func (c *RedisCache[T]) buildIndexKey(indexName, indexKey string) string {
-	prefix := "cache:index:"
-	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
-		prefix = c.redisOptions.IndexPrefix
-	}
-	return fmt.Sprintf("%s%s:%s", prefix, indexName, indexKey)
+	return c.indexPrefix + indexName + ":" + indexKey
 }
 
-// buildReverseIndexKey constructs the Redis key for reverse indexing (entry -> owner)
+// buildReverseIndexKey constructs the Redis key for reverse indexing using precomputed prefix (1 allocation)
 func (c *RedisCache[T]) buildReverseIndexKey(entryKey string) string {
-	// Add version suffix if configured
-	finalKey := entryKey
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		finalKey = entryKey + ":" + c.redisOptions.Version
+	if c.versionSuffix == "" {
+		return c.reversePrefix + entryKey
 	}
-
-	prefix := "cache:reverse:"
-	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
-		prefix = c.redisOptions.IndexPrefix + "reverse:"
-	}
-	return prefix + finalKey
+	return c.reversePrefix + entryKey + c.versionSuffix
 }
 
-// buildLockKey constructs the Redis key for distributed locks
+// buildLockKey constructs the Redis key for distributed locks using precomputed prefix (1 allocation)
 func (c *RedisCache[T]) buildLockKey(key string) string {
-	// Fast path for no prefix/version - return raw key
-	if c.redisOptions == nil || (c.redisOptions.Version == "" && c.redisOptions.LockPrefix == "") {
-		return key
+	if c.versionSuffix == "" {
+		return c.lockPrefix + key
 	}
-
-	// Use pooled string builder for complex keys
-	builder := c.builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		c.builderPool.Put(builder)
-	}()
-
-	// Build the final key with version if configured
-	builder.WriteString(key)
-	if c.redisOptions.Version != "" {
-		builder.WriteString(":")
-		builder.WriteString(c.redisOptions.Version)
-	}
-
-	// Add prefix
-	finalKey := builder.String()
-	builder.Reset()
-
-	if c.redisOptions.LockPrefix != "" {
-		builder.WriteString(c.redisOptions.LockPrefix)
-		builder.WriteString(finalKey)
-	} else {
-		builder.WriteString("cache:lock:")
-		builder.WriteString(finalKey)
-	}
-
-	return builder.String()
+	return c.lockPrefix + key + c.versionSuffix
 }
 
-// buildLRUTrackerKey constructs the Redis key for LRU tracking sorted set
+// buildLRUTrackerKey returns the precomputed LRU tracker key (0 allocations)
 func (c *RedisCache[T]) buildLRUTrackerKey() string {
-	// Use pooled string builder to avoid concatenation allocations
-	builder := c.builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		c.builderPool.Put(builder)
-	}()
-
-	if c.redisOptions != nil && c.redisOptions.DataPrefix != "" {
-		// Use data prefix to ensure LRU tracker is scoped to the same cache instance
-		builder.WriteString(c.redisOptions.DataPrefix)
-		builder.WriteString("lru:tracker")
-	} else {
-		builder.WriteString("cache:lru:tracker")
-	}
-
-	if c.redisOptions != nil && c.redisOptions.Version != "" {
-		builder.WriteString(":")
-		builder.WriteString(c.redisOptions.Version)
-	}
-
-	return builder.String()
+	return c.lruTrackerKey
 }
 
 // buildDataKeysMany efficiently builds multiple data keys using a single string builder
