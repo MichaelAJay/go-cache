@@ -392,6 +392,15 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return sessionsDeleted
 	`)
 
+	c.getCountByOwnerScript = redis.NewScript(`
+		local indexKey = KEYS[1]
+		
+		-- Count all entry keys for this owner using set cardinality
+		-- Returns 0 if the index key doesn't exist (no entries for this owner)
+		local count = redis.call('SCARD', indexKey)
+		return count
+	`)
+
 	// SetIfExists script - atomic conditional SET that only sets if key exists
 	c.setIfExistsScript = redis.NewScript(`
 		local dataKey = KEYS[1]
@@ -583,7 +592,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 	scripts := []*redis.Script{
 		c.getScript, c.setScript,
 		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
-		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript,
+		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript, c.getCountByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
 		c.getManyMetadataUpdateScript, c.cleanupOrphanedMetadataScript,
 	}

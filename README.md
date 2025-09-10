@@ -101,6 +101,9 @@ sessionCache, err := cache.NewCache[Session](
 // Get all sessions for a user
 userSessions, err := sessionCache.GetByOwner(ctx, "user123")
 
+// Count sessions for a user (efficient for large datasets)
+sessionCount, err := sessionCache.GetCountByOwner(ctx, "user123")
+
 // Delete all sessions for a user
 deletedCount, err := sessionCache.DeleteByOwner(ctx, "user123")
 ```
@@ -286,6 +289,7 @@ type Cache[T any] interface {
 
     // Owner-based operations (requires indexing)
     GetByOwner(ctx context.Context, ownerKey string) ([]T, error)
+    GetCountByOwner(ctx context.Context, ownerKey string) (int, error)
     DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error)
 
     // Atomic operations

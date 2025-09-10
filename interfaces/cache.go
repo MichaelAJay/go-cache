@@ -16,7 +16,7 @@ import (
 // If indexing is enabled, the cache uses configured IndexExtractor with two required functions:
 // - GetEntryKey(T) string: Extracts the primary cache entry key (e.g., SessionID from Session)
 // - GetOwnerKey(T) string: Extracts the owner/grouping key (e.g., UserID from Session)
-// 
+//
 // This creates a primary index mapping: Owner -> []EntryKey (e.g., "user123" -> ["session1", "session2"])
 // Both functions are required because:
 // - GetEntryKey provides the entry identifier to add to the Owner's entry list
@@ -65,6 +65,11 @@ type Cache[T any] interface {
 	// MUST be goroutine-safe and atomic across all deletions
 	DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error)
 
+	// GetCountByOwner counts all entries for a given owner key
+	// Uses Owner -> Entries index
+	// MUST be goroutine-safe for concurrent access
+	GetCountByOwner(ctx context.Context, ownerKey string) (int, error)
+
 	// Atomic operations with key extraction
 	// IMPLEMENTATION REQUIREMENT: These operations MUST be atomic - no race conditions
 	// even under extreme concurrent load. They eliminate the need for consumer-side locking.
@@ -77,19 +82,19 @@ type Cache[T any] interface {
 
 	// Session management operations for cache entries
 	// IMPLEMENTATION REQUIREMENT: Must be atomic and essential for session management
-	
+
 	// ExtendTTL atomically extends the TTL of a cache entry without modifying its data
 	// Essential for session keep-alive operations where user activity extends session life
 	// MUST return error if key doesn't exist
 	// MUST be atomic and goroutine-safe
 	ExtendTTL(ctx context.Context, key string, ttl time.Duration) error
-	
+
 	// Touch atomically updates last-accessed metadata and extends TTL for a cache entry
 	// Essential for session activity tracking - records access and extends session life
 	// MUST return false if key doesn't exist, true if touch was successful
 	// MUST be atomic - updates timestamp, access count, and TTL in single operation
 	Touch(ctx context.Context, key string, ttl time.Duration) (bool, error)
-	
+
 	// AppendToField atomically appends a value to a string field within a cached entry
 	// Useful for activity logs, session traces, audit trails within cache entries
 	// For simple string values (fieldPath=""), appends to entire value
@@ -116,7 +121,7 @@ type Cache[T any] interface {
 	// MUST be goroutine-safe and atomic where possible (all-or-nothing preferred)
 	SetManySafe(ctx context.Context, values []T, ttl time.Duration) error
 
-	// SetManyPooled stores multiple values using zero-copy pooled serialization 
+	// SetManyPooled stores multiple values using zero-copy pooled serialization
 	// Aggressive optimization path with maximum performance and minimal allocations
 	// MUST be goroutine-safe with proper pooled buffer lifecycle management
 	SetManyPooled(ctx context.Context, values []T, ttl time.Duration) error

@@ -546,3 +546,280 @@ func BenchmarkRedisCache_ColdStart_FirstCall(b *testing.B) {
 		cacheInstance.Close()
 	}
 }
+
+// ==============================================================================
+// GET COUNT BY OWNER BENCHMARKS
+// ==============================================================================
+
+// BenchmarkRedisCache_GetCountByOwner_10Entries tests GetCountByOwner performance with 10 entries per owner
+func BenchmarkRedisCache_GetCountByOwner_10Entries(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbench10_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with 10 entries per owner across 100 owners
+	for ownerID := range 100 {
+		for entryID := range 10 {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_user%d:entry%d", benchPrefix, ownerID, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ownerID := 0
+		for pb.Next() {
+			count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_user%d", benchPrefix, ownerID%100))
+			if err != nil {
+				b.Errorf("GetCountByOwner error: %v", err)
+			}
+			if count != 10 {
+				b.Errorf("Expected count 10, got %d", count)
+			}
+			ownerID++
+		}
+	})
+}
+
+// BenchmarkRedisCache_GetCountByOwner_100Entries tests GetCountByOwner performance with 100 entries per owner
+func BenchmarkRedisCache_GetCountByOwner_100Entries(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbench100_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with 100 entries per owner across 10 owners
+	for ownerID := range 10 {
+		for entryID := range 100 {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_user%d:entry%d", benchPrefix, ownerID, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ownerID := 0
+		for pb.Next() {
+			count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_user%d", benchPrefix, ownerID%10))
+			if err != nil {
+				b.Errorf("GetCountByOwner error: %v", err)
+			}
+			if count != 100 {
+				b.Errorf("Expected count 100, got %d", count)
+			}
+			ownerID++
+		}
+	})
+}
+
+// BenchmarkRedisCache_GetCountByOwner_1000Entries tests GetCountByOwner performance with 1000 entries per owner
+func BenchmarkRedisCache_GetCountByOwner_1000Entries(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbench1000_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with 1000 entries per owner across 5 owners
+	for ownerID := range 5 {
+		for entryID := range 1000 {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_user%d:entry%d", benchPrefix, ownerID, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ownerID := 0
+		for pb.Next() {
+			count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_user%d", benchPrefix, ownerID%5))
+			if err != nil {
+				b.Errorf("GetCountByOwner error: %v", err)
+			}
+			if count != 1000 {
+				b.Errorf("Expected count 1000, got %d", count)
+			}
+			ownerID++
+		}
+	})
+}
+
+// BenchmarkRedisCache_GetCountByOwner_EmptyOwner tests GetCountByOwner performance for non-existent owners
+func BenchmarkRedisCache_GetCountByOwner_EmptyOwner(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbenchempty_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with some data to make it realistic
+	for ownerID := range 10 {
+		for entryID := range 50 {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_existing_user%d:entry%d", benchPrefix, ownerID, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ownerID := 0
+		for pb.Next() {
+			// Query for non-existent owners
+			count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_nonexistent_user%d", benchPrefix, ownerID%1000))
+			if err != nil {
+				b.Errorf("GetCountByOwner error: %v", err)
+			}
+			if count != 0 {
+				b.Errorf("Expected count 0 for non-existent owner, got %d", count)
+			}
+			ownerID++
+		}
+	})
+}
+
+// BenchmarkRedisCache_GetCountByOwner_Mixed tests GetCountByOwner performance with mixed scenarios
+func BenchmarkRedisCache_GetCountByOwner_Mixed(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbenchmixed_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with varied entry counts per owner
+	ownerEntries := []int{1, 5, 10, 25, 50, 100, 200, 500} // Different entry counts
+	for i, entryCount := range ownerEntries {
+		for entryID := range entryCount {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_mixeduser%d:entry%d", benchPrefix, i, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ownerID := 0
+		for pb.Next() {
+			ownerIndex := ownerID % len(ownerEntries)
+			expectedCount := ownerEntries[ownerIndex]
+			
+			count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_mixeduser%d", benchPrefix, ownerIndex))
+			if err != nil {
+				b.Errorf("GetCountByOwner error: %v", err)
+			}
+			if count != expectedCount {
+				b.Errorf("Expected count %d for owner %d, got %d", expectedCount, ownerIndex, count)
+			}
+			ownerID++
+		}
+	})
+}
+
+// BenchmarkRedisCache_GetCountByOwner_ConcurrentWrites tests GetCountByOwner performance under concurrent write load
+func BenchmarkRedisCache_GetCountByOwner_ConcurrentWrites(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbenchconcurrent_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with initial data
+	for ownerID := range 20 {
+		for entryID := range 50 {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_concurrent_user%d:entry%d", benchPrefix, ownerID, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	// Start background writers to simulate concurrent modification load
+	stopWriters := make(chan struct{})
+	defer close(stopWriters)
+
+	go func() {
+		writerID := 0
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-stopWriters:
+				return
+			case <-ticker.C:
+				// Add new entries occasionally
+				testData := generateBenchmarkData1KB(fmt.Sprintf("%s_concurrent_user%d:dynamic%d", 
+					benchPrefix, writerID%20, time.Now().UnixNano()))
+				cache.Set(ctx, testData, 10*time.Minute)
+				writerID++
+			}
+		}
+	}()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ownerID := 0
+		for pb.Next() {
+			// Query counts while concurrent writes are happening
+			count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_concurrent_user%d", benchPrefix, ownerID%20))
+			if err != nil {
+				b.Errorf("GetCountByOwner error: %v", err)
+			}
+			// Count should be at least 50 (initial entries), but may be higher due to concurrent writes
+			if count < 50 {
+				b.Errorf("Expected count >= 50 for owner %d, got %d", ownerID%20, count)
+			}
+			ownerID++
+		}
+	})
+}
+
+// BenchmarkRedisCache_GetCountByOwner_MemoryAllocation tests GetCountByOwner memory allocation patterns
+func BenchmarkRedisCache_GetCountByOwner_MemoryAllocation(b *testing.B) {
+	cache := setupBenchmarkCacheWithIndexing(b)
+	ctx := context.Background()
+
+	// Use timestamp to ensure unique keys for this benchmark run
+	benchPrefix := fmt.Sprintf("countbenchalloc_%d", time.Now().UnixNano())
+
+	// Pre-populate cache with data
+	for ownerID := range 20 {
+		for entryID := range 25 {
+			testData := generateBenchmarkData1KB(fmt.Sprintf("%s_alloc_user%d:entry%d", benchPrefix, ownerID, entryID))
+			err := cache.Set(ctx, testData, 10*time.Minute)
+			if err != nil {
+				b.Fatalf("Failed to pre-populate cache: %v", err)
+			}
+		}
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	
+	for i := 0; i < b.N; i++ {
+		count, err := cache.GetCountByOwner(ctx, fmt.Sprintf("%s_alloc_user%d", benchPrefix, i%20))
+		if err != nil {
+			b.Errorf("GetCountByOwner error: %v", err)
+		}
+		if count != 25 {
+			b.Errorf("Expected count 25, got %d", count)
+		}
+	}
+}

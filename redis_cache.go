@@ -62,15 +62,15 @@ type RedisCache[T any] struct {
 
 	// Redis-specific options
 	redisOptions *RedisOptions
-	
+
 	// Precomputed prefixes for optimal key building (1 allocation per key)
-	dataPrefix     string
-	metaPrefix     string
-	indexPrefix    string
-	lockPrefix     string
-	reversePrefix  string
-	lruTrackerKey  string
-	versionSuffix  string
+	dataPrefix    string
+	metaPrefix    string
+	indexPrefix   string
+	lockPrefix    string
+	reversePrefix string
+	lruTrackerKey string
+	versionSuffix string
 
 	// Circuit breaker state
 	mu                 sync.RWMutex
@@ -102,6 +102,7 @@ type RedisCache[T any] struct {
 	deleteByEntryScript           *redis.Script
 	getByOwnerScript              *redis.Script
 	deleteByOwnerScript           *redis.Script
+	getCountByOwnerScript         *redis.Script
 	setIfExistsScript             *redis.Script
 	setIfNotExistsScript          *redis.Script
 	getManyMetadataUpdateScript   *redis.Script
@@ -331,26 +332,26 @@ func (c *RedisCache[T]) warmPools(warmCount int) {
 func (c *RedisCache[T]) precomputePrefixes() {
 	// Determine base prefixes
 	var baseDataPrefix, baseMetaPrefix, baseIndexPrefix, baseLockPrefix string
-	
+
 	if c.redisOptions != nil {
 		if c.redisOptions.DataPrefix != "" {
 			baseDataPrefix = c.redisOptions.DataPrefix
 		} else {
 			baseDataPrefix = "cache:data:"
 		}
-		
+
 		if c.redisOptions.MetaPrefix != "" {
 			baseMetaPrefix = c.redisOptions.MetaPrefix
 		} else {
 			baseMetaPrefix = "cache:meta:"
 		}
-		
+
 		if c.redisOptions.IndexPrefix != "" {
 			baseIndexPrefix = c.redisOptions.IndexPrefix
 		} else {
 			baseIndexPrefix = "cache:index:"
 		}
-		
+
 		if c.redisOptions.LockPrefix != "" {
 			baseLockPrefix = c.redisOptions.LockPrefix
 		} else {
@@ -362,30 +363,30 @@ func (c *RedisCache[T]) precomputePrefixes() {
 		baseIndexPrefix = "cache:index:"
 		baseLockPrefix = "cache:lock:"
 	}
-	
+
 	// Add version suffix if configured
 	var versionSuffix string
 	if c.redisOptions != nil && c.redisOptions.Version != "" {
 		versionSuffix = ":" + c.redisOptions.Version
 	}
-	
+
 	// Precompute final prefixes (these become the effective prefixes for runtime concatenation)
-	c.dataPrefix = baseDataPrefix    // Will concatenate: dataPrefix + key + versionSuffix
-	c.metaPrefix = baseMetaPrefix    // Will concatenate: metaPrefix + key + versionSuffix  
+	c.dataPrefix = baseDataPrefix // Will concatenate: dataPrefix + key + versionSuffix
+	c.metaPrefix = baseMetaPrefix // Will concatenate: metaPrefix + key + versionSuffix
 	c.indexPrefix = baseIndexPrefix
-	c.lockPrefix = baseLockPrefix    
+	c.lockPrefix = baseLockPrefix
 	c.reversePrefix = "cache:reverse:"
 	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
 		c.reversePrefix = c.redisOptions.IndexPrefix + "reverse:"
 	}
-	
+
 	// Precompute LRU tracker key (fully static, no per-operation building needed)
 	if baseDataPrefix == "cache:data:" {
 		c.lruTrackerKey = "cache:lru:tracker" + versionSuffix
 	} else {
 		c.lruTrackerKey = baseDataPrefix + "lru:tracker" + versionSuffix
 	}
-	
+
 	// Store version suffix for use in key building methods
 	c.versionSuffix = versionSuffix
 }
@@ -876,6 +877,36 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 	c.precomputedMetrics.DeleteByOwnerTimer().Record(time.Since(start))
 	c.precomputedMetrics.DeleteByOwnerSuccessCounter().Inc()
 	return deletedCount, nil
+}
+
+func (c *RedisCache[T]) GetCountByOwner(ctx context.Context, ownerKey string) (int, error) {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.precomputedMetrics.GetByOwnerCircuitBreakerErrorCounter().Inc()
+		return 0, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Require indexing to be enabled
+	if !c.indexingMode {
+		return 0, fmt.Errorf("GetCountByOwner requires indexing to be enabled")
+	}
+
+	indexKey := c.buildIndexKey("owner", ownerKey)
+
+	// Use atomic Lua script to count entries
+	result, err := c.getCountByOwnerScript.Run(ctx, c.client, []string{indexKey}).Result()
+
+	if err != nil {
+		c.handleError("getcountbyowner", err)
+		c.precomputedMetrics.GetByOwnerRedisErrorCounter().Inc()
+		return 0, fmt.Errorf("redis GetCountByOwner error: %w", err)
+	}
+
+	count := int(result.(int64))
+	c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
+	c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
+	return count, nil
 }
 
 // Pattern operations
