@@ -656,8 +656,7 @@ func TestRedisCache_GetCountByOwner_WithDeletions(t *testing.T) {
 
 	count, err = cache.GetCountByOwner(ctx, ownerID)
 	require.NoError(t, err, "GetCountByOwner should not error after DeleteMany")
-	// TODO: Fix indexing bug - should be 1, currently shows 3 due to DeleteMany not updating index
-	assert.Equal(t, 3, count, "Count shows 3 after DeleteMany (indexing bug: should be 1)")
+	assert.Equal(t, 1, count, "Count should be 1 after DeleteMany")
 
 	// Verify GetByOwner shows correct data
 	actualSessions, err := cache.GetByOwner(ctx, ownerID)
@@ -670,11 +669,10 @@ func TestRedisCache_GetCountByOwner_WithDeletions(t *testing.T) {
 
 	count, err = cache.GetCountByOwner(ctx, ownerID)
 	require.NoError(t, err, "GetCountByOwner should not error after final delete")
-	// TODO: Fix indexing bug - should be 0, but due to DeleteMany bug affecting index, shows 2
-	assert.Equal(t, 2, count, "Count shows 2 after final delete (affected by DeleteMany indexing bug)")
+	assert.Equal(t, 0, count, "Count should be 0 after final delete")
 
 	t.Logf("✅ GetCountByOwner with deletions test successful")
-	t.Logf("   - Owner ID: %s, Indexed count: 2 (affected by DeleteMany bug), Actual remaining: 0", ownerID)
+	t.Logf("   - Owner ID: %s, Final count: 0", ownerID)
 }
 
 // TestRedisCache_GetCountByOwner_WithBatchOperations tests counting with batch operations
@@ -737,17 +735,13 @@ func TestRedisCache_GetCountByOwner_WithBatchOperations(t *testing.T) {
 	require.NoError(t, err, "DeleteMany should not error")
 
 	// Verify counts after DeleteMany
-	// Note: Currently there's a known issue where DeleteMany doesn't properly update index counts
-	// The count should be 3 for owner1 and 1 for owner2, but due to indexing bug it shows original counts
 	count1, err = cache.GetCountByOwner(ctx, owner1)
 	require.NoError(t, err, "GetCountByOwner should not error for owner1 after DeleteMany")
-	// TODO: Fix indexing bug - should be 3, currently shows 4
-	assert.Equal(t, 4, count1, "Owner1 count after DeleteMany (indexing bug: shows 4 instead of expected 3)")
+	assert.Equal(t, 3, count1, "Owner1 should have 3 sessions after DeleteMany")
 
 	count2, err = cache.GetCountByOwner(ctx, owner2)
 	require.NoError(t, err, "GetCountByOwner should not error for owner2 after DeleteMany")
-	// TODO: Fix indexing bug - should be 1, currently shows 3  
-	assert.Equal(t, 3, count2, "Owner2 count after DeleteMany (indexing bug: shows 3 instead of expected 1)")
+	assert.Equal(t, 1, count2, "Owner2 should have 1 session after DeleteMany")
 
 	// Verify that GetByOwner shows the correct actual data (this works correctly)
 	actualOwner1Sessions, err := cache.GetByOwner(ctx, owner1)
@@ -759,8 +753,8 @@ func TestRedisCache_GetCountByOwner_WithBatchOperations(t *testing.T) {
 	assert.Len(t, actualOwner2Sessions, 1, "GetByOwner should show actual 1 session for owner2")
 
 	t.Logf("✅ GetCountByOwner with batch operations test successful")
-	t.Logf("   - Owner1: %s, Indexed count: 4 (bug), Actual sessions: 3", owner1)
-	t.Logf("   - Owner2: %s, Indexed count: 3 (bug), Actual sessions: 1", owner2)
+	t.Logf("   - Owner1: %s, Final count: 3", owner1)
+	t.Logf("   - Owner2: %s, Final count: 1", owner2)
 }
 
 // TestRedisCache_GetCountByOwner_WithDeleteByOwner tests counting with DeleteByOwner operations

@@ -298,9 +298,18 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 
 		// Update indexes if configured
 		if c.indexingMode && item.ownerKey != "" {
+			// Forward index (owner -> entry keys)
 			pipe.SAdd(ctx, item.indexKey, item.key)
 			if ttl > 0 {
 				pipe.Expire(ctx, item.indexKey, ttl)
+			}
+			
+			// Reverse index (entry -> owner key)
+			reverseKey := c.reversePrefix + item.key
+			if ttl > 0 {
+				pipe.SetEX(ctx, reverseKey, item.ownerKey, ttl)
+			} else {
+				pipe.Set(ctx, reverseKey, item.ownerKey, 0)
 			}
 		}
 	}
@@ -437,9 +446,18 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 
 		// Update indexes if configured
 		if c.indexingMode && item.ownerKey != "" {
+			// Forward index (owner -> entry keys)
 			pipe.SAdd(ctx, item.indexKey, item.key)
 			if ttl > 0 {
 				pipe.Expire(ctx, item.indexKey, ttl)
+			}
+			
+			// Reverse index (entry -> owner key)
+			reverseKey := c.reversePrefix + item.key
+			if ttl > 0 {
+				pipe.SetEX(ctx, reverseKey, item.ownerKey, ttl)
+			} else {
+				pipe.Set(ctx, reverseKey, item.ownerKey, 0)
 			}
 		}
 	}
@@ -591,9 +609,18 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 
 		// Update indexes if configured
 		if c.indexingMode && item.ownerKey != "" {
+			// Forward index (owner -> entry keys)
 			pipe.SAdd(ctx, item.indexKey, item.key)
 			if ttl > 0 {
 				pipe.Expire(ctx, item.indexKey, ttl)
+			}
+			
+			// Reverse index (entry -> owner key)
+			reverseKey := c.reversePrefix + item.key
+			if ttl > 0 {
+				pipe.SetEX(ctx, reverseKey, item.ownerKey, ttl)
+			} else {
+				pipe.Set(ctx, reverseKey, item.ownerKey, 0)
 			}
 		}
 	}
@@ -626,31 +653,37 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		return nil
 	}
 
-	// Build Redis keys for pipeline using pooled slices and batch string building
-	dataKeys := c.slicePool.GetStringSliceWithLength(len(keys))
-	defer c.slicePool.PutStringSlice(dataKeys)
-	metaKeys := c.slicePool.GetStringSliceWithLength(len(keys))
-	defer c.slicePool.PutStringSlice(metaKeys)
+	// Build all keys properly using the actual key building methods
+	lruTrackerKey := c.buildLRUTrackerKey()
+	indexPrefix := "cache:index:"
+	if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+		indexPrefix = c.redisOptions.IndexPrefix
+	}
+	indexingEnabled := fmt.Sprintf("%t", c.indexingMode)
 
-	// Use batch key building to reduce string concatenation overhead
-	c.buildDataKeysMany(keys, dataKeys)
-	c.buildMetaKeysMany(keys, metaKeys)
-
-	// Use optimized pipeline for batch deletion
-	pipe := c.client.TxPipeline()
-
-	// Add all deletions to pipeline using batch-built keys
-	for i := range keys {
-		pipe.Del(ctx, dataKeys[i], metaKeys[i])
+	// Build script arguments: indexPrefix + indexingEnabled + reversePrefix + all fully-built keys
+	scriptArgs := make([]interface{}, 3+len(keys)*3)
+	scriptArgs[0] = indexPrefix
+	scriptArgs[1] = indexingEnabled
+	scriptArgs[2] = c.reversePrefix
+	
+	// Add pre-built keys for each entry
+	for i, key := range keys {
+		scriptArgs[3+i*3] = c.buildDataKey(key)     // dataKey
+		scriptArgs[3+i*3+1] = c.buildMetaKey(key)   // metaKey  
+		scriptArgs[3+i*3+2] = c.reversePrefix + key // reverseKey
 	}
 
-	// Execute pipeline
-	_, err := pipe.Exec(ctx)
+	// Execute atomic deletion with proper index cleanup
+	_, err := c.deleteManyScript.Run(ctx, c.client,
+		[]string{lruTrackerKey},
+		scriptArgs...).Result()
 	if err != nil {
 		c.handleError("deletemany", err)
 		c.precomputedMetrics.DeleteManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis DeleteMany error: %w", err)
 	}
+	
 
 	c.precomputedMetrics.DeleteManyTimer().Record(time.Since(start))
 	c.precomputedMetrics.DeleteManyBatchCounter().Inc()

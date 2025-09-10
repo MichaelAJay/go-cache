@@ -583,6 +583,57 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return cleaned
 	`)
 
+	// DeleteMany script - atomic batch deletion with proper index and LRU cleanup
+	c.deleteManyScript = redis.NewScript(`
+		local lruTrackerKey = KEYS[1]
+		local indexPrefix = ARGV[1]
+		local indexingEnabled = ARGV[2] == "true"
+		local reversePrefix = ARGV[3]
+		-- Keys are provided in groups of 3: dataKey, metaKey, reverseKey
+		-- Starting from ARGV[4] onwards
+		
+		local totalDeleted = 0
+		local argIndex = 4
+		
+		-- Process each group of keys (dataKey, metaKey, reverseKey)
+		while argIndex <= #ARGV do
+			local dataKey = ARGV[argIndex]
+			local metaKey = ARGV[argIndex + 1]
+			local reverseKey = ARGV[argIndex + 2]
+			
+			-- Extract entry key from reverseKey by removing the reverse prefix
+			-- reverseKey format: "cache:reverse:session:batch-count-1"
+			-- reversePrefix:    "cache:reverse:"
+			-- We need to extract: "session:batch-count-1"
+			local entryKey = string.gsub(reverseKey, "^" .. reversePrefix:gsub("([%-%^%$%(%)%%%.%[%]%*%+%?])", "%%%1"), "")
+			
+			-- Index cleanup if indexing is enabled (do this BEFORE deleting keys)
+			if indexingEnabled then
+				-- Get owner from reverse index for forward index cleanup
+				local ownerKey = redis.call('GET', reverseKey)
+				if ownerKey then
+					-- Remove entry from forward index (owner -> entry keys)
+					local forwardIndexKey = indexPrefix .. 'owner:' .. ownerKey
+					redis.call('SREM', forwardIndexKey, entryKey)
+				end
+				-- Delete reverse index (entry -> owner key)
+				totalDeleted = totalDeleted + redis.call('DEL', reverseKey)
+			end
+			
+			-- Delete main keys and count successful deletions
+			local dataDeleted = redis.call('DEL', dataKey)
+			local metaDeleted = redis.call('DEL', metaKey)
+			totalDeleted = totalDeleted + dataDeleted + metaDeleted
+			
+			-- Remove from LRU tracker
+			redis.call('ZREM', lruTrackerKey, entryKey)
+			
+			argIndex = argIndex + 3
+		end
+		
+		return totalDeleted
+	`)
+
 	if c.options.WarmLuaScripts {
 		c.warmLuaScripts(context.Background())
 	}
@@ -595,6 +646,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript, c.getCountByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
 		c.getManyMetadataUpdateScript, c.cleanupOrphanedMetadataScript,
+		c.deleteManyScript,
 	}
 
 	for _, script := range scripts {

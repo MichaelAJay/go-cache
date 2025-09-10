@@ -107,6 +107,7 @@ type RedisCache[T any] struct {
 	setIfNotExistsScript          *redis.Script
 	getManyMetadataUpdateScript   *redis.Script
 	cleanupOrphanedMetadataScript *redis.Script
+	deleteManyScript              *redis.Script
 }
 
 // Option defines a functional option for configuring cache behavior
