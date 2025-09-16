@@ -1099,6 +1099,7 @@ func (c *RedisCache[T]) isCircuitBreakerOpen() bool {
 	return true
 }
 
+// @TODO this is being used a LOT of places that probably shouldn't be updating failure count - like on Delete - if it's missing?
 // handleError processes errors and manages circuit breaker state
 func (c *RedisCache[T]) handleError(operation string, err error) {
 	c.mu.Lock()

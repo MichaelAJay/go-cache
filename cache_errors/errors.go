@@ -18,3 +18,8 @@ var (
 	ErrNotNumeric = errors.New("cache: value is not numeric")
 	ErrOverflow   = errors.New("cache: numeric overflow")
 )
+
+// IsNotFound checks if an error represents a key not found condition
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrKeyNotFound)
+}
