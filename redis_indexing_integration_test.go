@@ -1012,3 +1012,494 @@ func TestRedisCache_GetCountByOwner_NonIndexedCache(t *testing.T) {
 	t.Logf("✅ GetCountByOwner with non-indexed cache test successful")
 	t.Logf("   - Error returned as expected: %v", err)
 }
+
+// TestRedisCache_GetSubjectIDsByOwner_Basic tests basic GetSubjectIDsByOwner functionality
+func TestRedisCache_GetSubjectIDsByOwner_Basic(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance with indexing enabled
+	config := testintegration.IndexedCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create indexed cache")
+	defer cache.Close()
+
+	ownerID := "user4000"
+	differentOwnerID := "user4001"
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner basic functionality for owner ID: %s", ownerID)
+
+	// Initially, should return empty slice for non-existent owner
+	subjectIDs, err := cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for non-existent owner")
+	assert.Empty(t, subjectIDs, "Non-existent owner should have empty subject IDs")
+
+	// Create multiple sessions for the same owner
+	sessions := []*testintegration.TestSession{
+		{
+			ID:       "session:subjectids-basic-1",
+			UserID:   ownerID,
+			Username: "basicuser",
+			Created:  time.Now(),
+		},
+		{
+			ID:       "session:subjectids-basic-2",
+			UserID:   ownerID,
+			Username: "basicuser",
+			Created:  time.Now().Add(time.Minute),
+		},
+		{
+			ID:       "session:subjectids-basic-3",
+			UserID:   ownerID,
+			Username: "basicuser",
+			Created:  time.Now().Add(2 * time.Minute),
+		},
+		{
+			ID:       "session:subjectids-different-1",
+			UserID:   differentOwnerID,
+			Username: "differentuser",
+			Created:  time.Now(),
+		},
+	}
+
+	// SET sessions one by one and verify subject IDs are returned
+	for i, session := range sessions[:3] { // First 3 sessions belong to main owner
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "SET operation should not error for session %s", session.ID)
+
+		subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
+		require.NoError(t, err, "GetSubjectIDsByOwner should not error after SET %d", i+1)
+		assert.Len(t, subjectIDs, i+1, "Should have %d subject IDs after setting session %d", i+1, i+1)
+		assert.Contains(t, subjectIDs, session.ID, "Should contain the just-added session ID")
+	}
+
+	// Set session for different owner
+	err = cache.Set(ctx, sessions[3], 0)
+	require.NoError(t, err, "SET operation should not error for different owner session")
+
+	// Main owner subject IDs should still be 3
+	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after different owner SET")
+	assert.Len(t, subjectIDs, 3, "Main owner should still have 3 subject IDs")
+
+	// Verify all expected session IDs are present
+	expectedIDs := []string{"session:subjectids-basic-1", "session:subjectids-basic-2", "session:subjectids-basic-3"}
+	for _, expectedID := range expectedIDs {
+		assert.Contains(t, subjectIDs, expectedID, "Should contain expected session ID %s", expectedID)
+	}
+
+	// Should not contain the different owner's session
+	assert.NotContains(t, subjectIDs, "session:subjectids-different-1", "Should not contain different owner's session")
+
+	// Different owner subject IDs should be 1
+	differentSubjectIDs, err := cache.GetSubjectIDsByOwner(ctx, differentOwnerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for different owner")
+	assert.Len(t, differentSubjectIDs, 1, "Different owner should have 1 subject ID")
+	assert.Contains(t, differentSubjectIDs, "session:subjectids-different-1", "Should contain the different owner's session")
+
+	t.Logf("✅ GetSubjectIDsByOwner basic test successful")
+	t.Logf("   - Owner ID: %s, Subject IDs: %v", ownerID, subjectIDs)
+	t.Logf("   - Different Owner ID: %s, Subject IDs: %v", differentOwnerID, differentSubjectIDs)
+}
+
+// TestRedisCache_GetSubjectIDsByOwner_WithDeletions tests GetSubjectIDsByOwner with deletions
+func TestRedisCache_GetSubjectIDsByOwner_WithDeletions(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance with indexing enabled
+	config := testintegration.IndexedCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create indexed cache")
+	defer cache.Close()
+
+	ownerID := "user4100"
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner with deletions for owner ID: %s", ownerID)
+
+	// Create sessions
+	sessions := []*testintegration.TestSession{
+		{ID: "session:subjectids-del-1", UserID: ownerID, Username: "deluser", Created: time.Now()},
+		{ID: "session:subjectids-del-2", UserID: ownerID, Username: "deluser", Created: time.Now().Add(time.Minute)},
+		{ID: "session:subjectids-del-3", UserID: ownerID, Username: "deluser", Created: time.Now().Add(2 * time.Minute)},
+		{ID: "session:subjectids-del-4", UserID: ownerID, Username: "deluser", Created: time.Now().Add(3 * time.Minute)},
+		{ID: "session:subjectids-del-5", UserID: ownerID, Username: "deluser", Created: time.Now().Add(4 * time.Minute)},
+	}
+
+	// SET all sessions
+	for _, session := range sessions {
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "SET operation should not error for session %s", session.ID)
+	}
+
+	// Verify initial subject IDs
+	subjectIDs, err := cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error")
+	assert.Len(t, subjectIDs, 5, "Initial subject IDs should be 5")
+
+	// Delete individual sessions and verify subject IDs are updated
+	err = cache.Delete(ctx, "session:subjectids-del-1")
+	require.NoError(t, err, "Delete should not error")
+
+	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after first delete")
+	assert.Len(t, subjectIDs, 4, "Should have 4 subject IDs after first delete")
+	assert.NotContains(t, subjectIDs, "session:subjectids-del-1", "Should not contain deleted session")
+
+	err = cache.Delete(ctx, "session:subjectids-del-3")
+	require.NoError(t, err, "Delete should not error")
+
+	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after second delete")
+	assert.Len(t, subjectIDs, 3, "Should have 3 subject IDs after second delete")
+	assert.NotContains(t, subjectIDs, "session:subjectids-del-3", "Should not contain second deleted session")
+
+	// Delete multiple keys at once
+	err = cache.DeleteMany(ctx, []string{"session:subjectids-del-2", "session:subjectids-del-4"})
+	require.NoError(t, err, "DeleteMany should not error")
+
+	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after DeleteMany")
+	assert.Len(t, subjectIDs, 1, "Should have 1 subject ID after DeleteMany")
+	assert.Contains(t, subjectIDs, "session:subjectids-del-5", "Should contain remaining session")
+
+	// Delete remaining session
+	err = cache.Delete(ctx, "session:subjectids-del-5")
+	require.NoError(t, err, "Delete should not error")
+
+	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after final delete")
+	assert.Empty(t, subjectIDs, "Should have empty subject IDs after final delete")
+
+	t.Logf("✅ GetSubjectIDsByOwner with deletions test successful")
+	t.Logf("   - Owner ID: %s, Final subject IDs: %v", ownerID, subjectIDs)
+}
+
+// TestRedisCache_GetSubjectIDsByOwner_WithDeleteByOwner tests GetSubjectIDsByOwner with DeleteByOwner operations
+func TestRedisCache_GetSubjectIDsByOwner_WithDeleteByOwner(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance with indexing enabled
+	config := testintegration.IndexedCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create indexed cache")
+	defer cache.Close()
+
+	ownerToDelete := "user4200"
+	ownerToKeep := "user4201"
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner with DeleteByOwner")
+
+	// Create sessions for multiple owners
+	sessions := []*testintegration.TestSession{
+		{ID: "session:subjectids-delbyowner-1", UserID: ownerToDelete, Username: "deleteuser", Created: time.Now()},
+		{ID: "session:subjectids-delbyowner-2", UserID: ownerToDelete, Username: "deleteuser", Created: time.Now().Add(time.Minute)},
+		{ID: "session:subjectids-delbyowner-3", UserID: ownerToDelete, Username: "deleteuser", Created: time.Now().Add(2 * time.Minute)},
+		{ID: "session:subjectids-keepowner-1", UserID: ownerToKeep, Username: "keepuser", Created: time.Now()},
+		{ID: "session:subjectids-keepowner-2", UserID: ownerToKeep, Username: "keepuser", Created: time.Now().Add(time.Minute)},
+	}
+
+	// SET all sessions
+	for _, session := range sessions {
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "SET should not error")
+	}
+
+	// Verify initial subject IDs
+	subjectIDsToDelete, err := cache.GetSubjectIDsByOwner(ctx, ownerToDelete)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for ownerToDelete")
+	assert.Len(t, subjectIDsToDelete, 3, "ownerToDelete should have 3 subject IDs initially")
+
+	subjectIDsToKeep, err := cache.GetSubjectIDsByOwner(ctx, ownerToKeep)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for ownerToKeep")
+	assert.Len(t, subjectIDsToKeep, 2, "ownerToKeep should have 2 subject IDs initially")
+
+	// DeleteByOwner operation
+	deletedCount, err := cache.DeleteByOwner(ctx, ownerToDelete)
+	require.NoError(t, err, "DeleteByOwner should not error")
+	assert.Equal(t, 3, deletedCount, "DeleteByOwner should return 3 deleted sessions")
+
+	// Verify subject IDs after DeleteByOwner
+	subjectIDsToDelete, err = cache.GetSubjectIDsByOwner(ctx, ownerToDelete)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after DeleteByOwner")
+	assert.Empty(t, subjectIDsToDelete, "ownerToDelete should have empty subject IDs after DeleteByOwner")
+
+	subjectIDsToKeep, err = cache.GetSubjectIDsByOwner(ctx, ownerToKeep)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for ownerToKeep after DeleteByOwner")
+	assert.Len(t, subjectIDsToKeep, 2, "ownerToKeep should still have 2 subject IDs after DeleteByOwner")
+	assert.Contains(t, subjectIDsToKeep, "session:subjectids-keepowner-1", "Should contain kept owner's session 1")
+	assert.Contains(t, subjectIDsToKeep, "session:subjectids-keepowner-2", "Should contain kept owner's session 2")
+
+	t.Logf("✅ GetSubjectIDsByOwner with DeleteByOwner test successful")
+	t.Logf("   - Deleted owner: %s, Final subject IDs: %v", ownerToDelete, subjectIDsToDelete)
+	t.Logf("   - Kept owner: %s, Final subject IDs: %v", ownerToKeep, subjectIDsToKeep)
+}
+
+// TestRedisCache_GetSubjectIDsByOwner_WithUpdates tests GetSubjectIDsByOwner with ownership transfers
+func TestRedisCache_GetSubjectIDsByOwner_WithUpdates(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance with indexing enabled
+	config := testintegration.IndexedCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create indexed cache")
+	defer cache.Close()
+
+	owner1 := "user4300"
+	owner2 := "user4301"
+	sessionID := "session:subjectids-update-test"
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner with updates")
+
+	// Create initial session for owner1
+	session := &testintegration.TestSession{
+		ID:       sessionID,
+		UserID:   owner1,
+		Username: "updateuser1",
+		Created:  time.Now(),
+	}
+
+	err = cache.Set(ctx, session, 0)
+	require.NoError(t, err, "Initial SET should not error")
+
+	// Verify initial subject IDs
+	subjectIDs1, err := cache.GetSubjectIDsByOwner(ctx, owner1)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner1")
+	assert.Len(t, subjectIDs1, 1, "Owner1 should have 1 subject ID initially")
+	assert.Contains(t, subjectIDs1, sessionID, "Should contain the session ID")
+
+	subjectIDs2, err := cache.GetSubjectIDsByOwner(ctx, owner2)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner2")
+	assert.Empty(t, subjectIDs2, "Owner2 should have empty subject IDs initially")
+
+	// Transfer ownership to owner2
+	transferredSession := &testintegration.TestSession{
+		ID:       sessionID,
+		UserID:   owner2, // Changed owner
+		Username: "updateuser2",
+		Created:  time.Now().Add(time.Hour),
+	}
+
+	err = cache.Set(ctx, transferredSession, 0)
+	require.NoError(t, err, "Transfer SET should not error")
+
+	// Verify subject IDs after transfer
+	subjectIDs1, err = cache.GetSubjectIDsByOwner(ctx, owner1)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner1 after transfer")
+	assert.Empty(t, subjectIDs1, "Owner1 should have empty subject IDs after transfer")
+
+	subjectIDs2, err = cache.GetSubjectIDsByOwner(ctx, owner2)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner2 after transfer")
+	assert.Len(t, subjectIDs2, 1, "Owner2 should have 1 subject ID after transfer")
+	assert.Contains(t, subjectIDs2, sessionID, "Should contain the transferred session ID")
+
+	t.Logf("✅ GetSubjectIDsByOwner with updates test successful")
+	t.Logf("   - Original owner: %s, Final subject IDs: %v", owner1, subjectIDs1)
+	t.Logf("   - New owner: %s, Final subject IDs: %v", owner2, subjectIDs2)
+}
+
+// TestRedisCache_GetSubjectIDsByOwner_WithBatchOperations tests GetSubjectIDsByOwner with batch operations
+func TestRedisCache_GetSubjectIDsByOwner_WithBatchOperations(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance with indexing enabled
+	config := testintegration.IndexedCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create indexed cache")
+	defer cache.Close()
+
+	owner1 := "user4400"
+	owner2 := "user4401"
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner with batch operations")
+
+	// Create sessions for multiple owners
+	sessions := []*testintegration.TestSession{
+		{ID: "session:subjectids-batch-1", UserID: owner1, Username: "batchuser1", Created: time.Now()},
+		{ID: "session:subjectids-batch-2", UserID: owner1, Username: "batchuser1", Created: time.Now().Add(time.Minute)},
+		{ID: "session:subjectids-batch-3", UserID: owner1, Username: "batchuser1", Created: time.Now().Add(2 * time.Minute)},
+		{ID: "session:subjectids-batch-4", UserID: owner2, Username: "batchuser2", Created: time.Now()},
+		{ID: "session:subjectids-batch-5", UserID: owner2, Username: "batchuser2", Created: time.Now().Add(time.Minute)},
+	}
+
+	// Initial subject IDs should be empty
+	subjectIDs1, err := cache.GetSubjectIDsByOwner(ctx, owner1)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner1")
+	assert.Empty(t, subjectIDs1, "Initial subject IDs for owner1 should be empty")
+
+	subjectIDs2, err := cache.GetSubjectIDsByOwner(ctx, owner2)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner2")
+	assert.Empty(t, subjectIDs2, "Initial subject IDs for owner2 should be empty")
+
+	// SetMany - should update all subject IDs
+	err = cache.SetMany(ctx, sessions, 0)
+	require.NoError(t, err, "SetMany should not error")
+
+	// Verify subject IDs after SetMany
+	subjectIDs1, err = cache.GetSubjectIDsByOwner(ctx, owner1)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner1 after SetMany")
+	assert.Len(t, subjectIDs1, 3, "Owner1 should have 3 subject IDs after SetMany")
+	expectedOwner1IDs := []string{"session:subjectids-batch-1", "session:subjectids-batch-2", "session:subjectids-batch-3"}
+	for _, expectedID := range expectedOwner1IDs {
+		assert.Contains(t, subjectIDs1, expectedID, "Should contain expected owner1 session ID")
+	}
+
+	subjectIDs2, err = cache.GetSubjectIDsByOwner(ctx, owner2)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner2 after SetMany")
+	assert.Len(t, subjectIDs2, 2, "Owner2 should have 2 subject IDs after SetMany")
+	expectedOwner2IDs := []string{"session:subjectids-batch-4", "session:subjectids-batch-5"}
+	for _, expectedID := range expectedOwner2IDs {
+		assert.Contains(t, subjectIDs2, expectedID, "Should contain expected owner2 session ID")
+	}
+
+	// DeleteMany - should update subject IDs
+	keysToDelete := []string{"session:subjectids-batch-1", "session:subjectids-batch-4"}
+	err = cache.DeleteMany(ctx, keysToDelete)
+	require.NoError(t, err, "DeleteMany should not error")
+
+	// Verify subject IDs after DeleteMany
+	subjectIDs1, err = cache.GetSubjectIDsByOwner(ctx, owner1)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner1 after DeleteMany")
+	assert.Len(t, subjectIDs1, 2, "Owner1 should have 2 subject IDs after DeleteMany")
+	assert.Contains(t, subjectIDs1, "session:subjectids-batch-2", "Should contain remaining owner1 session 2")
+	assert.Contains(t, subjectIDs1, "session:subjectids-batch-3", "Should contain remaining owner1 session 3")
+	assert.NotContains(t, subjectIDs1, "session:subjectids-batch-1", "Should not contain deleted session")
+
+	subjectIDs2, err = cache.GetSubjectIDsByOwner(ctx, owner2)
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error for owner2 after DeleteMany")
+	assert.Len(t, subjectIDs2, 1, "Owner2 should have 1 subject ID after DeleteMany")
+	assert.Contains(t, subjectIDs2, "session:subjectids-batch-5", "Should contain remaining owner2 session")
+	assert.NotContains(t, subjectIDs2, "session:subjectids-batch-4", "Should not contain deleted session")
+
+	t.Logf("✅ GetSubjectIDsByOwner with batch operations test successful")
+	t.Logf("   - Owner1: %s, Final subject IDs: %v", owner1, subjectIDs1)
+	t.Logf("   - Owner2: %s, Final subject IDs: %v", owner2, subjectIDs2)
+}
+
+// TestRedisCache_GetSubjectIDsByOwner_WithClear tests that Clear operation resets all subject IDs
+func TestRedisCache_GetSubjectIDsByOwner_WithClear(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance with indexing enabled
+	config := testintegration.IndexedCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create indexed cache")
+	defer cache.Close()
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner with Clear operation")
+
+	// Create sessions for multiple owners
+	sessions := []*testintegration.TestSession{
+		{ID: "session:subjectids-clear-1", UserID: "user4500", Username: "clearuser1", Created: time.Now()},
+		{ID: "session:subjectids-clear-2", UserID: "user4500", Username: "clearuser1", Created: time.Now().Add(time.Minute)},
+		{ID: "session:subjectids-clear-3", UserID: "user4501", Username: "clearuser2", Created: time.Now()},
+		{ID: "session:subjectids-clear-4", UserID: "user4502", Username: "clearuser3", Created: time.Now()},
+	}
+
+	// SET all sessions
+	for _, session := range sessions {
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "SET should not error")
+	}
+
+	// Verify initial subject IDs
+	subjectIDs1, err := cache.GetSubjectIDsByOwner(ctx, "user4500")
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error")
+	assert.Len(t, subjectIDs1, 2, "user4500 should have 2 subject IDs before Clear")
+
+	subjectIDs2, err := cache.GetSubjectIDsByOwner(ctx, "user4501")
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error")
+	assert.Len(t, subjectIDs2, 1, "user4501 should have 1 subject ID before Clear")
+
+	subjectIDs3, err := cache.GetSubjectIDsByOwner(ctx, "user4502")
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error")
+	assert.Len(t, subjectIDs3, 1, "user4502 should have 1 subject ID before Clear")
+
+	// Clear all data
+	err = cache.Clear(ctx)
+	require.NoError(t, err, "Clear should not error")
+
+	// Verify all subject IDs are empty after Clear
+	subjectIDs1, err = cache.GetSubjectIDsByOwner(ctx, "user4500")
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after Clear")
+	assert.Empty(t, subjectIDs1, "user4500 should have empty subject IDs after Clear")
+
+	subjectIDs2, err = cache.GetSubjectIDsByOwner(ctx, "user4501")
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after Clear")
+	assert.Empty(t, subjectIDs2, "user4501 should have empty subject IDs after Clear")
+
+	subjectIDs3, err = cache.GetSubjectIDsByOwner(ctx, "user4502")
+	require.NoError(t, err, "GetSubjectIDsByOwner should not error after Clear")
+	assert.Empty(t, subjectIDs3, "user4502 should have empty subject IDs after Clear")
+
+	t.Logf("✅ GetSubjectIDsByOwner with Clear test successful")
+}
+
+// TestRedisCache_GetSubjectIDsByOwner_NonIndexedCache tests that non-indexed caches reject GetSubjectIDsByOwner
+func TestRedisCache_GetSubjectIDsByOwner_NonIndexedCache(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance WITHOUT indexing
+	config := testintegration.DefaultCacheConfig()
+	config.IndexingMode = false // Explicitly disable indexing
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create non-indexed cache")
+	defer cache.Close()
+
+	t.Logf("📝 Testing GetSubjectIDsByOwner with non-indexed cache")
+
+	// Create and set a test session
+	testSession := &testintegration.TestSession{
+		ID:       "session:non-indexed-subjectids",
+		UserID:   "user4600",
+		Username: "nonindexeduser",
+		Created:  time.Now(),
+	}
+
+	// SET should work normally
+	err = cache.Set(ctx, testSession, 0)
+	require.NoError(t, err, "SET should work on non-indexed cache")
+
+	// GetSubjectIDsByOwner should return an error since indexing is required
+	subjectIDs, err := cache.GetSubjectIDsByOwner(ctx, "user4600")
+	require.Error(t, err, "GetSubjectIDsByOwner should return error on non-indexed cache")
+	assert.Contains(t, err.Error(), "GetSubjectIDsByOwner requires indexing to be enabled",
+		"Error message should indicate indexing is required")
+	assert.Nil(t, subjectIDs, "Subject IDs should be nil when error occurs")
+
+	t.Logf("✅ GetSubjectIDsByOwner with non-indexed cache test successful")
+	t.Logf("   - Error returned as expected: %v", err)
+}
