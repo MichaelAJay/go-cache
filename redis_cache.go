@@ -103,6 +103,7 @@ type RedisCache[T any] struct {
 	getByOwnerScript              *redis.Script
 	deleteByOwnerScript           *redis.Script
 	getCountByOwnerScript         *redis.Script
+	getSubjectIdsByOwnerScript    *redis.Script
 	setIfExistsScript             *redis.Script
 	setIfNotExistsScript          *redis.Script
 	getManyMetadataUpdateScript   *redis.Script
@@ -908,6 +909,49 @@ func (c *RedisCache[T]) GetCountByOwner(ctx context.Context, ownerKey string) (i
 	c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
 	c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
 	return count, nil
+}
+
+func (c *RedisCache[T]) GetSubjectIDsByOwner(ctx context.Context, ownerKey string) ([]string, error) {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.precomputedMetrics.GetByOwnerCircuitBreakerErrorCounter().Inc()
+		return nil, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Require indexing to be enabled
+	if !c.indexingMode {
+		return nil, fmt.Errorf("GetSubjectIDsByOwner requires indexing to be enabled")
+	}
+
+	indexKey := c.buildIndexKey("owner", ownerKey)
+
+	// Use atomic Lua script
+	result, err := c.getSubjectIdsByOwnerScript.Run(ctx, c.client, []string{indexKey}).Result()
+
+	if err != nil {
+		c.handleError("getsubjectidsbyowner", err)
+		c.precomputedMetrics.GetByOwnerRedisErrorCounter().Inc()
+		return nil, fmt.Errorf("redis GetSubjectIDsByOwner error: %w", err)
+	}
+
+	// Convert result to []string
+	resultSlice, ok := result.([]any)
+	if !ok {
+		return []string{}, nil // Empty result for non-existent index
+	}
+
+	// Convert []any to []string
+	subjectIDs := make([]string, len(resultSlice))
+	for i, item := range resultSlice {
+		if str, ok := item.(string); ok {
+			subjectIDs[i] = str
+		}
+	}
+
+	c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
+	c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
+	return subjectIDs, nil
 }
 
 // Pattern operations

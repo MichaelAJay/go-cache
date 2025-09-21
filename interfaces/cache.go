@@ -70,6 +70,8 @@ type Cache[T any] interface {
 	// MUST be goroutine-safe for concurrent access
 	GetCountByOwner(ctx context.Context, ownerKey string) (int, error)
 
+	GetSubjectIDsByOwner(ctx context.Context, ownerKey string) ([]string, error)
+
 	// Atomic operations with key extraction
 	// IMPLEMENTATION REQUIREMENT: These operations MUST be atomic - no race conditions
 	// even under extreme concurrent load. They eliminate the need for consumer-side locking.
