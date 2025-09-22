@@ -440,6 +440,260 @@ func TestRedisCache_SetOverwrite(t *testing.T) {
 	t.Logf("   - Updated UserID: %s", retrievedSession.UserID)
 }
 
+// TestRedisCache_SetOverwriteTTL tests overwrite behavior with different TTL scenarios
+func TestRedisCache_SetOverwriteTTL(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	sessionID := "session:ttl-overwrite-test"
+
+	t.Run("TTL_to_Different_TTL", func(t *testing.T) {
+		originalSession := &testintegration.TestSession{
+			ID:       sessionID,
+			UserID:   "user600",
+			Username: "originalttl",
+			Created:  time.Now(),
+		}
+
+		updatedSession := &testintegration.TestSession{
+			ID:       sessionID,
+			UserID:   "user601",
+			Username: "updatedttl",
+			Created:  time.Now().Add(time.Hour),
+		}
+
+		// SET with 200ms TTL
+		err = cache.Set(ctx, originalSession, 200*time.Millisecond)
+		require.NoError(t, err, "Original SET with TTL should not error")
+
+		// Verify exists
+		exists := cache.Has(ctx, sessionID)
+		assert.True(t, exists, "Session should exist after SET")
+
+		// Wait a bit but not full TTL
+		time.Sleep(50 * time.Millisecond)
+
+		// Overwrite with different 300ms TTL
+		err = cache.Set(ctx, updatedSession, 300*time.Millisecond)
+		require.NoError(t, err, "Overwrite SET with different TTL should not error")
+
+		// Verify overwrite worked and data is updated
+		retrievedSession, found, err := cache.Get(ctx, sessionID)
+		assert.NoError(t, err, "GET should not error")
+		assert.True(t, found, "Session should be found after overwrite")
+		assert.Equal(t, updatedSession.UserID, retrievedSession.UserID, "Should have updated data")
+
+		// Wait for original TTL to pass (should still exist due to new TTL)
+		time.Sleep(200 * time.Millisecond)
+		exists = cache.Has(ctx, sessionID)
+		assert.True(t, exists, "Session should still exist - new TTL should apply")
+
+		// Wait for new TTL to pass
+		time.Sleep(150 * time.Millisecond)
+		exists = cache.Has(ctx, sessionID)
+		assert.False(t, exists, "Session should expire after new TTL")
+
+		t.Logf("✅ TTL to different TTL overwrite test successful")
+	})
+
+	t.Run("TTL_to_No_TTL", func(t *testing.T) {
+		setup.FlushRedis(ctx, t) // Clean slate
+
+		originalSession := &testintegration.TestSession{
+			ID:       sessionID,
+			UserID:   "user602",
+			Username: "originalttl2",
+			Created:  time.Now(),
+		}
+
+		updatedSession := &testintegration.TestSession{
+			ID:       sessionID,
+			UserID:   "user603",
+			Username: "nottl",
+			Created:  time.Now().Add(time.Hour),
+		}
+
+		// SET with 100ms TTL
+		err = cache.Set(ctx, originalSession, 100*time.Millisecond)
+		require.NoError(t, err, "Original SET with TTL should not error")
+
+		// Overwrite with no TTL (TTL=0)
+		err = cache.Set(ctx, updatedSession, 0)
+		require.NoError(t, err, "Overwrite SET with no TTL should not error")
+
+		// Wait for original TTL to pass
+		time.Sleep(150 * time.Millisecond)
+
+		// Should still exist - no TTL means no expiration
+		retrievedSession, found, err := cache.Get(ctx, sessionID)
+		assert.NoError(t, err, "GET should not error")
+		assert.True(t, found, "Session should still exist - no TTL")
+		assert.Equal(t, updatedSession.UserID, retrievedSession.UserID, "Should have updated data")
+
+		t.Logf("✅ TTL to no TTL overwrite test successful")
+	})
+
+	t.Run("No_TTL_to_TTL", func(t *testing.T) {
+		setup.FlushRedis(ctx, t) // Clean slate
+
+		originalSession := &testintegration.TestSession{
+			ID:       sessionID,
+			UserID:   "user604",
+			Username: "nottle",
+			Created:  time.Now(),
+		}
+
+		updatedSession := &testintegration.TestSession{
+			ID:       sessionID,
+			UserID:   "user605",
+			Username: "withttl",
+			Created:  time.Now().Add(time.Hour),
+		}
+
+		// SET with no TTL
+		err = cache.Set(ctx, originalSession, 0)
+		require.NoError(t, err, "Original SET with no TTL should not error")
+
+		// Overwrite with TTL
+		err = cache.Set(ctx, updatedSession, 100*time.Millisecond)
+		require.NoError(t, err, "Overwrite SET with TTL should not error")
+
+		// Verify overwrite worked
+		retrievedSession, found, err := cache.Get(ctx, sessionID)
+		assert.NoError(t, err, "GET should not error")
+		assert.True(t, found, "Session should be found after overwrite")
+		assert.Equal(t, updatedSession.UserID, retrievedSession.UserID, "Should have updated data")
+
+		// Wait for TTL to expire
+		time.Sleep(150 * time.Millisecond)
+		exists := cache.Has(ctx, sessionID)
+		assert.False(t, exists, "Session should expire after TTL")
+
+		t.Logf("✅ No TTL to TTL overwrite test successful")
+	})
+}
+
+// TestRedisCache_MultipleSequentialOverwrites tests multiple overwrites in sequence
+func TestRedisCache_MultipleSequentialOverwrites(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	sessionID := "session:multiple-overwrites"
+
+	// Create multiple versions
+	sessions := []*testintegration.TestSession{
+		{ID: sessionID, UserID: "user700", Username: "version1", Created: time.Now()},
+		{ID: sessionID, UserID: "user701", Username: "version2", Created: time.Now().Add(time.Minute)},
+		{ID: sessionID, UserID: "user702", Username: "version3", Created: time.Now().Add(2 * time.Minute)},
+		{ID: sessionID, UserID: "user703", Username: "version4", Created: time.Now().Add(3 * time.Minute)},
+	}
+
+	t.Logf("📝 Testing multiple sequential overwrites for session ID: %s", sessionID)
+
+	// Perform sequential overwrites
+	for i, session := range sessions {
+		err = cache.Set(ctx, session, 0)
+		require.NoError(t, err, "Overwrite %d should not error", i+1)
+
+		// Verify current version is correct
+		retrievedSession, found, err := cache.Get(ctx, sessionID)
+		assert.NoError(t, err, "GET should not error for overwrite %d", i+1)
+		assert.True(t, found, "Session should be found for overwrite %d", i+1)
+		assert.Equal(t, session.UserID, retrievedSession.UserID, "Should have version %d data", i+1)
+		assert.Equal(t, session.Username, retrievedSession.Username, "Should have version %d username", i+1)
+	}
+
+	// Final verification - should have the last version
+	finalSession, found, err := cache.Get(ctx, sessionID)
+	assert.NoError(t, err, "Final GET should not error")
+	assert.True(t, found, "Final session should be found")
+	assert.Equal(t, sessions[len(sessions)-1].UserID, finalSession.UserID, "Should have final version data")
+	assert.Equal(t, "version4", finalSession.Username, "Should have final version username")
+
+	t.Logf("✅ Multiple sequential overwrites test successful")
+	t.Logf("   - Total overwrites: %d", len(sessions))
+	t.Logf("   - Final version: %s", finalSession.Username)
+}
+
+// TestRedisCache_OverwriteIdenticalData tests overwriting with identical data
+func TestRedisCache_OverwriteIdenticalData(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup test environment
+	setup := testintegration.SetupTestEnvironment(ctx, t)
+	setup.ValidateEnvironment(ctx, t)
+	setup.FlushRedis(ctx, t)
+
+	// Create cache instance
+	config := testintegration.DefaultCacheConfig()
+	cache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
+	require.NoError(t, err, "Failed to create cache")
+	defer cache.Close()
+
+	sessionID := "session:identical-overwrite"
+
+	// Create identical sessions
+	originalSession := &testintegration.TestSession{
+		ID:       sessionID,
+		UserID:   "user800",
+		Username: "identicaluser",
+		Created:  time.Now().Truncate(time.Second), // Truncate to avoid microsecond differences
+	}
+
+	identicalSession := &testintegration.TestSession{
+		ID:       sessionID,
+		UserID:   "user800",
+		Username: "identicaluser",
+		Created:  originalSession.Created, // Same time
+	}
+
+	t.Logf("📝 Testing overwrite with identical data for session ID: %s", sessionID)
+
+	// SET original
+	err = cache.Set(ctx, originalSession, 0)
+	require.NoError(t, err, "Original SET should not error")
+
+	// GET original
+	retrievedSession1, found1, err := cache.Get(ctx, sessionID)
+	require.NoError(t, err, "First GET should not error")
+	require.True(t, found1, "First GET should find session")
+
+	// "Overwrite" with identical data
+	err = cache.Set(ctx, identicalSession, 0)
+	require.NoError(t, err, "Identical overwrite SET should not error")
+
+	// GET after overwrite
+	retrievedSession2, found2, err := cache.Get(ctx, sessionID)
+	assert.NoError(t, err, "Second GET should not error")
+	assert.True(t, found2, "Second GET should find session")
+	assert.Equal(t, retrievedSession1.UserID, retrievedSession2.UserID, "UserID should remain same")
+	assert.Equal(t, retrievedSession1.Username, retrievedSession2.Username, "Username should remain same")
+	assert.Equal(t, retrievedSession1.Created, retrievedSession2.Created, "Created time should remain same")
+
+	t.Logf("✅ Identical data overwrite test successful")
+	t.Logf("   - Data preserved correctly")
+}
+
 // TestRedisCache_Clear tests clearing all cache entries
 func TestRedisCache_Clear(t *testing.T) {
 	ctx := context.Background()
