@@ -581,12 +581,12 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 }
 
 // Delete removes a key
-func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
+func (c *RedisCache[T]) Delete(ctx context.Context, key string) (int, error) {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
 		c.precomputedMetrics.DeleteCircuitBreakerErrorCounter().Inc()
-		return cacheErrors.ErrCircuitBreakerOpen
+		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
 	dataKey := c.buildDataKey(key)
@@ -610,7 +610,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		if scriptErr != nil {
 			c.handleError("delete", scriptErr)
 			c.precomputedMetrics.DeleteRedisErrorCounter().Inc()
-			return fmt.Errorf("redis delete error: %w", scriptErr)
+			return 0, fmt.Errorf("redis delete error: %w", scriptErr)
 		}
 		deleted = result.(int64)
 	} else {
@@ -623,7 +623,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		if err != nil {
 			c.handleError("delete", err)
 			c.precomputedMetrics.DeleteRedisErrorCounter().Inc()
-			return fmt.Errorf("redis delete error: %w", err)
+			return 0, fmt.Errorf("redis delete error: %w", err)
 		}
 		deleted = results[0].(*redis.IntCmd).Val()
 	}
@@ -654,7 +654,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		c.options.Hooks.PostDelete(ctx, key, deleted > 0, nil)
 	}
 
-	return nil
+	return int(deleted), nil
 }
 
 // Clear removes all entries

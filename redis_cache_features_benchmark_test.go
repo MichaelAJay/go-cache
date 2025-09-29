@@ -464,7 +464,7 @@ func BenchmarkRedisCache_WithScriptWarming(b *testing.B) {
 				b.Errorf("GET error: %v", err)
 			}
 
-			err = cache.Delete(ctx, "bench:script:warm")
+			_, err = cache.Delete(ctx, "bench:script:warm")
 			if err != nil {
 				b.Errorf("DELETE error: %v", err)
 			}
@@ -493,7 +493,7 @@ func BenchmarkRedisCache_WithoutScriptWarming(b *testing.B) {
 				b.Errorf("GET error: %v", err)
 			}
 
-			err = cache.Delete(ctx, "bench:script:cold")
+			_, err = cache.Delete(ctx, "bench:script:cold")
 			if err != nil {
 				b.Errorf("DELETE error: %v", err)
 			}

@@ -160,7 +160,7 @@ func TestMemoryTrackingInitializationWithV8(t *testing.T) {
 		assert.Equal(t, testSession.ID, retrieved.ID, "Retrieved session should match")
 		
 		// DELETE operation should work
-		err = cache.Delete(ctx, testSession.ID)
+		_, err = cache.Delete(ctx, testSession.ID)
 		assert.NoError(t, err, "DELETE operation should work")
 		
 		t.Logf("✅ Basic cache operations validated")

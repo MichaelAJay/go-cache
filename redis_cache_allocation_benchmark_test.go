@@ -160,7 +160,7 @@ func BenchmarkRedisCache_Delete_Allocations(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		err := cache.Delete(ctx, fmt.Sprintf("allocation:delete:%d", i))
+		_, err := cache.Delete(ctx, fmt.Sprintf("allocation:delete:%d", i))
 		if err != nil {
 			b.Errorf("DELETE error: %v", err)
 		}
@@ -177,7 +177,7 @@ func BenchmarkRedisCache_Delete_Allocations_Missing(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		err := cache.Delete(ctx, fmt.Sprintf("allocation:delete:missing:%d", i))
+		_, err := cache.Delete(ctx, fmt.Sprintf("allocation:delete:missing:%d", i))
 		if err != nil {
 			b.Errorf("DELETE error: %v", err)
 		}
@@ -273,7 +273,7 @@ func BenchmarkRedisCache_AllOperations_AllocationProfile(b *testing.B) {
 			testData := generateBenchmarkData1KB(key)
 			_ = cache.Set(ctx, testData, 10*time.Minute)
 		case 3: // Delete operation
-			_ = cache.Delete(ctx, key)
+			_, _ = cache.Delete(ctx, key)
 		case 4: // GetOrSet operation
 			_, _ = cache.GetOrSet(ctx, key, loader, 10*time.Minute)
 		}

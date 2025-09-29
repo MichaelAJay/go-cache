@@ -180,7 +180,7 @@ func TestLargeEntryMemoryPressure(t *testing.T) {
 		t.Logf("Get operation took %v for %d byte entry", duration, size)
 		
 		// Clean up large entry
-		err = cache.Delete(ctx, largeValue)
+		_, err = cache.Delete(ctx, largeValue)
 		require.NoError(t, err, "Delete should succeed for large entry")
 	}
 
@@ -352,7 +352,7 @@ func TestConcurrentMemoryPressure(t *testing.T) {
 					}
 				case 2:
 					// Delete operation
-					if err := cache.Delete(ctx, sessionID); err != nil {
+					if _, err := cache.Delete(ctx, sessionID); err != nil {
 						errorCh <- fmt.Errorf("worker %d delete failed: %w", id, err)
 					}
 				case 3:

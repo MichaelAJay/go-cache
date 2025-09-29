@@ -372,7 +372,7 @@ func BenchmarkRedisCache_Mixed_Operations_Concurrent(b *testing.B) {
 
 			default: // 10% deletes
 				keyIndex := i % 1000
-				err := cache.Delete(ctx, fmt.Sprintf("bench:mixed:initial:%d", keyIndex))
+				_, err := cache.Delete(ctx, fmt.Sprintf("bench:mixed:initial:%d", keyIndex))
 				if err != nil {
 					b.Errorf("Mixed DELETE error: %v", err)
 				}

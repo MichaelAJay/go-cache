@@ -91,7 +91,8 @@ func TestCircuitBreakerFailureRecovery(t *testing.T) {
 			return brokenCache.Set(ctx, testSession, time.Hour)
 		},
 		"Delete": func() error {
-			return brokenCache.Delete(ctx, testSession.ID)
+			_, err := brokenCache.Delete(ctx, testSession.ID)
+			return err
 		},
 		"Clear": func() error {
 			return brokenCache.Clear(ctx)
@@ -240,7 +241,7 @@ func TestCircuitBreakerConcurrentFailures(t *testing.T) {
 				case 1:
 					_, _, err = cache.Get(ctx, testSession.ID)
 				case 2:
-					err = cache.Delete(ctx, testSession.ID)
+					_, err = cache.Delete(ctx, testSession.ID)
 				case 3:
 					_, err = cache.Touch(ctx, testSession.ID, time.Hour)
 				}
@@ -341,7 +342,8 @@ func TestCircuitBreakerWithDifferentOperations(t *testing.T) {
 		{
 			name: "Delete",
 			operation: func() error {
-				return cache.Delete(ctx, testSession.ID)
+				_, err := cache.Delete(ctx, testSession.ID)
+			return err
 			},
 		},
 		{
@@ -493,7 +495,7 @@ func TestCircuitBreakerMetrics(t *testing.T) {
 		case "Get":
 			cache.Get(ctx, testSession.ID)
 		case "Delete":
-			cache.Delete(ctx, testSession.ID)
+			_, _ = cache.Delete(ctx, testSession.ID)
 		case "Clear":
 			cache.Clear(ctx)
 		}

@@ -158,7 +158,7 @@ func BenchmarkRedisCache_Delete(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			err := cache.Delete(ctx, fmt.Sprintf("bench:delete:%d", i))
+			_, err := cache.Delete(ctx, fmt.Sprintf("bench:delete:%d", i))
 			if err != nil {
 				b.Errorf("DELETE error: %v", err)
 			}
@@ -236,7 +236,7 @@ func BenchmarkRedisCache_GetOrSet_CacheMiss(b *testing.B) {
 				b.Errorf("GetOrSet cache miss error: %v", err)
 			}
 			// Clean up to ensure each iteration is a cache miss
-			cache.Delete(ctx, key)
+			_, _ = cache.Delete(ctx, key)
 			i++
 		}
 	})
@@ -417,7 +417,7 @@ func BenchmarkRedisCache_SetIfNotExists_HighContention(b *testing.B) {
 	ctx := context.Background()
 
 	// Ensure the key doesn't exist initially
-	cache.Delete(ctx, "bench:setifnotexists:contention")
+	_, _ = cache.Delete(ctx, "bench:setifnotexists:contention")
 
 	b.ResetTimer()
 	b.SetParallelism(100) // High contention with many goroutines

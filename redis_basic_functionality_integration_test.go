@@ -159,7 +159,7 @@ func TestRedisCache_SetDeleteGet(t *testing.T) {
 	require.NoError(t, err, "SET operation should not error")
 
 	// DELETE operation
-	err = cache.Delete(ctx, testSession.ID)
+	_, err = cache.Delete(ctx, testSession.ID)
 	require.NoError(t, err, "DELETE operation should not error")
 
 	// GET operation (should miss)
@@ -252,7 +252,7 @@ func TestRedisCache_SetHasDeleteHas(t *testing.T) {
 	assert.True(t, exists, "HAS should return true after SET")
 
 	// DELETE operation
-	err = cache.Delete(ctx, testSession.ID)
+	_, err = cache.Delete(ctx, testSession.ID)
 	require.NoError(t, err, "DELETE operation should not error")
 
 	// HAS operation (should be false after DELETE)
@@ -339,7 +339,7 @@ func TestRedisCache_DeleteNonExistent(t *testing.T) {
 	t.Logf("📝 Testing DELETE operation on non-existent key: %s", testKey)
 
 	// DELETE operation on non-existent key - should not error
-	err = cache.Delete(ctx, testKey)
+	_, err = cache.Delete(ctx, testKey)
 
 	// Assertions
 	assert.NoError(t, err, "DELETE operation should not error on non-existent key")

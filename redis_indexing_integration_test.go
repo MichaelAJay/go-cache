@@ -260,7 +260,7 @@ func TestRedisCache_IndexingConsistency(t *testing.T) {
 	assert.Equal(t, differentOwnerSession.ID, newOwnerSessions[0].ID, "New owner index should contain correct session")
 
 	// DELETE operation - should remove from index
-	err = cache.Delete(ctx, differentOwnerSession.ID)
+	_, err = cache.Delete(ctx, differentOwnerSession.ID)
 	require.NoError(t, err, "DELETE should not error")
 
 	// Verify session is removed from new owner index
@@ -636,14 +636,14 @@ func TestRedisCache_GetCountByOwner_WithDeletions(t *testing.T) {
 	assert.Equal(t, 5, count, "Initial count should be 5")
 
 	// Delete individual sessions and verify count decreases
-	err = cache.Delete(ctx, "session:count-del-1")
+	_, err = cache.Delete(ctx, "session:count-del-1")
 	require.NoError(t, err, "Delete should not error")
 
 	count, err = cache.GetCountByOwner(ctx, ownerID)
 	require.NoError(t, err, "GetCountByOwner should not error after first delete")
 	assert.Equal(t, 4, count, "Count should be 4 after first delete")
 
-	err = cache.Delete(ctx, "session:count-del-3")
+	_, err = cache.Delete(ctx, "session:count-del-3")
 	require.NoError(t, err, "Delete should not error")
 
 	count, err = cache.GetCountByOwner(ctx, ownerID)
@@ -664,7 +664,7 @@ func TestRedisCache_GetCountByOwner_WithDeletions(t *testing.T) {
 	assert.Len(t, actualSessions, 1, "GetByOwner should show actual 1 remaining session")
 
 	// Delete remaining session using single Delete (which works correctly)
-	err = cache.Delete(ctx, "session:count-del-5")
+	_, err = cache.Delete(ctx, "session:count-del-5")
 	require.NoError(t, err, "Delete should not error")
 
 	count, err = cache.GetCountByOwner(ctx, ownerID)
@@ -1146,7 +1146,7 @@ func TestRedisCache_GetSubjectIDsByOwner_WithDeletions(t *testing.T) {
 	assert.Len(t, subjectIDs, 5, "Initial subject IDs should be 5")
 
 	// Delete individual sessions and verify subject IDs are updated
-	err = cache.Delete(ctx, "session:subjectids-del-1")
+	_, err = cache.Delete(ctx, "session:subjectids-del-1")
 	require.NoError(t, err, "Delete should not error")
 
 	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
@@ -1154,7 +1154,7 @@ func TestRedisCache_GetSubjectIDsByOwner_WithDeletions(t *testing.T) {
 	assert.Len(t, subjectIDs, 4, "Should have 4 subject IDs after first delete")
 	assert.NotContains(t, subjectIDs, "session:subjectids-del-1", "Should not contain deleted session")
 
-	err = cache.Delete(ctx, "session:subjectids-del-3")
+	_, err = cache.Delete(ctx, "session:subjectids-del-3")
 	require.NoError(t, err, "Delete should not error")
 
 	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)
@@ -1172,7 +1172,7 @@ func TestRedisCache_GetSubjectIDsByOwner_WithDeletions(t *testing.T) {
 	assert.Contains(t, subjectIDs, "session:subjectids-del-5", "Should contain remaining session")
 
 	// Delete remaining session
-	err = cache.Delete(ctx, "session:subjectids-del-5")
+	_, err = cache.Delete(ctx, "session:subjectids-del-5")
 	require.NoError(t, err, "Delete should not error")
 
 	subjectIDs, err = cache.GetSubjectIDsByOwner(ctx, ownerID)

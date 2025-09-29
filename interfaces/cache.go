@@ -40,7 +40,8 @@ type Cache[T any] interface {
 
 	// Delete removes an entry by key and cleans up all associated indexes
 	// MUST be goroutine-safe and idempotent (no error if key doesn't exist)
-	Delete(ctx context.Context, key string) error
+	// Returns count of deleted entries (0 if key doesn't exist, 1 if deleted)
+	Delete(ctx context.Context, key string) (int, error)
 
 	// Clear removes all entries
 	// MUST be goroutine-safe but may temporarily affect other operations

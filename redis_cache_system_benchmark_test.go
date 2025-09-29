@@ -277,7 +277,7 @@ func BenchmarkRedisCache_MemoryAllocations(b *testing.B) {
 		}
 
 		// Delete operation to clean up
-		err = cache.Delete(ctx, testData.GetID())
+		_, err = cache.Delete(ctx, testData.GetID())
 		if err != nil {
 			b.Errorf("DELETE error: %v", err)
 		}
@@ -338,8 +338,8 @@ func BenchmarkRedisCache_GCPressure(b *testing.B) {
 
 		// Periodically clean up to avoid memory exhaustion
 		if i%100 == 0 {
-			_ = cache.Delete(ctx, testData1KB.GetID())
-			_ = cache.Delete(ctx, testData10KB.GetID())
+			_, _ = cache.Delete(ctx, testData1KB.GetID())
+			_, _ = cache.Delete(ctx, testData10KB.GetID())
 		}
 	}
 
@@ -405,7 +405,7 @@ func BenchmarkRedisCache_ConnectionPooling(b *testing.B) {
 			case 3:
 				// DELETE operation (cleanup some keys we set)
 				if i > 10 {
-					_ = cache.Delete(ctx, fmt.Sprintf("bench:pool:set:%d", i-10))
+					_, _ = cache.Delete(ctx, fmt.Sprintf("bench:pool:set:%d", i-10))
 				}
 			}
 			i++

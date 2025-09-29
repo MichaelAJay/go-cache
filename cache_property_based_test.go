@@ -113,14 +113,14 @@ func TestCacheDeleteIdempotencyProperty(t *testing.T) {
 		}
 
 		// First delete should succeed (even if key doesn't exist)
-		err1 := cache.Delete(ctx, key)
+		_, err1 := cache.Delete(ctx, key)
 		if err1 != nil {
 			t.Logf("First Delete failed for key %s: %v", key, err1)
 			return false
 		}
 
 		// Second delete should also succeed (idempotency)
-		err2 := cache.Delete(ctx, key)
+		_, err2 := cache.Delete(ctx, key)
 		if err2 != nil {
 			t.Logf("Second Delete failed for key %s: %v", key, err2)
 			return false
@@ -245,7 +245,7 @@ func TestCacheCounterInvariantsProperty(t *testing.T) {
 		}
 
 		// Ensure clean state
-		cache.Delete(ctx, key)
+		_, _ = cache.Delete(ctx, key)
 
 		// Test: Increment by delta1, then by delta2 should equal increment by (delta1 + delta2)
 		val1, err := cache.Increment(ctx, key, delta1)
@@ -314,7 +314,7 @@ func TestCacheConditionalOperationsProperty(t *testing.T) {
 		}
 
 		// Ensure clean state
-		cache.Delete(ctx, key)
+		_, _ = cache.Delete(ctx, key)
 
 		session1 := &testintegration.TestSession{
 			ID:       key,
@@ -375,7 +375,7 @@ func TestCacheConditionalOperationsProperty(t *testing.T) {
 		}
 
 		// Delete the key for next test
-		cache.Delete(ctx, key)
+		_, _ = cache.Delete(ctx, key)
 
 		// Property 4: SetIfExists should fail when key doesn't exist
 		wasSet4, err := cache.SetIfExists(ctx, session1, time.Hour)
@@ -471,7 +471,7 @@ func TestCacheKeyPatternProperty(t *testing.T) {
 
 		// Cleanup
 		for _, key := range testKeys {
-			cache.Delete(ctx, key)
+			_, _ = cache.Delete(ctx, key)
 		}
 
 		return true

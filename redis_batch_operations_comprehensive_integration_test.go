@@ -662,7 +662,7 @@ func TestDeleteMany_PerformanceComparison(t *testing.T) {
 	// Test individual delete performance
 	individualStart := time.Now()
 	for _, key := range individualKeys {
-		err = cache.Delete(ctx, key)
+		_, err = cache.Delete(ctx, key)
 		require.NoError(t, err)
 	}
 	individualDuration := time.Since(individualStart)
