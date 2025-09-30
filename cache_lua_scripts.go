@@ -600,22 +600,22 @@ func (c *RedisCache[T]) initLuaScripts() {
 		local reversePrefix = ARGV[3]
 		-- Keys are provided in groups of 3: dataKey, metaKey, reverseKey
 		-- Starting from ARGV[4] onwards
-		
+
 		local totalDeleted = 0
 		local argIndex = 4
-		
+
 		-- Process each group of keys (dataKey, metaKey, reverseKey)
 		while argIndex <= #ARGV do
 			local dataKey = ARGV[argIndex]
 			local metaKey = ARGV[argIndex + 1]
 			local reverseKey = ARGV[argIndex + 2]
-			
+
 			-- Extract entry key from reverseKey by removing the reverse prefix
 			-- reverseKey format: "cache:reverse:session:batch-count-1"
 			-- reversePrefix:    "cache:reverse:"
 			-- We need to extract: "session:batch-count-1"
 			local entryKey = string.gsub(reverseKey, "^" .. reversePrefix:gsub("([%-%^%$%(%)%%%.%[%]%*%+%?])", "%%%1"), "")
-			
+
 			-- Index cleanup if indexing is enabled (do this BEFORE deleting keys)
 			if indexingEnabled then
 				-- Get owner from reverse index for forward index cleanup
@@ -628,19 +628,45 @@ func (c *RedisCache[T]) initLuaScripts() {
 				-- Delete reverse index (entry -> owner key)
 				totalDeleted = totalDeleted + redis.call('DEL', reverseKey)
 			end
-			
+
 			-- Delete main keys and count successful deletions
 			local dataDeleted = redis.call('DEL', dataKey)
 			local metaDeleted = redis.call('DEL', metaKey)
 			totalDeleted = totalDeleted + dataDeleted + metaDeleted
-			
+
 			-- Remove from LRU tracker
 			redis.call('ZREM', lruTrackerKey, entryKey)
-			
+
 			argIndex = argIndex + 3
 		end
-		
+
 		return totalDeleted
+	`)
+
+	// CheckAndIncrement script - atomic check and increment with limit enforcement
+	c.checkAndIncrementScript = redis.NewScript(`
+		local dataKey = KEYS[1]
+		local limit = tonumber(ARGV[1])
+		local delta = tonumber(ARGV[2])
+		local ttlMs = tonumber(ARGV[3])
+
+		-- Get current value or initialize to 0
+		local current = redis.call('GET', dataKey)
+		if not current then
+			current = 0
+		else
+			current = tonumber(current)
+		end
+
+		-- Check if increment would exceed limit
+		if current + delta <= limit then
+			-- Increment and set TTL with millisecond precision
+			local newValue = redis.call('INCRBY', dataKey, delta)
+			redis.call('PEXPIRE', dataKey, ttlMs)
+			return {newValue, 1}  -- {newValue, allowed=true}
+		else
+			return {current, 0}  -- {currentValue, allowed=false}
+		end
 	`)
 
 	if c.options.WarmLuaScripts {
@@ -655,7 +681,7 @@ func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript, c.getCountByOwnerScript, c.getSubjectIdsByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
 		c.getManyMetadataUpdateScript, c.cleanupOrphanedMetadataScript,
-		c.deleteManyScript,
+		c.deleteManyScript, c.checkAndIncrementScript,
 	}
 
 	for _, script := range scripts {

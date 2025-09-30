@@ -190,6 +190,28 @@ type Cache[T any] interface {
 	// MUST return nil if key doesn't exist (not an error)
 	GetMetadata(ctx context.Context, key string) (*CacheEntryMetadata, error)
 
+	// CheckAndIncrement atomically checks if incrementing would exceed a limit and increments if allowed
+	// This is essential for rate limiting and quota enforcement without race conditions.
+	//
+	// Parameters:
+	//   - key: Cache key for the counter
+	//   - limit: Maximum allowed value (inclusive)
+	//   - delta: Amount to increment (typically 1 for rate limiting)
+	//   - ttl: Time-to-live for the counter key
+	//
+	// Returns:
+	//   - newValue: The value after increment (if allowed), or current value (if not allowed)
+	//   - allowed: true if increment was performed, false if limit would be exceeded
+	//   - error: Any cache operation error
+	//
+	// Behavior:
+	//   - If key doesn't exist, creates it with value of delta (if delta <= limit)
+	//   - If current + delta > limit, returns (current, false, nil) - no increment
+	//   - If current + delta <= limit, increments and returns (current+delta, true, nil)
+	//   - Sets/refreshes TTL on every successful increment
+	//   - MUST be atomic - no race conditions under concurrent access
+	CheckAndIncrement(ctx context.Context, key string, limit int64, delta int64, ttl time.Duration) (newValue int64, allowed bool, err error)
+
 	// Lifecycle management
 	// IMPLEMENTATION REQUIREMENT: Must cleanup all resources safely
 

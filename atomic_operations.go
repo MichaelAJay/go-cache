@@ -139,13 +139,13 @@ func (c *RedisCache[T]) getOrSetInternal(ctx context.Context, key string, loader
 //
 // For truly atomic operations, use the following alternatives:
 //   - Increment(ctx, key, delta) for numeric increments
-//   - Decrement(ctx, key, delta) for numeric decrements  
+//   - Decrement(ctx, key, delta) for numeric decrements
 //   - IncrementFloat(ctx, key, delta) for float increments
 //   - ExtendTTL(ctx, key, ttl) for TTL extension
 //   - Touch(ctx, key, ttl) for activity tracking + TTL extension
 //   - AppendToField(ctx, key, fieldPath, value, ttl) for string appends
 //
-// For complex updates requiring read-modify-write semantics, 
+// For complex updates requiring read-modify-write semantics,
 // consider using optimistic concurrency patterns or accept eventual consistency.
 
 // SetIfNotExists atomically sets value only if key doesn't exist
@@ -260,4 +260,60 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 	c.precomputedMetrics.SetIfExistsTimer().Record(duration)
 	c.precomputedMetrics.SetIfExistsSuccessCounter().Inc()
 	return wasSet, nil
+}
+
+// CheckAndIncrement atomically checks if incrementing would exceed a limit and increments if allowed
+// This is essential for rate limiting and quota enforcement without race conditions.
+//
+// Parameters:
+//   - key: Cache key for the counter
+//   - limit: Maximum allowed value (inclusive)
+//   - delta: Amount to increment (typically 1 for rate limiting)
+//   - ttl: Time-to-live for the counter key
+//
+// Returns:
+//   - newValue: The value after increment (if allowed), or current value (if not allowed)
+//   - allowed: true if increment was performed, false if limit would be exceeded
+//   - error: Any cache operation error
+//
+// Behavior:
+//   - If key doesn't exist, creates it with value of delta (if delta <= limit)
+//   - If current + delta > limit, returns (current, false, nil) - no increment
+//   - If current + delta <= limit, increments and returns (current+delta, true, nil)
+//   - Sets/refreshes TTL on every successful increment
+//   - MUST be atomic - no race conditions under concurrent access
+func (c *RedisCache[T]) CheckAndIncrement(ctx context.Context, key string, limit int64, delta int64, ttl time.Duration) (int64, bool, error) {
+	// Circuit breaker check
+	if c.isCircuitBreakerOpen() {
+		return 0, false, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	start := time.Now()
+	dataKey := c.buildDataKey(key)
+
+	// Execute Lua script for atomic check-and-increment
+	result, err := c.checkAndIncrementScript.Run(ctx, c.client,
+		[]string{dataKey},
+		limit,
+		delta,
+		ttlToMilliseconds(ttl)).Result()
+
+	if err != nil {
+		c.handleError("check_and_increment", err)
+		return 0, false, fmt.Errorf("redis CheckAndIncrement error: %w", err)
+	}
+
+	// Parse result from Lua script
+	resultSlice, ok := result.([]any)
+	if !ok || len(resultSlice) < 2 {
+		return 0, false, fmt.Errorf("unexpected script result format")
+	}
+
+	newValue := resultSlice[0].(int64)
+	allowed := resultSlice[1].(int64) == 1 // 0 if not allowed, 1 if allowed
+
+	duration := time.Since(start)
+	_ = duration // TODO: Add metrics when available
+
+	return newValue, allowed, nil
 }
