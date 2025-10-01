@@ -86,6 +86,17 @@ type Cache[T any] interface {
 	// Session management operations for cache entries
 	// IMPLEMENTATION REQUIREMENT: Must be atomic and essential for session management
 
+	// RotateKey atomically rotates the cache entry key for a record, updating specific fields
+	// This operation is optimized for session refresh - it performs everything in a single Lua script:
+	// - Gets existing entry from oldKey
+	// - Updates id, expires_at, last_activity fields
+	// - Stores updated entry at newKey with new TTL
+	// - Deletes oldKey
+	// - Updates all metadata, indexes, and LRU tracking
+	// All operations are atomic - single round-trip to Redis
+	// MUST require msgpack serialization (Lua uses cmsgpack for field updates)
+	RotateKey(ctx context.Context, oldKey, newKey, newID string, newExpiresAt, newLastActivity int64, newTTL time.Duration) (T, error)
+
 	// ExtendTTL atomically extends the TTL of a cache entry without modifying its data
 	// Essential for session keep-alive operations where user activity extends session life
 	// MUST return error if key doesn't exist

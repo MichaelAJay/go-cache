@@ -261,40 +261,129 @@ func (c *RedisCache[T]) initLuaScripts() {
 
 	c.rotateEntryScript = redis.NewScript(`
 		-- Atomically rotate a cache entry from old key to new key with field updates
-		local old_key = KEYS[1]
-		local new_key = KEYS[2]
-		local new_ttl_ms = tonumber(ARGV[1])
-		local new_id = ARGV[2]
-		local new_expires = tonumber(ARGV[3])
-		local new_activity = tonumber(ARGV[4])
+		-- This handles data, metadata, LRU tracking, and indexing
+		--
+		-- INDEXING NOTE: Unlike Set/Delete operations, RotateKey builds the index key
+		-- dynamically within Lua by getting the owner from the reverse index. This is
+		-- necessary because the caller only has the entry keys, not the full value object
+		-- needed to extract the owner key. The reverse index already exists and provides
+		-- the owner key without requiring an external GET operation.
+		local oldDataKey = KEYS[1]
+		local newDataKey = KEYS[2]
+		local oldMetaKey = KEYS[3]
+		local newMetaKey = KEYS[4]
+		local oldReverseKey = KEYS[5]
+		local newReverseKey = KEYS[6]
+		local lruTrackerKey = KEYS[7]
 
-		-- Get existing entry value (ASSUMES MSGPACK)
-		local value = redis.call('GET', old_key)
+		local newTtlMs = tonumber(ARGV[1])
+		local newId = ARGV[2]
+		local newExpires = tonumber(ARGV[3])
+		local newActivity = tonumber(ARGV[4])
+		local oldEntryKey = ARGV[5]
+		local newEntryKey = ARGV[6]
+		local indexingEnabled = ARGV[7] == "true"
+		local indexPrefix = ARGV[8]
+
+		-- 1. Get existing entry value (ASSUMES MSGPACK)
+		local value = redis.call('GET', oldDataKey)
 		if not value then
-			return redis.error_reploy('ENTRY_NOT_FOUND')
+			return redis.error_reply('ENTRY_NOT_FOUND')
 		end
 
-		-- Deserialize
+		-- 2. Deserialize and update fields
 		local entry = cmsgpack.unpack(value)
+		entry["id"] = newId
+		entry["expires_at"] = newExpires
+		entry["last_activity"] = newActivity
 
-		-- Update only the fields that change during refresh
-		entry["id"] = new_id
-		entry["expires_at"] = new_expires
-		entry["last_activity"] = new_activity
+		-- 3. Re-serialize updated entry
+		local updatedValue = cmsgpack.pack(entry)
 
-		-- Re-serialize
-		local updated_value = cmsgpack.pack(entry)
+		-- 4. Store at new data key with ms-precision TTL
+		if newTtlMs and newTtlMs > 0 then
+			redis.call('SET', newDataKey, updatedValue, 'PX', newTtlMs)
+		else
+			redis.call('SET', newDataKey, updatedValue)
+		end
 
-		-- Store at new key with ms-precision TTL
-		redis.call('SET', new_key, updated_value, 'PX', new_ttl_ms)
+		-- 5. Handle metadata: preserve created_at, update other fields
+		local oldMeta = redis.call('HGETALL', oldMetaKey)
+		local createdAt = nil
 
-		-- Delete old key
-		redis.call('DEL', old_key)
+		-- Extract created_at from old metadata
+		for i = 1, #oldMeta, 2 do
+			if oldMeta[i] == 'created_at' then
+				createdAt = oldMeta[i + 1]
+				break
+			end
+		end
 
-		-- Return updated session
-		return updated_value
+		-- Get current timestamp for last_accessed
+		local now = redis.call('TIME')
+		local ts = tonumber(now[1]) * 1000000 + tonumber(now[2])
 
-		-- TODO: Handle indexing (if enabled)
+		-- Get old access_count or default to 1
+		local accessCount = '1'
+		for i = 1, #oldMeta, 2 do
+			if oldMeta[i] == 'access_count' then
+				accessCount = tostring(tonumber(oldMeta[i + 1]) + 1)
+				break
+			end
+		end
+
+		-- Set new metadata (preserve created_at if it existed, otherwise use current timestamp)
+		redis.call('HSET', newMetaKey,
+			'created_at', createdAt or ts,
+			'last_accessed', ts,
+			'access_count', accessCount,
+			'ttl', tostring(newTtlMs or 0),
+			'size', tostring(string.len(updatedValue))
+		)
+		if newTtlMs and newTtlMs > 0 then
+			redis.call('PEXPIRE', newMetaKey, newTtlMs)
+		end
+
+		-- 6. Delete old keys
+		redis.call('DEL', oldDataKey)
+		redis.call('DEL', oldMetaKey)
+
+		-- 7. Update LRU tracker (remove old entry, add new entry)
+		redis.call('ZREM', lruTrackerKey, oldEntryKey)
+		redis.call('ZADD', lruTrackerKey, ts, newEntryKey)
+
+		-- 8. Handle indexing if enabled
+		if indexingEnabled then
+			-- Get owner from old reverse index
+			local ownerKey = redis.call('GET', oldReverseKey)
+
+			if ownerKey then
+				-- Build forward index key
+				local forwardIndexKey = indexPrefix .. 'owner:' .. ownerKey
+
+				-- Remove old entry key from forward index
+				redis.call('SREM', forwardIndexKey, oldEntryKey)
+
+				-- Add new entry key to forward index
+				redis.call('SADD', forwardIndexKey, newEntryKey)
+				if newTtlMs and newTtlMs > 0 then
+					redis.call('PEXPIRE', forwardIndexKey, newTtlMs)
+				end
+
+				-- Update reverse index (new entry key -> same owner)
+				if newTtlMs and newTtlMs > 0 then
+					redis.call('SET', newReverseKey, ownerKey, 'PX', newTtlMs)
+				else
+					redis.call('SET', newReverseKey, ownerKey)
+				end
+
+				-- Delete old reverse index
+				redis.call('DEL', oldReverseKey)
+			end
+		end
+
+		-- Return updated entry value
+		return updatedValue
 	`)
 
 	// @TODO change name from sessIdxPref

@@ -22,12 +22,33 @@ type TestSession struct {
 	Created  time.Time
 }
 
+// RotateTestSession represents a test session structure with fields compatible with RotateKey
+// This matches the expected fields from go-auth session rotation use case
+type RotateTestSession struct {
+	ID           string `msgpack:"id"`
+	UserID       string `msgpack:"user_id"`
+	Username     string `msgpack:"username"`
+	Created      int64  `msgpack:"created_at"`
+	ExpiresAt    int64  `msgpack:"expires_at"`
+	LastActivity int64  `msgpack:"last_activity"`
+}
+
 // TestSessionExtractor provides key extraction for TestSession
 var TestSessionExtractor = &cache.IndexExtractor[*TestSession]{
 	GetEntryKey: func(session *TestSession) string {
 		return session.ID
 	},
 	GetOwnerKey: func(session *TestSession) string {
+		return session.UserID
+	},
+}
+
+// RotateTestSessionExtractor provides key extraction for RotateTestSession
+var RotateTestSessionExtractor = &cache.IndexExtractor[*RotateTestSession]{
+	GetEntryKey: func(session *RotateTestSession) string {
+		return session.ID
+	},
+	GetOwnerKey: func(session *RotateTestSession) string {
 		return session.UserID
 	},
 }
@@ -74,6 +95,22 @@ func CreateTestSessionCache(ctx context.Context, client redis.Cmdable, config *C
 	}
 
 	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, 128, opts...)
+}
+
+// CreateRotateTestSessionCache creates a RedisCache[*RotateTestSession] for RotateKey testing
+func CreateRotateTestSessionCache(ctx context.Context, client redis.Cmdable, config *CacheConfig) (interfaces.Cache[*RotateTestSession], error) {
+	// Create metrics registry required for pre-computed metrics
+	registry := metric.NewDefaultRegistry()
+	tags := metric.Tags{"environment": "test"}
+
+	opts := []cache.Option[*RotateTestSession]{
+		cache.WithTTL[*RotateTestSession](config.TTL),
+		cache.WithSerializer[*RotateTestSession](config.SerializerFormat),
+		cache.WithWarmLuaScripts[*RotateTestSession](config.WarmLuaScripts),
+		cache.WithGoMetrics[*RotateTestSession](registry, tags),
+	}
+
+	return cache.NewCache(ctx, client, config.IndexingMode, RotateTestSessionExtractor, 128, opts...)
 }
 
 // CreateStringCache creates a simple string-based cache for basic testing

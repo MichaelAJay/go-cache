@@ -135,6 +135,107 @@ func (c *RedisCache[T]) getOrSetInternal(ctx context.Context, key string, loader
 	return zero, fmt.Errorf("GetOrSet max retries exceeded for key %s", key)
 }
 
+// RotateKey atomically rotates the cache entry key for a record, updating specific fields
+// This operation uses a Lua script to perform all updates atomically in a SINGLE round-trip:
+// - Gets existing entry from oldKey
+// - Updates id, expires_at, last_activity fields
+// - Stores updated entry at newKey with new TTL
+// - Deletes oldKey
+// - Rotates metadata key (preserves created_at, updates last_accessed, access_count, ttl, size)
+// - Updates LRU tracker (removes old entry, adds new entry)
+// - Updates forward index (removes old entry key, adds new entry key)
+// - Updates reverse index (oldKey -> newKey mapping to same owner)
+//
+// IMPORTANT: This method currently only supports msgpack serialization because the Lua script
+// uses cmsgpack.unpack/pack for atomic field updates.
+func (c *RedisCache[T]) RotateKey(ctx context.Context, oldKey, newKey, newID string, newExpiresAt, newLastActivity int64, newTTL time.Duration) (T, error) {
+	var zero T
+	start := time.Now()
+
+	// Validate msgpack serialization (required for Lua cmsgpack operations)
+	if c.options.SerializerFormat != "msgpack" {
+		return zero, fmt.Errorf("RotateKey requires msgpack serialization (current: %s). The Lua script uses cmsgpack for atomic field updates", c.options.SerializerFormat)
+	}
+
+	if c.isCircuitBreakerOpen() {
+		return zero, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	// Build all required keys
+	oldDataKey := c.buildDataKey(oldKey)
+	newDataKey := c.buildDataKey(newKey)
+	oldMetaKey := c.buildMetaKey(oldKey)
+	newMetaKey := c.buildMetaKey(newKey)
+	oldReverseKey := c.buildReverseIndexKey(oldKey)
+	newReverseKey := c.buildReverseIndexKey(newKey)
+	lruTrackerKey := c.buildLRUTrackerKey()
+
+	// Determine indexing parameters
+	// Note: Unlike Set/Delete operations, RotateKey builds the forward index key dynamically
+	// within the Lua script by getting the owner from the reverse index. This is necessary
+	// because the caller only has entry keys, not the full value object needed to extract
+	// the owner key. The reverse index already exists and provides the owner key without
+	// requiring an external GET operation.
+	indexingEnabled := c.indexingMode && c.extractor.GetOwnerKey != nil
+	var indexPrefix string
+
+	if indexingEnabled {
+		// Provide index prefix for Lua script to build the forward index key dynamically
+		indexPrefix = "cache:index:"
+		if c.redisOptions != nil && c.redisOptions.IndexPrefix != "" {
+			indexPrefix = c.redisOptions.IndexPrefix
+		}
+	} else {
+		// Provide empty prefix if indexing disabled
+		indexPrefix = ""
+	}
+
+	// Execute the Lua script
+	ttlMs := ttlToMilliseconds(newTTL)
+	scriptResult, err := c.rotateEntryScript.Run(ctx, c.client,
+		[]string{
+			oldDataKey,      // KEYS[1]
+			newDataKey,      // KEYS[2]
+			oldMetaKey,      // KEYS[3]
+			newMetaKey,      // KEYS[4]
+			oldReverseKey,   // KEYS[5]
+			newReverseKey,   // KEYS[6]
+			lruTrackerKey,   // KEYS[7]
+		},
+		ttlMs,                              // ARGV[1]
+		newID,                              // ARGV[2]
+		newExpiresAt,                       // ARGV[3]
+		newLastActivity,                    // ARGV[4]
+		oldKey,                             // ARGV[5] - old entry key
+		newKey,                             // ARGV[6] - new entry key
+		fmt.Sprintf("%t", indexingEnabled), // ARGV[7]
+		indexPrefix,                        // ARGV[8]
+	).Result()
+
+	if err != nil {
+		c.handleError("rotatekey", err)
+		return zero, fmt.Errorf("redis RotateKey error: %w", err)
+	}
+
+	// Deserialize the returned msgpack value
+	msgpackBytes, ok := scriptResult.(string)
+	if !ok {
+		return zero, fmt.Errorf("unexpected script result type: %T", scriptResult)
+	}
+
+	// Deserialize using the cache's serializer
+	var result T
+	if err := c.serializer.Deserialize([]byte(msgpackBytes), &result); err != nil {
+		return zero, fmt.Errorf("failed to deserialize rotated entry: %w", err)
+	}
+
+	// TODO: Add specific RotateKey metrics to PrecomputedCacheMetrics
+	// For now, track execution time using a generic operation counter
+	_ = time.Since(start) // Track duration for future metrics
+
+	return result, nil
+}
+
 // REMOVED: Update method has been removed due to fundamental race conditions.
 //
 // For truly atomic operations, use the following alternatives:
