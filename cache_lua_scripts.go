@@ -259,6 +259,44 @@ func (c *RedisCache[T]) initLuaScripts() {
 		return {oldVal or false, existed, newVal}
 	`)
 
+	c.rotateEntryScript = redis.NewScript(`
+		-- Atomically rotate a cache entry from old key to new key with field updates
+		local old_key = KEYS[1]
+		local new_key = KEYS[2]
+		local new_ttl_ms = tonumber(ARGV[1])
+		local new_id = ARGV[2]
+		local new_expires = tonumber(ARGV[3])
+		local new_activity = tonumber(ARGV[4])
+
+		-- Get existing entry value (ASSUMES MSGPACK)
+		local value = redis.call('GET', old_key)
+		if not value then
+			return redis.error_reploy('ENTRY_NOT_FOUND')
+		end
+
+		-- Deserialize
+		local entry = cmsgpack.unpack(value)
+
+		-- Update only the fields that change during refresh
+		entry["id"] = new_id
+		entry["expires_at"] = new_expires
+		entry["last_activity"] = new_activity
+
+		-- Re-serialize
+		local updated_value = cmsgpack.pack(entry)
+
+		-- Store at new key with ms-precision TTL
+		redis.call('SET', new_key, updated_value, 'PX', new_ttl_ms)
+
+		-- Delete old key
+		redis.call('DEL', old_key)
+
+		-- Return updated session
+		return updated_value
+
+		-- TODO: Handle indexing (if enabled)
+	`)
+
 	// @TODO change name from sessIdxPref
 	// Delete by index script
 	c.deleteByIndexScript = redis.NewScript(`
@@ -677,7 +715,7 @@ func (c *RedisCache[T]) initLuaScripts() {
 func (c *RedisCache[T]) warmLuaScripts(ctx context.Context) error {
 	scripts := []*redis.Script{
 		c.getScript, c.setScript,
-		c.getOrSetScript, c.updateScript, c.deleteByIndexScript,
+		c.getOrSetScript, c.updateScript, c.rotateEntryScript, c.deleteByIndexScript,
 		c.deleteByEntryScript, c.getByOwnerScript, c.deleteByOwnerScript, c.getCountByOwnerScript, c.getSubjectIdsByOwnerScript,
 		c.setIfExistsScript, c.setIfNotExistsScript,
 		c.getManyMetadataUpdateScript, c.cleanupOrphanedMetadataScript,

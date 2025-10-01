@@ -98,6 +98,7 @@ type RedisCache[T any] struct {
 	setScript                     *redis.Script
 	getOrSetScript                *redis.Script
 	updateScript                  *redis.Script
+	rotateEntryScript             *redis.Script
 	deleteByIndexScript           *redis.Script
 	deleteByEntryScript           *redis.Script
 	getByOwnerScript              *redis.Script
