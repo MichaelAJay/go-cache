@@ -956,6 +956,40 @@ func (c *RedisCache[T]) GetSubjectIDsByOwner(ctx context.Context, ownerKey strin
 	return subjectIDs, nil
 }
 
+// GetOwnerForEntry returns the owner key for a given entry key using the reverse index
+func (c *RedisCache[T]) GetOwnerForEntry(ctx context.Context, entryKey string) (string, bool, error) {
+	start := time.Now()
+
+	if c.isCircuitBreakerOpen() {
+		c.precomputedMetrics.GetOwnerForEntryCircuitBreakerErrorCounter().Inc()
+		return "", false, cacheErrors.ErrCircuitBreakerOpen
+	}
+
+	if !c.indexingMode {
+		return "", false, fmt.Errorf("GetOwnerForEntry requires indexing to be enabled")
+	}
+
+	reverseKey := c.buildReverseIndexKey(entryKey)
+
+	ownerKey, err := c.client.Get(ctx, reverseKey).Result()
+	if err == redis.Nil {
+		// Key doesn't exist - not an error, just not found
+		c.precomputedMetrics.GetOwnerForEntryMissCounter().Inc()
+		c.precomputedMetrics.GetOwnerForEntryTimer().Record(time.Since(start))
+		return "", false, nil
+	}
+	if err != nil {
+		c.handleError("getownerforentry", err)
+		c.precomputedMetrics.GetOwnerForEntryRedisErrorCounter().Inc()
+		return "", false, fmt.Errorf("redis GetOwnerForEntry error: %w", err)
+	}
+
+	c.precomputedMetrics.GetOwnerForEntryHitCounter().Inc()
+	c.precomputedMetrics.GetOwnerForEntryTimer().Record(time.Since(start))
+	c.precomputedMetrics.GetOwnerForEntrySuccessCounter().Inc()
+	return ownerKey, true, nil
+}
+
 // Pattern operations
 
 // GetKeysByPattern returns entry keys matching pattern - PERFORMANCE FIX: Uses SCAN instead of KEYS

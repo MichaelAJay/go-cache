@@ -73,6 +73,15 @@ type Cache[T any] interface {
 
 	GetSubjectIDsByOwner(ctx context.Context, ownerKey string) ([]string, error)
 
+	// GetOwnerForEntry returns the owner key for a given entry key using the reverse index
+	// This enables O(1) owner lookup without deserializing the full entry
+	// MUST require indexing to be enabled
+	// Returns (ownerKey, true, nil) if entry exists and has owner
+	// Returns ("", false, nil) if entry doesn't exist or has no owner
+	// Returns ("", false, err) on cache errors
+	// MUST be goroutine-safe for concurrent access
+	GetOwnerForEntry(ctx context.Context, entryKey string) (ownerKey string, found bool, err error)
+
 	// Atomic operations with key extraction
 	// IMPLEMENTATION REQUIREMENT: These operations MUST be atomic - no race conditions
 	// even under extreme concurrent load. They eliminate the need for consumer-side locking.

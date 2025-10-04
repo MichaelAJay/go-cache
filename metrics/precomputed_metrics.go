@@ -17,6 +17,7 @@ type PrecomputedCacheMetrics struct {
 	clearTimer            metric.Timer
 	getByOwnerTimer       metric.Timer
 	deleteByOwnerTimer    metric.Timer
+	getOwnerForEntryTimer metric.Timer
 	getKeysByPatternTimer metric.Timer
 	incrementTimer        metric.Timer
 	decrementTimer        metric.Timer
@@ -44,6 +45,7 @@ type PrecomputedCacheMetrics struct {
 	getByOwnerSuccessCounter              metric.Counter
 	getByOwnerEmptyCounter                metric.Counter
 	deleteByOwnerSuccessCounter           metric.Counter
+	getOwnerForEntrySuccessCounter        metric.Counter
 	getKeysByPatternSuccessCounter        metric.Counter
 	incrementSuccessCounter               metric.Counter
 	decrementSuccessCounter               metric.Counter
@@ -61,14 +63,16 @@ type PrecomputedCacheMetrics struct {
 	setIfNotExistsSuccessCounter          metric.Counter
 
 	// Miss counters
-	getMissCounter        metric.Counter
-	getByOwnerMissCounter metric.Counter
-	getOrSetMissCounter   metric.Counter
+	getMissCounter           metric.Counter
+	getByOwnerMissCounter    metric.Counter
+	getOwnerForEntryMissCounter metric.Counter
+	getOrSetMissCounter      metric.Counter
 
 	// Hit counters
-	getHitCounter        metric.Counter
-	getByOwnerHitCounter metric.Counter
-	getManyHitCounter    metric.Counter
+	getHitCounter           metric.Counter
+	getByOwnerHitCounter    metric.Counter
+	getOwnerForEntryHitCounter metric.Counter
+	getManyHitCounter       metric.Counter
 
 	// Miss counter (general)
 	generalMissCounter metric.Counter
@@ -92,6 +96,8 @@ type PrecomputedCacheMetrics struct {
 	getByOwnerSerializationErrorCounter         metric.Counter
 	deleteByOwnerCircuitBreakerErrorCounter     metric.Counter
 	deleteByOwnerRedisErrorCounter              metric.Counter
+	getOwnerForEntryCircuitBreakerErrorCounter  metric.Counter
+	getOwnerForEntryRedisErrorCounter           metric.Counter
 	getKeysByPatternCircuitBreakerErrorCounter  metric.Counter
 	getKeysByPatternRedisErrorCounter           metric.Counter
 	incrementCircuitBreakerErrorCounter         metric.Counter
@@ -170,6 +176,7 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.clearTimer = createTimer(registry, "cache_operation_duration", "Duration of clear operations", tags, "clear")
 	pcm.getByOwnerTimer = createTimer(registry, "cache_operation_duration", "Duration of getbyowner operations", tags, "getbyowner")
 	pcm.deleteByOwnerTimer = createTimer(registry, "cache_operation_duration", "Duration of deletebyowner operations", tags, "deletebyowner")
+	pcm.getOwnerForEntryTimer = createTimer(registry, "cache_operation_duration", "Duration of getownerforentry operations", tags, "getownerforentry")
 	pcm.getKeysByPatternTimer = createTimer(registry, "cache_operation_duration", "Duration of getkeysbypattern operations", tags, "getkeysbypattern")
 	pcm.incrementTimer = createTimer(registry, "cache_operation_duration", "Duration of increment operations", tags, "increment")
 	pcm.decrementTimer = createTimer(registry, "cache_operation_duration", "Duration of decrement operations", tags, "decrement")
@@ -197,6 +204,7 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.getByOwnerSuccessCounter = createOperationCounter(registry, tags, "getbyowner", "success")
 	pcm.getByOwnerEmptyCounter = createOperationCounter(registry, tags, "getbyowner", "empty")
 	pcm.deleteByOwnerSuccessCounter = createOperationCounter(registry, tags, "deletebyowner", "success")
+	pcm.getOwnerForEntrySuccessCounter = createOperationCounter(registry, tags, "getownerforentry", "success")
 	pcm.getKeysByPatternSuccessCounter = createOperationCounter(registry, tags, "getkeysbypattern", "success")
 	pcm.incrementSuccessCounter = createOperationCounter(registry, tags, "increment", "success")
 	pcm.decrementSuccessCounter = createOperationCounter(registry, tags, "decrement", "success")
@@ -216,11 +224,13 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	// Initialize miss counters
 	pcm.getMissCounter = createOperationCounter(registry, tags, "get", "miss")
 	pcm.getByOwnerMissCounter = createOperationCounter(registry, tags, "getbyowner", "empty")
+	pcm.getOwnerForEntryMissCounter = createOperationCounter(registry, tags, "getownerforentry", "miss")
 	pcm.getOrSetMissCounter = createOperationCounter(registry, tags, "getorset", "miss")
 
 	// Initialize hit counters
 	pcm.getHitCounter = createHitCounter(registry, tags)
 	pcm.getByOwnerHitCounter = createHitCounter(registry, tags)
+	pcm.getOwnerForEntryHitCounter = createHitCounter(registry, tags)
 	pcm.getManyHitCounter = createHitCounter(registry, tags)
 
 	// Initialize general miss counter
@@ -245,6 +255,8 @@ func NewPrecomputedCacheMetrics(registry metric.Registry, finalTags metric.Tags)
 	pcm.getByOwnerSerializationErrorCounter = createErrorCounter(registry, tags, "getbyowner", "serialization_error", "data")
 	pcm.deleteByOwnerCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "deletebyowner", "circuit_breaker", "availability")
 	pcm.deleteByOwnerRedisErrorCounter = createErrorCounter(registry, tags, "deletebyowner", "redis_error", "infrastructure")
+	pcm.getOwnerForEntryCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "getownerforentry", "circuit_breaker", "availability")
+	pcm.getOwnerForEntryRedisErrorCounter = createErrorCounter(registry, tags, "getownerforentry", "redis_error", "infrastructure")
 	pcm.getKeysByPatternCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "getkeysbypattern", "circuit_breaker", "availability")
 	pcm.getKeysByPatternRedisErrorCounter = createErrorCounter(registry, tags, "getkeysbypattern", "redis_error", "infrastructure")
 	pcm.incrementCircuitBreakerErrorCounter = createErrorCounter(registry, tags, "increment", "circuit_breaker", "availability")
@@ -435,6 +447,9 @@ func (pcm *PrecomputedCacheMetrics) DeleteTimer() metric.Timer        { return p
 func (pcm *PrecomputedCacheMetrics) ClearTimer() metric.Timer         { return pcm.clearTimer }
 func (pcm *PrecomputedCacheMetrics) GetByOwnerTimer() metric.Timer    { return pcm.getByOwnerTimer }
 func (pcm *PrecomputedCacheMetrics) DeleteByOwnerTimer() metric.Timer { return pcm.deleteByOwnerTimer }
+func (pcm *PrecomputedCacheMetrics) GetOwnerForEntryTimer() metric.Timer {
+	return pcm.getOwnerForEntryTimer
+}
 func (pcm *PrecomputedCacheMetrics) GetKeysByPatternTimer() metric.Timer {
 	return pcm.getKeysByPatternTimer
 }
@@ -477,6 +492,9 @@ func (pcm *PrecomputedCacheMetrics) GetByOwnerEmptyCounter() metric.Counter {
 }
 func (pcm *PrecomputedCacheMetrics) DeleteByOwnerSuccessCounter() metric.Counter {
 	return pcm.deleteByOwnerSuccessCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOwnerForEntrySuccessCounter() metric.Counter {
+	return pcm.getOwnerForEntrySuccessCounter
 }
 func (pcm *PrecomputedCacheMetrics) GetKeysByPatternSuccessCounter() metric.Counter {
 	return pcm.getKeysByPatternSuccessCounter
@@ -529,6 +547,9 @@ func (pcm *PrecomputedCacheMetrics) GetMissCounter() metric.Counter { return pcm
 func (pcm *PrecomputedCacheMetrics) GetByOwnerMissCounter() metric.Counter {
 	return pcm.getByOwnerMissCounter
 }
+func (pcm *PrecomputedCacheMetrics) GetOwnerForEntryMissCounter() metric.Counter {
+	return pcm.getOwnerForEntryMissCounter
+}
 func (pcm *PrecomputedCacheMetrics) GetOrSetMissCounter() metric.Counter {
 	return pcm.getOrSetMissCounter
 }
@@ -537,6 +558,9 @@ func (pcm *PrecomputedCacheMetrics) GetOrSetMissCounter() metric.Counter {
 func (pcm *PrecomputedCacheMetrics) GetHitCounter() metric.Counter { return pcm.getHitCounter }
 func (pcm *PrecomputedCacheMetrics) GetByOwnerHitCounter() metric.Counter {
 	return pcm.getByOwnerHitCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOwnerForEntryHitCounter() metric.Counter {
+	return pcm.getOwnerForEntryHitCounter
 }
 func (pcm *PrecomputedCacheMetrics) GetManyHitCounter() metric.Counter { return pcm.getManyHitCounter }
 
@@ -599,6 +623,12 @@ func (pcm *PrecomputedCacheMetrics) DeleteByOwnerCircuitBreakerErrorCounter() me
 }
 func (pcm *PrecomputedCacheMetrics) DeleteByOwnerRedisErrorCounter() metric.Counter {
 	return pcm.deleteByOwnerRedisErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOwnerForEntryCircuitBreakerErrorCounter() metric.Counter {
+	return pcm.getOwnerForEntryCircuitBreakerErrorCounter
+}
+func (pcm *PrecomputedCacheMetrics) GetOwnerForEntryRedisErrorCounter() metric.Counter {
+	return pcm.getOwnerForEntryRedisErrorCounter
 }
 func (pcm *PrecomputedCacheMetrics) GetKeysByPatternCircuitBreakerErrorCounter() metric.Counter {
 	return pcm.getKeysByPatternCircuitBreakerErrorCounter
