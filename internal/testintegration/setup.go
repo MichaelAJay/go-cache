@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"github.com/MichaelAJay/go-cache/internal/testenv"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // TestEnvironmentSetup encapsulates test environment configuration
 type TestEnvironmentSetup struct {
-	TestEnv   *testenv.TestEnvironment
+	TestEnv     *testenv.TestEnvironment
 	RedisClient redis.Cmdable
 }
 
@@ -40,7 +40,7 @@ func SetupTestEnvironment(ctx context.Context, t *testing.T) *TestEnvironmentSet
 		t.Fatalf("Failed to connect to Redis at %s: %v", testEnv.GetRedisAddr(), err)
 	}
 
-	t.Logf("Test environment ready: mode=%s, redis=%s", 
+	t.Logf("Test environment ready: mode=%s, redis=%s",
 		testEnv.GetMode().String(), testEnv.GetRedisAddr())
 
 	return &TestEnvironmentSetup{
@@ -52,7 +52,7 @@ func SetupTestEnvironment(ctx context.Context, t *testing.T) *TestEnvironmentSet
 // FlushRedis clears all Redis data for clean test state
 func (setup *TestEnvironmentSetup) FlushRedis(ctx context.Context, t *testing.T) {
 	t.Helper()
-	
+
 	if err := setup.RedisClient.FlushAll(ctx).Err(); err != nil {
 		t.Fatalf("Failed to flush Redis: %v", err)
 	}

@@ -12,7 +12,7 @@ import (
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,12 +51,12 @@ func TestCircuitBreakerFailureRecovery(t *testing.T) {
 
 	// Phase 2: Simulate Redis connection failure
 	t.Log("Phase 2: Simulating Redis failures to trigger circuit breaker...")
-	
+
 	// Create a cache with a broken client to trigger circuit breaker
 	brokenClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:99999", // Invalid port to force connection failures
 	})
-	
+
 	brokenCache, err := testintegration.CreateTestSessionCache(ctx, brokenClient, config)
 	require.NoError(t, err)
 	defer brokenCache.Close()
@@ -64,7 +64,7 @@ func TestCircuitBreakerFailureRecovery(t *testing.T) {
 	// Trigger enough failures to open circuit breaker
 	failureCount := 0
 	maxRetries := 15 // Circuit breaker threshold is 10, so this should be enough
-	
+
 	for i := 0; i < maxRetries; i++ {
 		err := brokenCache.Set(ctx, testSession, time.Hour)
 		if err != nil {
@@ -81,7 +81,7 @@ func TestCircuitBreakerFailureRecovery(t *testing.T) {
 	t.Log("Phase 3: Verifying circuit breaker is open...")
 	_, _, err = brokenCache.Get(ctx, testSession.ID)
 	if assert.Error(t, err, "Operations should fail when circuit breaker is open") {
-		assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen), 
+		assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen),
 			"Error should be circuit breaker open error, got: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestCircuitBreakerFailureRecovery(t *testing.T) {
 		t.Run(fmt.Sprintf("CircuitBreakerOpen_%s", opName), func(t *testing.T) {
 			err := op()
 			assert.Error(t, err, "%s should fail when circuit breaker is open", opName)
-			assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen), 
+			assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen),
 				"%s should return circuit breaker error", opName)
 		})
 	}
@@ -126,7 +126,7 @@ func TestCircuitBreakerTimeout(t *testing.T) {
 	setup.FlushRedis(ctx, t)
 
 	config := testintegration.DefaultCacheConfig()
-	
+
 	t.Log("🧪 Testing circuit breaker timeout and recovery")
 
 	// Test data
@@ -149,7 +149,7 @@ func TestCircuitBreakerTimeout(t *testing.T) {
 	brokenClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:99998", // Invalid port
 	})
-	
+
 	brokenCache, err := testintegration.CreateTestSessionCache(ctx, brokenClient, config)
 	require.NoError(t, err)
 	defer brokenCache.Close()
@@ -170,7 +170,7 @@ func TestCircuitBreakerTimeout(t *testing.T) {
 	// Note: In a real scenario, we can't easily wait 60 seconds for timeout,
 	// so this test demonstrates the principle rather than waiting the full time
 	t.Log("Phase 3: Testing circuit breaker recovery concept...")
-	
+
 	// Create a new cache instance (simulating recovery scenario)
 	recoveredCache, err := testintegration.CreateTestSessionCache(ctx, setup.RedisClient, config)
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestCircuitBreakerConcurrentFailures(t *testing.T) {
 	brokenClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:99997", // Invalid port
 	})
-	
+
 	cache, err := testintegration.CreateTestSessionCache(ctx, brokenClient, config)
 	require.NoError(t, err)
 	defer cache.Close()
@@ -218,20 +218,20 @@ func TestCircuitBreakerConcurrentFailures(t *testing.T) {
 
 	// Phase 1: Run concurrent operations that will fail
 	t.Log("Phase 1: Running concurrent operations to trigger circuit breaker...")
-	
+
 	const numGoroutines = 20
 	const operationsPerGoroutine = 5
-	
+
 	var wg sync.WaitGroup
 	errorCounts := make([]int, numGoroutines)
 	circuitBreakerErrors := make([]int, numGoroutines)
-	
+
 	// Start concurrent operations
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			
+
 			for j := 0; j < operationsPerGoroutine; j++ {
 				// Try different operations
 				var err error
@@ -245,45 +245,45 @@ func TestCircuitBreakerConcurrentFailures(t *testing.T) {
 				case 3:
 					_, err = cache.Touch(ctx, testSession.ID, time.Hour)
 				}
-				
+
 				if err != nil {
 					errorCounts[goroutineID]++
 					if errors.Is(err, cacheErrors.ErrCircuitBreakerOpen) {
 						circuitBreakerErrors[goroutineID]++
 					}
 				}
-				
+
 				// Small delay to allow circuit breaker state changes
 				time.Sleep(time.Millisecond * 5)
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 
 	// Phase 2: Analyze results
 	t.Log("Phase 2: Analyzing concurrent failure results...")
-	
+
 	totalErrors := 0
 	totalCircuitBreakerErrors := 0
 	for i := 0; i < numGoroutines; i++ {
 		totalErrors += errorCounts[i]
 		totalCircuitBreakerErrors += circuitBreakerErrors[i]
-		t.Logf("Goroutine %d: %d errors (%d circuit breaker)", 
+		t.Logf("Goroutine %d: %d errors (%d circuit breaker)",
 			i, errorCounts[i], circuitBreakerErrors[i])
 	}
-	
-	t.Logf("Total errors: %d, Circuit breaker errors: %d", 
+
+	t.Logf("Total errors: %d, Circuit breaker errors: %d",
 		totalErrors, totalCircuitBreakerErrors)
-	
+
 	// Assertions
 	assert.Greater(t, totalErrors, 0, "Should have connection errors")
 	assert.Greater(t, totalCircuitBreakerErrors, 0, "Should have circuit breaker errors")
-	
+
 	// Verify circuit breaker is now open
 	_, _, err = cache.Get(ctx, "any_key")
 	assert.Error(t, err, "Circuit breaker should be open after concurrent failures")
-	assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen), 
+	assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen),
 		"Should return circuit breaker error")
 
 	t.Log("✅ Concurrent failure test completed")
@@ -292,14 +292,14 @@ func TestCircuitBreakerConcurrentFailures(t *testing.T) {
 // TestCircuitBreakerWithDifferentOperations tests circuit breaker across all cache operations
 func TestCircuitBreakerWithDifferentOperations(t *testing.T) {
 	ctx := context.Background()
-	
+
 	t.Log("🧪 Testing circuit breaker behavior across all cache operations")
 
 	// Create a cache with broken Redis client
 	brokenClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:99996", // Invalid port
 	})
-	
+
 	config := testintegration.DefaultCacheConfig()
 	cache, err := testintegration.CreateTestSessionCache(ctx, brokenClient, config)
 	require.NoError(t, err)
@@ -343,7 +343,7 @@ func TestCircuitBreakerWithDifferentOperations(t *testing.T) {
 			name: "Delete",
 			operation: func() error {
 				_, err := cache.Delete(ctx, testSession.ID)
-			return err
+				return err
 			},
 		},
 		{
@@ -435,17 +435,17 @@ func TestCircuitBreakerWithDifferentOperations(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("CircuitBreakerOpen_%s", tc.name), func(t *testing.T) {
 			err := tc.operation()
-			
+
 			// Special case for Has operation which doesn't return error
 			if tc.name == "Has" {
 				// The operation function handles the assertion for Has
 				assert.NoError(t, err, "Has operation validation should pass")
 				return
 			}
-			
+
 			// All other operations should return circuit breaker error
 			assert.Error(t, err, "%s should fail when circuit breaker is open", tc.name)
-			assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen), 
+			assert.True(t, errors.Is(err, cacheErrors.ErrCircuitBreakerOpen),
 				"%s should return circuit breaker error, got: %v", tc.name, err)
 		})
 	}
@@ -456,14 +456,14 @@ func TestCircuitBreakerWithDifferentOperations(t *testing.T) {
 // TestCircuitBreakerMetrics tests that circuit breaker events are properly recorded in metrics
 func TestCircuitBreakerMetrics(t *testing.T) {
 	ctx := context.Background()
-	
+
 	t.Log("🧪 Testing circuit breaker metrics recording")
 
 	// Create a cache with broken Redis client
 	brokenClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:99995", // Invalid port
 	})
-	
+
 	config := testintegration.DefaultCacheConfig()
 	cache, err := testintegration.CreateTestSessionCache(ctx, brokenClient, config)
 	require.NoError(t, err)
@@ -505,6 +505,6 @@ func TestCircuitBreakerMetrics(t *testing.T) {
 	// Note: In a real implementation, we would verify metrics were recorded
 	// This test validates that the circuit breaker operations complete without panic
 	// and that the circuit breaker behavior is consistent
-	
+
 	t.Log("✅ Circuit breaker metrics test completed")
 }

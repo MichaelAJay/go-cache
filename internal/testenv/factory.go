@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
-	
-	"github.com/go-redis/redis/v8"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // TestMode represents different test environment modes
@@ -118,18 +118,18 @@ func (te *TestEnvironment) ResetForNewBenchmark(ctx context.Context, latencyMs i
 		Addr: te.GetRedisAddr(),
 	})
 	defer client.Close()
-	
+
 	// Clear all Redis data for clean state
 	if err := client.FlushAll(ctx).Err(); err != nil {
 		return fmt.Errorf("failed to flush Redis: %w", err)
 	}
-	
+
 	// Reset toxiproxy latency if toxiproxy is available
 	if te.HasToxiproxy() && latencyMs > 0 {
 		if err := te.ToxiproxyController.ResetLatency(ctx, "redis_proxy", latencyMs); err != nil {
 			return fmt.Errorf("failed to reset toxiproxy latency: %w", err)
 		}
 	}
-	
+
 	return nil
 }

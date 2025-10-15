@@ -284,7 +284,7 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	for _, item := range items {
 		// Set data with TTL
 		if ttl > 0 {
-			pipe.SetEX(ctx, item.dataKey, item.serializedValue, ttl)
+			pipe.SetEx(ctx, item.dataKey, item.serializedValue, ttl)
 		} else {
 			pipe.Set(ctx, item.dataKey, item.serializedValue, 0)
 		}
@@ -303,11 +303,11 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 			if ttl > 0 {
 				pipe.Expire(ctx, item.indexKey, ttl)
 			}
-			
+
 			// Reverse index (entry -> owner key)
 			reverseKey := c.reversePrefix + item.key
 			if ttl > 0 {
-				pipe.SetEX(ctx, reverseKey, item.ownerKey, ttl)
+				pipe.SetEx(ctx, reverseKey, item.ownerKey, ttl)
 			} else {
 				pipe.Set(ctx, reverseKey, item.ownerKey, 0)
 			}
@@ -432,7 +432,7 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 	for _, item := range items {
 		// Set data with TTL
 		if ttl > 0 {
-			pipe.SetEX(ctx, item.dataKey, item.serializedValue, ttl)
+			pipe.SetEx(ctx, item.dataKey, item.serializedValue, ttl)
 		} else {
 			pipe.Set(ctx, item.dataKey, item.serializedValue, 0)
 		}
@@ -451,11 +451,11 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 			if ttl > 0 {
 				pipe.Expire(ctx, item.indexKey, ttl)
 			}
-			
+
 			// Reverse index (entry -> owner key)
 			reverseKey := c.reversePrefix + item.key
 			if ttl > 0 {
-				pipe.SetEX(ctx, reverseKey, item.ownerKey, ttl)
+				pipe.SetEx(ctx, reverseKey, item.ownerKey, ttl)
 			} else {
 				pipe.Set(ctx, reverseKey, item.ownerKey, 0)
 			}
@@ -595,7 +595,7 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 
 		// Set data with TTL
 		if ttl > 0 {
-			pipe.SetEX(ctx, item.dataKey, bytes, ttl)
+			pipe.SetEx(ctx, item.dataKey, bytes, ttl)
 		} else {
 			pipe.Set(ctx, item.dataKey, bytes, 0)
 		}
@@ -614,11 +614,11 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 			if ttl > 0 {
 				pipe.Expire(ctx, item.indexKey, ttl)
 			}
-			
+
 			// Reverse index (entry -> owner key)
 			reverseKey := c.reversePrefix + item.key
 			if ttl > 0 {
-				pipe.SetEX(ctx, reverseKey, item.ownerKey, ttl)
+				pipe.SetEx(ctx, reverseKey, item.ownerKey, ttl)
 			} else {
 				pipe.Set(ctx, reverseKey, item.ownerKey, 0)
 			}
@@ -666,11 +666,11 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	scriptArgs[0] = indexPrefix
 	scriptArgs[1] = indexingEnabled
 	scriptArgs[2] = c.reversePrefix
-	
+
 	// Add pre-built keys for each entry
 	for i, key := range keys {
 		scriptArgs[3+i*3] = c.buildDataKey(key)     // dataKey
-		scriptArgs[3+i*3+1] = c.buildMetaKey(key)   // metaKey  
+		scriptArgs[3+i*3+1] = c.buildMetaKey(key)   // metaKey
 		scriptArgs[3+i*3+2] = c.reversePrefix + key // reverseKey
 	}
 
@@ -683,7 +683,6 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		c.precomputedMetrics.DeleteManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis DeleteMany error: %w", err)
 	}
-	
 
 	c.precomputedMetrics.DeleteManyTimer().Record(time.Since(start))
 	c.precomputedMetrics.DeleteManyBatchCounter().Inc()

@@ -437,43 +437,20 @@ func TestRedisMemoryUsageCommand(t *testing.T) {
 	})
 
 	t.Run("RedisConfigGetMaxMemory", func(t *testing.T) {
-		// Test Redis CONFIG GET maxmemory command with both clients
+		// Test Redis CONFIG GET maxmemory command
+		result, err := v9Client.ConfigGet(ctx, "maxmemory").Result()
+		require.NoError(t, err, "Failed to get Redis maxmemory config")
 		
-		// Test with v8 client
-		result, err := setup.RedisClient.ConfigGet(ctx, "maxmemory").Result()
-		require.NoError(t, err, "Failed to get Redis maxmemory config with v8 client")
-		
-		assert.Greater(t, len(result), 0, "Config result should not be empty")
-		
-		// Parse maxmemory value
-		var maxMemoryV8 string
-		for i := 0; i < len(result)-1; i += 2 {
-			if result[i] == "maxmemory" {
-				maxMemoryInterface := result[i+1]
-				maxMemoryV8 = maxMemoryInterface.(string)
-				break
-			}
-		}
-		
-		assert.NotEmpty(t, maxMemoryV8, "maxmemory config should be found with v8 client")
-		
-		// Test with v9 client
-		resultV9, err := v9Client.ConfigGet(ctx, "maxmemory").Result()
-		require.NoError(t, err, "Failed to get Redis maxmemory config with v9 client")
-		
-		// v9 returns a map[string]string instead of []interface{}
-		maxMemoryV9, exists := resultV9["maxmemory"]
+		// v9 returns a map[string]string
+		maxMemory, exists := result["maxmemory"]
 		assert.True(t, exists, "maxmemory should exist in config result")
+		assert.NotEmpty(t, maxMemory, "maxmemory config should be found")
 		
-		assert.NotEmpty(t, maxMemoryV9, "maxmemory config should be found with v9 client")
-		assert.Equal(t, maxMemoryV8, maxMemoryV9, "maxmemory should be consistent between client versions")
-		
-		t.Logf("✅ Redis CONFIG GET maxmemory available on both client versions")
-		t.Logf("   - maxmemory (v8): %s", maxMemoryV8)
-		t.Logf("   - maxmemory (v9): %s", maxMemoryV9)
+		t.Logf("✅ Redis CONFIG GET maxmemory available")
+		t.Logf("   - maxmemory: %s", maxMemory)
 		
 		// Test maxmemory parsing logic
-		if maxMemoryV8 == "0" {
+		if maxMemory == "0" {
 			t.Logf("   - maxmemory is unlimited (percentage thresholds will be disabled)")
 		} else {
 			t.Logf("   - maxmemory has a limit (percentage thresholds can be used)")

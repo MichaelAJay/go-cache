@@ -5,7 +5,6 @@ go 1.23.3
 require (
 	github.com/MichaelAJay/go-metrics v0.1.0
 	github.com/MichaelAJay/go-serializer v0.1.0
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/redis/go-redis/v9 v9.7.3
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.38.0

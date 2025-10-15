@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
 	cacheErrors "github.com/MichaelAJay/go-cache/cache_errors"
