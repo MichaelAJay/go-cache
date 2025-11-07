@@ -1,10 +1,25 @@
 # Go-Cache Makefile
 
-.PHONY: test test-integration test-containers test-fast test-redis test-memory test-all build clean coverage lint security help docker-up docker-down docker-test docker-test-single docker-test-fast docker-test-latency docker-reset docker-validate docker-configure-latency
+.PHONY: test test-integration test-containers test-fast test-redis test-memory test-all build clean coverage lint security help dev-up dev-down dev-restart dev-logs dev-redis-shell dev-clean test-up test-down test-restart test-logs test-clean docker-up docker-down docker-test docker-test-single docker-test-fast docker-test-latency docker-reset docker-validate docker-configure-latency
 
 # Default target
 help: ## Show this help message
 	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Development Instance (Port 6381):'
+	@echo '  dev-up              - Start dev Redis instance'
+	@echo '  dev-down            - Stop dev instance (preserves data)'
+	@echo '  dev-restart         - Restart dev instance'
+	@echo '  dev-logs            - View dev instance logs'
+	@echo '  dev-redis-shell     - Open redis-cli shell to dev Redis'
+	@echo '  dev-clean           - Stop dev instance and remove volumes (destructive)'
+	@echo ''
+	@echo 'Integration Test Instance (Port 6382 + Toxiproxy):'
+	@echo '  test-up             - Start test Redis and Toxiproxy instances'
+	@echo '  test-down           - Stop test instances (preserves data)'
+	@echo '  test-restart        - Restart test instances'
+	@echo '  test-logs           - View test instance logs'
+	@echo '  test-clean          - Stop test instances and remove volumes (destructive)'
 	@echo ''
 	@echo 'Integration Test Scenarios:'
 	@echo '  test-containers      - Full cold start with containers (Redis)'
@@ -14,7 +29,7 @@ help: ## Show this help message
 	@echo '  docker-test         - Run integration tests with docker-compose services'
 	@echo '  docker-test-fast    - Run fast tests with docker-compose services'
 	@echo ''
-	@echo 'Docker Compose:'
+	@echo 'Docker Compose (Legacy - prefer dev-up/test-up):'
 	@echo '  docker-up           - Start docker-compose services'
 	@echo '  docker-down         - Stop docker-compose services'
 	@echo '  docker-reset        - Reset services and volumes'
@@ -29,7 +44,79 @@ help: ## Show this help message
 	@echo 'Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+# ==========================================
+# Development Instance Management
+# ==========================================
+
+dev-up: ## Start development Redis instance
+	@echo "Starting development Redis instance..."
+	docker compose up -d redis-dev
+	@echo ""
+	@echo "Development instance started:"
+	@echo "  Redis: localhost:6381"
+
+dev-down: ## Stop development instance (preserving data)
+	@echo "Stopping development instance (preserving data)..."
+	docker compose stop redis-dev
+
+dev-restart: ## Restart development instance
+	@echo "Restarting development instance..."
+	docker compose restart redis-dev
+
+dev-logs: ## View development instance logs
+	@echo "Showing development instance logs (Ctrl+C to exit)..."
+	docker compose logs -f redis-dev
+
+dev-redis-shell: ## Open redis-cli shell to development Redis
+	@echo "Opening redis-cli shell to development Redis..."
+	docker exec -it gocache_redis_dev redis-cli
+
+dev-clean: ## Stop dev instance and remove volumes (destructive)
+	@echo "WARNING: This will stop dev instance and DELETE all data!"
+	@read -p "Are you sure? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		docker compose down redis-dev; \
+		docker volume rm gocache_redis_dev_data 2>/dev/null || true; \
+		echo "Development instance and data removed."; \
+	else \
+		echo "Cancelled."; \
+	fi
+
+# ==========================================
+# Integration Test Instance Management
+# ==========================================
+
+test-up: ## Start integration test Redis and Toxiproxy instances
+	@echo "Starting integration test Redis and Toxiproxy instances..."
+	docker compose up -d redis-test toxiproxy-test
+	@echo ""
+	@echo "Integration test instances started:"
+	@echo "  Redis:      localhost:6382"
+	@echo "  Toxiproxy:  localhost:8474 (API), localhost:8080 (Proxy)"
+
+test-down: ## Stop integration test instances (preserving data)
+	@echo "Stopping integration test instances (preserving data)..."
+	docker compose stop redis-test toxiproxy-test
+
+test-restart: ## Restart integration test instances
+	@echo "Restarting integration test instances..."
+	docker compose restart redis-test toxiproxy-test
+
+test-logs: ## View integration test instance logs
+	@echo "Showing integration test instance logs (Ctrl+C to exit)..."
+	docker compose logs -f redis-test toxiproxy-test
+
+test-clean: ## Stop test instances and remove volumes (destructive)
+	@echo "Stopping test instances and removing volumes..."
+	docker compose down redis-test toxiproxy-test
+	docker volume rm gocache_redis_test_data 2>/dev/null || true
+	@echo "Integration test instances and data removed."
+
+# ==========================================
 # Testing targets
+# ==========================================
+
 test: ## Run unit tests only
 	go test -short ./...
 
