@@ -1,2 +1,0 @@
-PASS
-ok  	github.com/MichaelAJay/go-cache	0.401s
