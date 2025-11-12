@@ -14,7 +14,6 @@ func (c *RedisCache[T]) GetOrSet(ctx context.Context, key string, loader func(ct
 	var zero T
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetOrSetCircuitBreakerErrorCounter().Inc()
 		return zero, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -48,7 +47,6 @@ func (c *RedisCache[T]) getOrSetInternal(ctx context.Context, key string, loader
 
 		if err != nil {
 			c.handleError("getorset", err)
-			c.precomputedMetrics.GetOrSetRedisErrorCounter().Inc()
 			return zero, fmt.Errorf("redis GetOrSet error: %w", err)
 		}
 
@@ -80,36 +78,29 @@ func (c *RedisCache[T]) getOrSetInternal(ctx context.Context, key string, loader
 		if noDataAvailable {
 			// Cache miss - proceed to load the value using the loader function
 			// This is the normal path for GetOrSet when key doesn't exist
-			c.precomputedMetrics.GetOrSetMissCounter().Inc()
-			c.precomputedMetrics.GeneralMissCounter().Inc()
 		}
 
 		if existingValue != nil && existingValue != "" && existingValue != false {
 			// Value exists, deserialize and return it
 			var value T
 			if err := c.serializer.Deserialize([]byte(existingValue.(string)), &value); err != nil {
-				c.precomputedMetrics.GetOrSetSerializationErrorCounter().Inc()
 				return zero, fmt.Errorf("deserialization error for key %s: %w", key, err)
 			}
 
-			duration := time.Since(start)
-			c.precomputedMetrics.GetOrSetHitCounter().Inc()
-			c.precomputedMetrics.GetOrSetTimer().Record(duration)
-			c.precomputedMetrics.GetOrSetSuccessCounter().Inc()
+			// TODO: Record metrics when metrics system is available (hit, duration)
+			_ = time.Since(start)
 			return value, nil
 		}
 
 		// Value doesn't exist, we need to load it
 		loadedValue, err := loader(ctx)
 		if err != nil {
-			c.precomputedMetrics.GetOrSetLoaderErrorCounter().Inc()
 			return zero, fmt.Errorf("loader function failed: %w", err)
 		}
 
 		// Serialize the loaded value
 		serializedValue, err := c.serializer.Serialize(loadedValue)
 		if err != nil {
-			c.precomputedMetrics.GetOrSetSerializationErrorCounter().Inc()
 			return zero, fmt.Errorf("serialization error: %w", err)
 		}
 
@@ -122,16 +113,12 @@ func (c *RedisCache[T]) getOrSetInternal(ctx context.Context, key string, loader
 			return zero, fmt.Errorf("Redis GetOrSet set error: %w", err)
 		}
 
-		duration := time.Since(start)
-		c.precomputedMetrics.GetOrSetMissCounter().Inc()
-		c.precomputedMetrics.GeneralMissCounter().Inc()
-		c.precomputedMetrics.GetOrSetTimer().Record(duration)
-		c.precomputedMetrics.GetOrSetLoadedCounter().Inc()
+		// TODO: Record metrics when metrics system is available (miss, loaded, duration)
+		_ = time.Since(start)
 		return loadedValue, nil
 	}
 
 	// Max retries exceeded
-	c.precomputedMetrics.GetOrSetMaxRetriesErrorCounter().Inc()
 	return zero, fmt.Errorf("GetOrSet max retries exceeded for key %s", key)
 }
 
@@ -259,14 +246,12 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.SetIfNotExistsCircuitBreakerErrorCounter().Inc()
 		return false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
 	if err != nil {
-		c.precomputedMetrics.SetIfNotExistsSerializationErrorCounter().Inc()
 		return false, fmt.Errorf("serialization error: %w", err)
 	}
 
@@ -294,15 +279,13 @@ func (c *RedisCache[T]) SetIfNotExists(ctx context.Context, value T, ttl time.Du
 
 	if err != nil {
 		c.handleError("setifnotexists", err)
-		c.precomputedMetrics.SetIfNotExistsRedisErrorCounter().Inc()
 		return false, fmt.Errorf("redis SetIfNotExists error: %w", err)
 	}
 
 	wasSet := result.(int64) == 1
 
-	duration := time.Since(start)
-	c.precomputedMetrics.SetIfNotExistsTimer().Record(duration)
-	c.precomputedMetrics.SetIfNotExistsSuccessCounter().Inc()
+	// TODO: Record metrics when metrics system is available (success, duration)
+	_ = time.Since(start)
 	return wasSet, nil
 }
 
@@ -316,14 +299,12 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.SetIfExistsCircuitBreakerErrorCounter().Inc()
 		return false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
 	if err != nil {
-		c.precomputedMetrics.SetIfExistsSerializationErrorCounter().Inc()
 		return false, fmt.Errorf("serialization error: %w", err)
 	}
 
@@ -351,15 +332,13 @@ func (c *RedisCache[T]) SetIfExists(ctx context.Context, value T, ttl time.Durat
 
 	if err != nil {
 		c.handleError("setifexists", err)
-		c.precomputedMetrics.SetIfExistsRedisErrorCounter().Inc()
 		return false, fmt.Errorf("redis SetIfExists error: %w", err)
 	}
 
 	wasSet := result.(int64) == 1
 
-	duration := time.Since(start)
-	c.precomputedMetrics.SetIfExistsTimer().Record(duration)
-	c.precomputedMetrics.SetIfExistsSuccessCounter().Inc()
+	// TODO: Record metrics when metrics system is available (success, duration)
+	_ = time.Since(start)
 	return wasSet, nil
 }
 

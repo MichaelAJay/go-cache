@@ -15,7 +15,6 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	result := make(map[string]T, len(keys)) // Pre-size map to avoid growth reallocations
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetManyCircuitBreakerErrorCounter().Inc()
 		return result, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -47,7 +46,6 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 	_, err := pipe.Exec(ctx)
 	if err != nil && err.Error() != "redis: nil" {
 		c.handleError("getmany", err)
-		c.precomputedMetrics.GetManyRedisErrorCounter().Inc()
 		return result, fmt.Errorf("redis GetMany error: %w", err)
 	}
 
@@ -76,7 +74,6 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 					err = c.serializer.Deserialize([]byte(serializedValue), &value)
 				}
 				if err != nil {
-					c.precomputedMetrics.GetManySerializationErrorCounter().Inc()
 					continue
 				}
 
@@ -100,19 +97,10 @@ func (c *RedisCache[T]) GetMany(ctx context.Context, keys []string) (map[string]
 		}
 	}
 
-	// Record metrics using precomputed metrics for zero-allocation performance
-	duration := time.Since(start)
-	c.precomputedMetrics.GetManyTimer().Record(duration)
-	c.precomputedMetrics.GetManyBatchCounter().Inc()
-
-	// Record batch hits/misses - eliminate loops to reduce allocations
-	// Note: We sacrifice granular per-key metrics for performance
-	if hits > 0 {
-		c.precomputedMetrics.GetManyHitCounter().Inc()
-	}
-	if misses > 0 {
-		c.precomputedMetrics.GeneralMissCounter().Inc()
-	}
+	// TODO: Record metrics when metrics system is available (duration, hits, misses)
+	_ = time.Since(start)
+	_ = hits
+	_ = misses
 
 	return result, nil
 }
@@ -124,7 +112,6 @@ func (c *RedisCache[T]) GetManyRaw(ctx context.Context, keys []string) (map[stri
 	result := make(map[string]string, len(keys))
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetManyCircuitBreakerErrorCounter().Inc()
 		return result, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -153,7 +140,6 @@ func (c *RedisCache[T]) GetManyRaw(ctx context.Context, keys []string) (map[stri
 	_, err := pipe.Exec(ctx)
 	if err != nil && err.Error() != "redis: nil" {
 		c.handleError("getmany", err)
-		c.precomputedMetrics.GetManyRedisErrorCounter().Inc()
 		return result, fmt.Errorf("redis GetMany error: %w", err)
 	}
 
@@ -179,18 +165,10 @@ func (c *RedisCache[T]) GetManyRaw(ctx context.Context, keys []string) (map[stri
 		}
 	}
 
-	// Record metrics using precomputed metrics for zero-allocation performance
-	duration := time.Since(start)
-	c.precomputedMetrics.GetManyTimer().Record(duration)
-	c.precomputedMetrics.GetManyBatchCounter().Inc()
-
-	// Record batch hits/misses
-	if hits > 0 {
-		c.precomputedMetrics.GetManyHitCounter().Inc()
-	}
-	if misses > 0 {
-		c.precomputedMetrics.GeneralMissCounter().Inc()
-	}
+	// TODO: Record metrics when metrics system is available (duration, hits, misses)
+	_ = time.Since(start)
+	_ = hits
+	_ = misses
 
 	return result, nil
 }
@@ -200,7 +178,6 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.SetManyCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -234,7 +211,6 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 		// Serialize value
 		serializedValue, err := c.serializer.Serialize(value)
 		if err != nil {
-			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
 		}
 
@@ -318,14 +294,11 @@ func (c *RedisCache[T]) SetMany(ctx context.Context, values []T, ttl time.Durati
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("setmany", err)
-		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis SetMany error: %w", err)
 	}
 
-	// Record metrics using precomputed metrics for zero-allocation performance
-	duration := time.Since(start)
-	c.precomputedMetrics.SetManyTimer().Record(duration)
-	c.precomputedMetrics.SetManyBatchCounter().Inc()
+	// TODO: Record metrics when metrics system is available (duration, batch size)
+	_ = time.Since(start)
 	return nil
 }
 
@@ -335,7 +308,6 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.SetManyCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -382,7 +354,6 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 		}
 
 		if err != nil {
-			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
 		}
 
@@ -466,14 +437,11 @@ func (c *RedisCache[T]) SetManySafe(ctx context.Context, values []T, ttl time.Du
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("setmanysafe", err)
-		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis SetManySafe error: %w", err)
 	}
 
-	// Record metrics using precomputed metrics for zero-allocation performance
-	duration := time.Since(start)
-	c.precomputedMetrics.SetManyTimer().Record(duration)
-	c.precomputedMetrics.SetManyBatchCounter().Inc()
+	// TODO: Record metrics when metrics system is available (duration, batch size)
+	_ = time.Since(start)
 	return nil
 }
 
@@ -483,7 +451,6 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.SetManyCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -533,7 +500,6 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 					item.pooledBuf.Release()
 				}
 			}
-			c.precomputedMetrics.SetManySerializationErrorCounter().Inc()
 			return fmt.Errorf("serialization error for key %s: %w", key, err)
 		}
 
@@ -629,14 +595,11 @@ func (c *RedisCache[T]) SetManyPooled(ctx context.Context, values []T, ttl time.
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		c.handleError("setmanypooled", err)
-		c.precomputedMetrics.SetManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis SetManyPooled error: %w", err)
 	}
 
-	// Record metrics using precomputed metrics for zero-allocation performance
-	duration := time.Since(start)
-	c.precomputedMetrics.SetManyTimer().Record(duration)
-	c.precomputedMetrics.SetManyBatchCounter().Inc()
+	// TODO: Record metrics when metrics system is available (duration, batch size)
+	_ = time.Since(start)
 	return nil
 }
 
@@ -645,7 +608,6 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.DeleteManyCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -680,12 +642,11 @@ func (c *RedisCache[T]) DeleteMany(ctx context.Context, keys []string) error {
 		scriptArgs...).Result()
 	if err != nil {
 		c.handleError("deletemany", err)
-		c.precomputedMetrics.DeleteManyRedisErrorCounter().Inc()
 		return fmt.Errorf("redis DeleteMany error: %w", err)
 	}
 
-	c.precomputedMetrics.DeleteManyTimer().Record(time.Since(start))
-	c.precomputedMetrics.DeleteManyBatchCounter().Inc()
+	// TODO: Record metrics when metrics system is available (duration, batch size)
+	_ = time.Since(start)
 
 	// Apply hooks if configured
 	if c.options.Hooks != nil && c.options.Hooks.PostDelete != nil {
