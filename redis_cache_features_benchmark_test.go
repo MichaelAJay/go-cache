@@ -12,7 +12,6 @@ import (
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
-	"github.com/MichaelAJay/go-metrics/metric"
 )
 
 // ==============================================================================
@@ -50,10 +49,6 @@ func getSharedIndexingCache() interfaces.Cache[benchmarkData] {
 			GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
 		}
 
-		// Create metrics registry for pre-computed metrics
-		registry := metric.NewDefaultRegistry()
-		tags := metric.Tags{"environment": "benchmark", "indexing": "enabled"}
-
 		cacheInstance, err := cache.NewCache(
 			ctx,
 			setup.RedisClient,
@@ -62,7 +57,6 @@ func getSharedIndexingCache() interfaces.Cache[benchmarkData] {
 			0, // no pool warming for baseline benchmarks
 			cache.WithTTL[benchmarkData](10*time.Minute),
 			cache.WithSerializer[benchmarkData]("msgpack"),
-			cache.WithGoMetrics[benchmarkData](registry, tags),
 		)
 		if err != nil {
 			panic("Failed to create shared indexing cache: " + err.Error())
@@ -121,10 +115,6 @@ func createSerializerCache(format string) interfaces.Cache[benchmarkData] {
 		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
 	}
 
-	// Create metrics registry for serializer benchmarks
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "benchmark", "serializer": format}
-
 	cacheInstance, err := cache.NewCache(
 		ctx,
 		setup.RedisClient,
@@ -133,7 +123,6 @@ func createSerializerCache(format string) interfaces.Cache[benchmarkData] {
 		0, // no pool warming for baseline benchmarks
 		cache.WithTTL[benchmarkData](10*time.Minute),
 		cache.WithSerializer[benchmarkData](format),
-		cache.WithGoMetrics[benchmarkData](registry, tags),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create shared %s cache: %s", format, err.Error()))
@@ -152,14 +141,9 @@ func createScriptWarmingCache(warmScripts bool) interfaces.Cache[benchmarkData] 
 		GetOwnerKey: func(data benchmarkData) string { return data.GetOwner() },
 	}
 
-	// Create metrics registry for script warming benchmarks
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "benchmark", "script_warming": fmt.Sprintf("%v", warmScripts)}
-
 	options := []cache.Option[benchmarkData]{
 		cache.WithTTL[benchmarkData](10*time.Minute),
 		cache.WithSerializer[benchmarkData]("msgpack"),
-		cache.WithGoMetrics[benchmarkData](registry, tags),
 	}
 	
 	// Add script warming option if available

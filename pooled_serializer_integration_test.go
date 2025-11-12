@@ -9,7 +9,6 @@ import (
 
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
-	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,14 +36,9 @@ func TestSetManySafePooledIntegration(t *testing.T) {
 	config := testintegration.DefaultCacheConfig()
 	config.SerializerFormat = "msgpack"
 
-	// Create metrics registry required for pre-computed metrics
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor, 0,
 		cache.WithTTL[TestStruct](time.Minute),
 		cache.WithSerializer[TestStruct](config.SerializerFormat),
-		cache.WithGoMetrics[TestStruct](registry, tags),
 	)
 	require.NoError(t, err)
 	defer cacheInstance.Close()
@@ -120,13 +114,9 @@ func TestSerializerFallback(t *testing.T) {
 	}
 
 	// Create cache with JSON serializer (which does NOT have pooled APIs)
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor, 0,
 		cache.WithTTL[TestStruct](time.Minute),
 		cache.WithSerializer[TestStruct]("json"), // JSON doesn't have pooled APIs
-		cache.WithGoMetrics[TestStruct](registry, tags),
 	)
 	require.NoError(t, err)
 	defer cacheInstance.Close()

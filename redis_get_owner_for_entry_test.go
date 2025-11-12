@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -45,14 +44,12 @@ func setupTestCacheForOwner(t *testing.T, indexingMode bool) (interfaces.Cache[T
 	}
 
 	// Create cache with indexing
-	registry := metric.NewDefaultRegistry()
 	cache, err := NewCache[TestEntryForOwner](
 		ctx,
 		client,
 		indexingMode,
 		extractor,
 		10, // warmPoolCount
-		WithGoMetrics[TestEntryForOwner](registry, nil),
 		WithRedisOptions[TestEntryForOwner](&RedisOptions{
 			DataPrefix:  "test:data:",
 			IndexPrefix: "test:index:",

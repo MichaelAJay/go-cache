@@ -9,7 +9,6 @@ import (
 
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/internal/testintegration"
-	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,16 +22,11 @@ func TestRedisCache_LRUEviction(t *testing.T) {
 
 	// Create cache with MaxEntries = 3
 	config := testintegration.DefaultCacheConfig()
-	
-	// Create metrics registry required for cache initialization
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-	
+
 	sessionCache, err := cache.NewCache(ctx, setup.RedisClient, config.IndexingMode, testintegration.TestSessionExtractor, 0,
 		cache.WithTTL[*testintegration.TestSession](config.TTL),
 		cache.WithSerializer[*testintegration.TestSession](config.SerializerFormat),
 		cache.WithWarmLuaScripts[*testintegration.TestSession](config.WarmLuaScripts),
-		cache.WithGoMetrics[*testintegration.TestSession](registry, tags),
 		cache.WithMaxEntries[*testintegration.TestSession](3), // Set max entries to 3
 	)
 	require.NoError(t, err, "Failed to create cache")
@@ -65,12 +59,12 @@ func TestRedisCache_LRUEviction(t *testing.T) {
 	if !found {
 		t.Error("session1 should exist after initial set")
 	}
-	
+
 	_, found, _ = sessionCache.Get(ctx, "session2")
 	if !found {
 		t.Error("session2 should exist after initial set")
 	}
-	
+
 	_, found, _ = sessionCache.Get(ctx, "session3")
 	if !found {
 		t.Error("session3 should exist after initial set")
@@ -94,12 +88,12 @@ func TestRedisCache_LRUEviction(t *testing.T) {
 	if !found {
 		t.Error("session2 should still exist")
 	}
-	
+
 	_, found, _ = sessionCache.Get(ctx, "session3")
 	if !found {
 		t.Error("session3 should still exist")
 	}
-	
+
 	_, found, _ = sessionCache.Get(ctx, "session4")
 	if !found {
 		t.Error("session4 should exist")
@@ -129,12 +123,12 @@ func TestRedisCache_LRUEviction(t *testing.T) {
 	if !found {
 		t.Error("session2 should still exist")
 	}
-	
+
 	_, found, _ = sessionCache.Get(ctx, "session4")
 	if !found {
 		t.Error("session4 should still exist")
 	}
-	
+
 	_, found, _ = sessionCache.Get(ctx, "session5")
 	if !found {
 		t.Error("session5 should exist")
