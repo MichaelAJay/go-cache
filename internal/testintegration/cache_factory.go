@@ -6,7 +6,6 @@ import (
 
 	cache "github.com/MichaelAJay/go-cache"
 	"github.com/MichaelAJay/go-cache/interfaces"
-	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -83,15 +82,10 @@ func IndexedCacheConfig() *CacheConfig {
 
 // CreateTestSessionCache creates a RedisCache[*TestSession] with the specified configuration
 func CreateTestSessionCache(ctx context.Context, client redis.Cmdable, config *CacheConfig) (interfaces.Cache[*TestSession], error) {
-	// Create metrics registry required for pre-computed metrics
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	opts := []cache.Option[*TestSession]{
 		cache.WithTTL[*TestSession](config.TTL),
 		cache.WithSerializer[*TestSession](config.SerializerFormat),
 		cache.WithWarmLuaScripts[*TestSession](config.WarmLuaScripts),
-		cache.WithGoMetrics[*TestSession](registry, tags),
 	}
 
 	return cache.NewCache(ctx, client, config.IndexingMode, TestSessionExtractor, 128, opts...)
@@ -99,15 +93,10 @@ func CreateTestSessionCache(ctx context.Context, client redis.Cmdable, config *C
 
 // CreateRotateTestSessionCache creates a RedisCache[*RotateTestSession] for RotateKey testing
 func CreateRotateTestSessionCache(ctx context.Context, client redis.Cmdable, config *CacheConfig) (interfaces.Cache[*RotateTestSession], error) {
-	// Create metrics registry required for pre-computed metrics
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	opts := []cache.Option[*RotateTestSession]{
 		cache.WithTTL[*RotateTestSession](config.TTL),
 		cache.WithSerializer[*RotateTestSession](config.SerializerFormat),
 		cache.WithWarmLuaScripts[*RotateTestSession](config.WarmLuaScripts),
-		cache.WithGoMetrics[*RotateTestSession](registry, tags),
 	}
 
 	return cache.NewCache(ctx, client, config.IndexingMode, RotateTestSessionExtractor, 128, opts...)
@@ -124,14 +113,9 @@ func CreateStringCache(ctx context.Context, client redis.Cmdable, config *CacheC
 		},
 	}
 
-	// Create metrics registry required for pre-computed metrics
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	opts := []cache.Option[string]{
 		cache.WithTTL[string](config.TTL),
 		cache.WithSerializer[string](config.SerializerFormat),
-		cache.WithGoMetrics[string](registry, tags),
 	}
 
 	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
@@ -150,14 +134,9 @@ func CreateTestCounterCache(ctx context.Context, client redis.Cmdable, config *C
 		},
 	}
 
-	// Create metrics registry required for pre-computed metrics
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	opts := []cache.Option[int64]{
 		cache.WithTTL[int64](config.TTL),
 		cache.WithSerializer[int64](config.SerializerFormat),
-		cache.WithGoMetrics[int64](registry, tags),
 	}
 
 	// Note: WarmLuaScripts is handled internally by RedisCache during initialization
@@ -176,14 +155,9 @@ func CreateTestFloatCounterCache(ctx context.Context, client redis.Cmdable, conf
 		},
 	}
 
-	// Create metrics registry required for pre-computed metrics
-	registry := metric.NewDefaultRegistry()
-	tags := metric.Tags{"environment": "test"}
-
 	opts := []cache.Option[float64]{
 		cache.WithTTL[float64](config.TTL),
 		cache.WithSerializer[float64](config.SerializerFormat),
-		cache.WithGoMetrics[float64](registry, tags),
 	}
 
 	// Note: WarmLuaScripts is handled internally by RedisCache during initialization

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -17,8 +16,6 @@ import (
 	"github.com/MichaelAJay/go-cache/config"
 	"github.com/MichaelAJay/go-cache/interfaces"
 	"github.com/MichaelAJay/go-cache/internal/slicepool"
-	"github.com/MichaelAJay/go-cache/metrics"
-	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/MichaelAJay/go-serializer"
 )
 
@@ -52,10 +49,9 @@ const (
 
 // RedisCache implements the Cache[T] interface with distributed Redis backend
 type RedisCache[T any] struct {
-	client             redis.Cmdable
-	serializer         serializer.Serializer
-	options            *config.CacheOptions
-	precomputedMetrics *metrics.PrecomputedCacheMetrics
+	client     redis.Cmdable
+	serializer serializer.Serializer
+	options    *config.CacheOptions
 
 	extractor    *IndexExtractor[T] // nil = no indexing
 	indexingMode bool               // derived from extractor != nil
@@ -158,13 +154,6 @@ func WithCleanupInterval[T any](interval time.Duration) Option[T] {
 	}
 }
 
-// WithGoMetrics sets go-metrics registry for built-in metrics
-func WithGoMetrics[T any](registry metric.Registry, tags metric.Tags) Option[T] {
-	return func(cache *RedisCache[T]) {
-		cache.options.GoMetricsRegistry = registry
-		cache.options.GlobalMetricsTags = tags
-	}
-}
 
 // WithVersion sets a version suffix for cache keys for schema migrations
 // Usage: WithVersion("v2") will append ":v2" to all cache keys
@@ -261,19 +250,6 @@ func (c *RedisCache[T]) initialize(warmPoolCount int) error {
 		ser = serializer.NewMsgpackSerializer()
 	}
 	c.serializer = ser
-
-	// Initialize pre-computed metrics for zero-allocation operations
-	if c.options.GoMetricsRegistry == nil {
-		return fmt.Errorf("GoMetricsRegistry is required")
-	}
-	// Create final tags once during initialization to avoid runtime allocation
-	finalTags := make(metric.Tags)
-	if c.options.GlobalMetricsTags != nil {
-		maps.Copy(finalTags, c.options.GlobalMetricsTags)
-	}
-	finalTags["provider"] = "redis"
-	finalTags["instance_id"] = c.instanceID
-	c.precomputedMetrics = metrics.NewPrecomputedCacheMetrics(c.options.GoMetricsRegistry, finalTags)
 
 	// Initialize memory tracker if enabled
 	if c.options.MemoryTrackingEnabled {
@@ -414,11 +390,9 @@ func ttlToMilliseconds(ttl time.Duration) int64 {
 
 // Get retrieves a value by key
 func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
-	start := time.Now()
 	var zero T
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetCircuitBreakerErrorCounter().Inc()
 		return zero, false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -440,7 +414,6 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	result, err := c.getScript.Run(ctx, c.client, scriptArgs, key).Result()
 	if err != nil {
 		c.handleError("get", err)
-		c.precomputedMetrics.GetRedisErrorCounter().Inc()
 		return zero, false, fmt.Errorf("redis get error: %w", err)
 	}
 
@@ -451,10 +424,6 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	// Handle empty result (cache miss)
 	if len(resultSlice) == 0 {
-		duration := time.Since(start)
-		c.precomputedMetrics.GetMissCounter().Inc()
-		c.precomputedMetrics.GeneralMissCounter().Inc()
-		c.precomputedMetrics.GetTimer().Record(duration)
 		return zero, false, nil
 	}
 
@@ -466,10 +435,6 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	found := resultSlice[1].(string) == "1"
 
 	if !found {
-		duration := time.Since(start)
-		c.precomputedMetrics.GetMissCounter().Inc()
-		c.precomputedMetrics.GeneralMissCounter().Inc()
-		c.precomputedMetrics.GetTimer().Record(duration)
 		return zero, false, nil
 	}
 
@@ -482,14 +447,9 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		err = c.serializer.Deserialize([]byte(serializedString), &value)
 	}
 	if err != nil {
-		c.precomputedMetrics.GetSerializationErrorCounter().Inc()
 		return zero, false, fmt.Errorf("deserialization error for key %s: %w", key, err)
 	}
 
-	duration := time.Since(start)
-	c.precomputedMetrics.GetHitCounter().Inc()
-	c.precomputedMetrics.GetTimer().Record(duration)
-	c.precomputedMetrics.GetSuccessCounter().Inc()
 	return value, true, nil
 }
 
@@ -500,17 +460,14 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 		return fmt.Errorf("IndexExtractor.GetEntryKey is required for Set operation")
 	}
 	key := c.extractor.GetEntryKey(value)
-	start := time.Now()
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.SetCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
 	// Serialize value
 	serializedValue, err := c.serializer.Serialize(value)
 	if err != nil {
-		c.precomputedMetrics.SetSerializationErrorCounter().Inc()
 		return fmt.Errorf("serialization error for key %s: %w", key, err)
 	}
 
@@ -550,7 +507,6 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 
 	if err != nil {
 		c.handleError("set", err)
-		c.precomputedMetrics.SetRedisErrorCounter().Inc()
 		return fmt.Errorf("redis set error: %w", err)
 	}
 
@@ -568,7 +524,6 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 			dataPrefix := c.buildDataKey("")
 			if err := c.memoryTracker.PerformMemorySample(ctx, dataPrefix); err != nil {
 				// Log sampling error but don't fail the operation
-				c.precomputedMetrics.SetMemorySamplingErrorCounter().Inc()
 			}
 		}
 
@@ -576,18 +531,12 @@ func (c *RedisCache[T]) Set(ctx context.Context, value T, ttl time.Duration) err
 		c.recordMemoryUsageMetrics(ctx)
 	}
 
-	duration := time.Since(start)
-	c.precomputedMetrics.SetTimer().Record(duration)
-	c.precomputedMetrics.SetSuccessCounter().Inc()
 	return nil
 }
 
 // Delete removes a key
 func (c *RedisCache[T]) Delete(ctx context.Context, key string) (int, error) {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.DeleteCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -611,7 +560,6 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) (int, error) {
 
 		if scriptErr != nil {
 			c.handleError("delete", scriptErr)
-			c.precomputedMetrics.DeleteRedisErrorCounter().Inc()
 			return 0, fmt.Errorf("redis delete error: %w", scriptErr)
 		}
 		deleted = result.(int64)
@@ -624,7 +572,6 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) (int, error) {
 		results, err := pipe.Exec(ctx)
 		if err != nil {
 			c.handleError("delete", err)
-			c.precomputedMetrics.DeleteRedisErrorCounter().Inc()
 			return 0, fmt.Errorf("redis delete error: %w", err)
 		}
 		deleted = results[0].(*redis.IntCmd).Val()
@@ -639,17 +586,12 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) (int, error) {
 			dataPrefix := c.buildDataKey("")
 			if err := c.memoryTracker.PerformMemorySample(ctx, dataPrefix); err != nil {
 				// Log sampling error but don't fail the operation
-				c.precomputedMetrics.DeleteMemorySamplingErrorCounter().Inc()
 			}
 		}
 
 		// Record memory usage metrics
 		c.recordMemoryUsageMetrics(ctx)
 	}
-
-	duration := time.Since(start)
-	c.precomputedMetrics.DeleteTimer().Record(duration)
-	c.precomputedMetrics.DeleteSuccessCounter().Inc()
 
 	// Apply hooks if configured
 	if c.options.Hooks != nil && c.options.Hooks.PostDelete != nil {
@@ -661,10 +603,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) (int, error) {
 
 // Clear removes all entries
 func (c *RedisCache[T]) Clear(ctx context.Context) error {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.ClearCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -693,8 +632,6 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	}
 
 	if len(allKeys) == 0 {
-		c.precomputedMetrics.ClearTimer().Record(time.Since(start))
-		c.precomputedMetrics.ClearEmptyCounter().Inc()
 		return nil
 	}
 
@@ -718,8 +655,6 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 		c.recordMemoryUsageMetrics(ctx)
 	}
 
-	c.precomputedMetrics.ClearTimer().Record(time.Since(start))
-	c.precomputedMetrics.ClearSuccessCounter().Inc()
 	return nil
 }
 
@@ -734,10 +669,7 @@ func (c *RedisCache[T]) scanAndCollectKeys(ctx context.Context, pattern string, 
 
 // Has checks if key exists without retrieving value
 func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.HasCircuitBreakerErrorCounter().Inc()
 		return false
 	}
 
@@ -745,13 +677,9 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 	exists, err := c.client.Exists(ctx, dataKey).Result()
 	if err != nil {
 		c.handleError("has", err)
-		c.precomputedMetrics.HasRedisErrorCounter().Inc()
 		return false
 	}
 
-	duration := time.Since(start)
-	c.precomputedMetrics.HasTimer().Record(duration)
-	c.precomputedMetrics.HasSuccessCounter().Inc()
 	return exists > 0
 }
 
@@ -761,11 +689,9 @@ func (c *RedisCache[T]) Has(ctx context.Context, key string) bool {
 
 // GetByOwner retrieves all entries for a given owner key using atomic Lua script
 func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, error) {
-	start := time.Now()
 	result := make([]T, 0)
 
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetByOwnerCircuitBreakerErrorCounter().Inc()
 		return result, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -785,15 +711,12 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 
 	if err != nil {
 		c.handleError("getbyowner", err)
-		c.precomputedMetrics.GetByOwnerRedisErrorCounter().Inc()
 		return result, fmt.Errorf("redis GetByOwner error: %w", err)
 	}
 
 	// Handle empty result
 	resultSlice, ok := scriptResult.([]any)
 	if !ok || len(resultSlice) == 0 {
-		c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
-		c.precomputedMetrics.GetByOwnerEmptyCounter().Inc()
 		return result, nil
 	}
 
@@ -812,23 +735,11 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 		// Deserialize the value
 		var value T
 		if err := c.serializer.Deserialize([]byte(serializedValue), &value); err != nil {
-			c.precomputedMetrics.GetByOwnerSerializationErrorCounter().Inc()
 			// Continue processing other entries instead of failing completely
 			continue
 		}
 
 		result = append(result, value)
-	}
-
-	// Record appropriate metrics
-	if len(result) > 0 {
-		c.precomputedMetrics.GetByOwnerHitCounter().Inc()
-		c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
-		c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
-	} else {
-		c.precomputedMetrics.GetByOwnerMissCounter().Inc()
-		c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
-		c.precomputedMetrics.GetByOwnerEmptyCounter().Inc()
 	}
 
 	return result, nil
@@ -849,10 +760,7 @@ func (c *RedisCache[T]) GetByOwner(ctx context.Context, ownerKey string) ([]T, e
 //   - deletedCount: number of sessions/entries deleted (not Redis keys)
 //   - err: error if operation fails or indexing is disabled
 func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (deletedCount int, err error) {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.DeleteByOwnerCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -873,21 +781,15 @@ func (c *RedisCache[T]) DeleteByOwner(ctx context.Context, ownerKey string) (del
 
 	if err != nil {
 		c.handleError("deletebyowner", err)
-		c.precomputedMetrics.DeleteByOwnerRedisErrorCounter().Inc()
 		return 0, fmt.Errorf("redis DeleteByOwner error: %w", err)
 	}
 
 	deletedCount = int(result.(int64))
-	c.precomputedMetrics.DeleteByOwnerTimer().Record(time.Since(start))
-	c.precomputedMetrics.DeleteByOwnerSuccessCounter().Inc()
 	return deletedCount, nil
 }
 
 func (c *RedisCache[T]) GetCountByOwner(ctx context.Context, ownerKey string) (int, error) {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetByOwnerCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -903,21 +805,15 @@ func (c *RedisCache[T]) GetCountByOwner(ctx context.Context, ownerKey string) (i
 
 	if err != nil {
 		c.handleError("getcountbyowner", err)
-		c.precomputedMetrics.GetByOwnerRedisErrorCounter().Inc()
 		return 0, fmt.Errorf("redis GetCountByOwner error: %w", err)
 	}
 
 	count := int(result.(int64))
-	c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
-	c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
 	return count, nil
 }
 
 func (c *RedisCache[T]) GetSubjectIDsByOwner(ctx context.Context, ownerKey string) ([]string, error) {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetByOwnerCircuitBreakerErrorCounter().Inc()
 		return nil, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -933,7 +829,6 @@ func (c *RedisCache[T]) GetSubjectIDsByOwner(ctx context.Context, ownerKey strin
 
 	if err != nil {
 		c.handleError("getsubjectidsbyowner", err)
-		c.precomputedMetrics.GetByOwnerRedisErrorCounter().Inc()
 		return nil, fmt.Errorf("redis GetSubjectIDsByOwner error: %w", err)
 	}
 
@@ -951,17 +846,12 @@ func (c *RedisCache[T]) GetSubjectIDsByOwner(ctx context.Context, ownerKey strin
 		}
 	}
 
-	c.precomputedMetrics.GetByOwnerTimer().Record(time.Since(start))
-	c.precomputedMetrics.GetByOwnerSuccessCounter().Inc()
 	return subjectIDs, nil
 }
 
 // GetOwnerForEntry returns the owner key for a given entry key using the reverse index
 func (c *RedisCache[T]) GetOwnerForEntry(ctx context.Context, entryKey string) (string, bool, error) {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetOwnerForEntryCircuitBreakerErrorCounter().Inc()
 		return "", false, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -974,19 +864,13 @@ func (c *RedisCache[T]) GetOwnerForEntry(ctx context.Context, entryKey string) (
 	ownerKey, err := c.client.Get(ctx, reverseKey).Result()
 	if err == redis.Nil {
 		// Key doesn't exist - not an error, just not found
-		c.precomputedMetrics.GetOwnerForEntryMissCounter().Inc()
-		c.precomputedMetrics.GetOwnerForEntryTimer().Record(time.Since(start))
 		return "", false, nil
 	}
 	if err != nil {
 		c.handleError("getownerforentry", err)
-		c.precomputedMetrics.GetOwnerForEntryRedisErrorCounter().Inc()
 		return "", false, fmt.Errorf("redis GetOwnerForEntry error: %w", err)
 	}
 
-	c.precomputedMetrics.GetOwnerForEntryHitCounter().Inc()
-	c.precomputedMetrics.GetOwnerForEntryTimer().Record(time.Since(start))
-	c.precomputedMetrics.GetOwnerForEntrySuccessCounter().Inc()
 	return ownerKey, true, nil
 }
 
@@ -994,10 +878,7 @@ func (c *RedisCache[T]) GetOwnerForEntry(ctx context.Context, entryKey string) (
 
 // GetKeysByPattern returns entry keys matching pattern - PERFORMANCE FIX: Uses SCAN instead of KEYS
 func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([]string, error) {
-	start := time.Now()
-
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.GetKeysByPatternCircuitBreakerErrorCounter().Inc()
 		return nil, cacheErrors.ErrCircuitBreakerOpen
 	}
 
@@ -1007,7 +888,6 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 	var keys []string
 	if err := c.scanAndCollectKeys(ctx, dataPattern, &keys); err != nil {
 		c.handleError("getkeysbypattern", err)
-		c.precomputedMetrics.GetKeysByPatternRedisErrorCounter().Inc()
 		return nil, fmt.Errorf("redis GetKeysByPattern error: %w", err)
 	}
 
@@ -1022,8 +902,6 @@ func (c *RedisCache[T]) GetKeysByPattern(ctx context.Context, pattern string) ([
 		}
 	}
 
-	c.precomputedMetrics.GetKeysByPatternTimer().Record(time.Since(start))
-	c.precomputedMetrics.GetKeysByPatternSuccessCounter().Inc()
 	return result, nil
 }
 
@@ -1119,39 +997,8 @@ func (c *RedisCache[T]) buildMetaKeysMany(keys []string, metaKeys []string) {
 
 // recordMemoryUsageMetrics records current memory usage and checks for pressure
 func (c *RedisCache[T]) recordMemoryUsageMetrics(ctx context.Context) {
-	if c.memoryTracker == nil {
-		return
-	}
-
-	// Get current memory usage from tracker
-	memoryBytes, _ := c.memoryTracker.GetCurrentUsage()
-
-	// Record memory usage metrics
-	c.precomputedMetrics.MemoryUsageGauge().Set(float64(memoryBytes))
-
-	// Check for memory pressure and record alerts if threshold exceeded
-	if c.memoryTracker.IsMemoryPressure(ctx) {
-		// Determine which threshold was exceeded for metrics recording
-		var threshold int64
-
-		// Check absolute threshold first
-		if c.options.MemoryPressureThresholdBytes > 0 && memoryBytes >= c.options.MemoryPressureThresholdBytes {
-			threshold = c.options.MemoryPressureThresholdBytes
-		} else if c.options.MemoryPressureThresholdPercent > 0 {
-			// For percentage threshold, we need the Redis maxmemory
-			// Since getRedisMaxMemory is not exported, we'll use the current memory as threshold approximation
-			// This is not perfect but provides useful metrics
-			threshold = int64(float64(memoryBytes) / (c.options.MemoryPressureThresholdPercent / 100.0))
-		}
-
-		// If we couldn't determine a specific threshold, use the current memory as the threshold
-		// This ensures we always record the pressure event
-		if threshold == 0 {
-			threshold = memoryBytes
-		}
-
-		c.precomputedMetrics.MemoryPressureCounter().Inc()
-	}
+	// This function is no-op now that metrics are removed
+	// Keeping the function signature for compatibility
 }
 
 // Circuit breaker implementation
@@ -1194,7 +1041,6 @@ func (c *RedisCache[T]) handleError(operation string, err error) {
 
 	if c.failureCount >= circuitBreakerThreshold {
 		c.circuitBreakerOpen = true
-		c.precomputedMetrics.SecurityEventCounter().Inc()
 	}
 }
 
@@ -1204,11 +1050,8 @@ func (c *RedisCache[T]) handleError(operation string, err error) {
 func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) (int64, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.IncrementCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
-
-	start := time.Now()
 
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
@@ -1216,28 +1059,10 @@ func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) 
 	// Use Redis INCRBY for atomic increment
 	result, err := c.client.IncrBy(ctx, dataKey, delta).Result()
 
-	duration := time.Since(start)
-
 	if err != nil {
 		c.handleError("increment", err)
-
-		// Categorize error for metrics
-		errorType := "redis_error"
-		if err == redis.Nil {
-			errorType = "key_not_found"
-		}
-
-		if errorType == "redis_error" {
-			c.precomputedMetrics.IncrementRedisErrorCounter().Inc()
-		} else {
-			c.precomputedMetrics.IncrementTimeoutErrorCounter().Inc()
-		}
 		return 0, fmt.Errorf("increment operation failed: %w", err)
 	}
-
-	// Record successful operation
-	c.precomputedMetrics.IncrementTimer().Record(duration)
-	c.precomputedMetrics.IncrementSuccessCounter().Inc()
 
 	return result, nil
 }
@@ -1246,11 +1071,8 @@ func (c *RedisCache[T]) Increment(ctx context.Context, key string, delta int64) 
 func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) (int64, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.DecrementCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
-
-	start := time.Now()
 
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
@@ -1258,28 +1080,10 @@ func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) 
 	// Use Redis DECRBY for atomic decrement
 	result, err := c.client.DecrBy(ctx, dataKey, delta).Result()
 
-	duration := time.Since(start)
-
 	if err != nil {
 		c.handleError("decrement", err)
-
-		// Categorize error for metrics
-		errorType := "redis_error"
-		if err == redis.Nil {
-			errorType = "key_not_found"
-		}
-
-		if errorType == "redis_error" {
-			c.precomputedMetrics.DecrementRedisErrorCounter().Inc()
-		} else {
-			c.precomputedMetrics.DecrementTimeoutErrorCounter().Inc()
-		}
 		return 0, fmt.Errorf("decrement operation failed: %w", err)
 	}
-
-	// Record successful operation
-	c.precomputedMetrics.DecrementTimer().Record(duration)
-	c.precomputedMetrics.DecrementSuccessCounter().Inc()
 
 	return result, nil
 }
@@ -1288,11 +1092,8 @@ func (c *RedisCache[T]) Decrement(ctx context.Context, key string, delta int64) 
 func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta float64) (float64, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.IncrementFloatCircuitBreakerErrorCounter().Inc()
 		return 0, cacheErrors.ErrCircuitBreakerOpen
 	}
-
-	start := time.Now()
 
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
@@ -1300,28 +1101,10 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 	// Use Redis INCRBYFLOAT for atomic float increment
 	result, err := c.client.IncrByFloat(ctx, dataKey, delta).Result()
 
-	duration := time.Since(start)
-
 	if err != nil {
 		c.handleError("increment_float", err)
-
-		// Categorize error for metrics
-		errorType := "redis_error"
-		if err == redis.Nil {
-			errorType = "key_not_found"
-		}
-
-		if errorType == "redis_error" {
-			c.precomputedMetrics.IncrementFloatRedisErrorCounter().Inc()
-		} else {
-			c.precomputedMetrics.IncrementFloatTimeoutErrorCounter().Inc()
-		}
 		return 0, fmt.Errorf("increment float operation failed: %w", err)
 	}
-
-	// Record successful operation
-	c.precomputedMetrics.IncrementFloatTimer().Record(duration)
-	c.precomputedMetrics.IncrementFloatSuccessCounter().Inc()
 
 	return result, nil
 }
@@ -1332,11 +1115,8 @@ func (c *RedisCache[T]) IncrementFloat(ctx context.Context, key string, delta fl
 func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Duration) error {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.ExtendTTLCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-
-	start := time.Now()
 
 	// Build the data key with proper prefix
 	dataKey := c.buildDataKey(key)
@@ -1351,18 +1131,14 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 	metaResult := pipe.PExpire(ctx, metaKey, ttl)
 	_, err := pipe.Exec(ctx)
 
-	duration := time.Since(start)
-
 	if err != nil {
 		c.handleError("extend_ttl", err)
-		c.precomputedMetrics.ExtendTTLRedisErrorCounter().Inc()
 		return fmt.Errorf("extend TTL operation failed: %w", err)
 	}
 
 	// Check if the key actually existed
 	dataExists, _ := dataResult.Result()
 	if !dataExists {
-		c.precomputedMetrics.ExtendTTLKeyNotFoundErrorCounter().Inc()
 		return fmt.Errorf("key does not exist: %s", key)
 	}
 
@@ -1371,10 +1147,6 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 		c.client.HSet(ctx, metaKey, "ttl", fmt.Sprintf("%d", ttlMs))
 	}
 
-	// Record successful operation
-	c.precomputedMetrics.ExtendTTLTimer().Record(duration)
-	c.precomputedMetrics.ExtendTTLSuccessCounter().Inc()
-
 	return nil
 }
 
@@ -1382,11 +1154,8 @@ func (c *RedisCache[T]) ExtendTTL(ctx context.Context, key string, ttl time.Dura
 func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration) (bool, error) {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.TouchCircuitBreakerErrorCounter().Inc()
 		return false, cacheErrors.ErrCircuitBreakerOpen
 	}
-
-	start := time.Now()
 
 	// Build the keys
 	dataKey := c.buildDataKey(key)
@@ -1397,51 +1166,40 @@ func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration
 		local dataKey = KEYS[1]
 		local metaKey = KEYS[2]
 		local ttlMs = tonumber(ARGV[1])
-		
+
 		-- Check if data key exists
 		if redis.call('EXISTS', dataKey) == 0 then
 			return 0
 		end
-		
+
 		-- Extend TTL on both keys
 		redis.call('PEXPIRE', dataKey, ttlMs)
 		redis.call('PEXPIRE', metaKey, ttlMs)
-		
+
 		-- Update metadata with current timestamp and access count
 		local now = redis.call('TIME')
 		local ts = now[1]
 		local acc = redis.call('HGET', metaKey, 'access_count') or '0'
 		acc = tostring((tonumber(acc) or 0) + 1)
-		
+
 		redis.call('HSET', metaKey,
 			'last_accessed', ts,
 			'access_count', acc,
 			'ttl', tostring(ttlMs)
 		)
-		
+
 		return 1
 	`
 
 	ttlMs := ttl.Milliseconds()
 	result, err := c.client.Eval(ctx, script, []string{dataKey, metaKey}, ttlMs).Result()
 
-	duration := time.Since(start)
-
 	if err != nil {
 		c.handleError("touch", err)
-		c.precomputedMetrics.TouchRedisErrorCounter().Inc()
 		return false, fmt.Errorf("touch operation failed: %w", err)
 	}
 
 	exists := result.(int64) == 1
-
-	if !exists {
-		c.precomputedMetrics.TouchKeyNotFoundErrorCounter().Inc()
-	} else {
-		c.precomputedMetrics.TouchTimer().Record(duration)
-		c.precomputedMetrics.TouchSuccessCounter().Inc()
-	}
-
 	return exists, nil
 }
 
@@ -1450,11 +1208,8 @@ func (c *RedisCache[T]) Touch(ctx context.Context, key string, ttl time.Duration
 func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value string, ttl time.Duration) error {
 	// Circuit breaker check
 	if c.isCircuitBreakerOpen() {
-		c.precomputedMetrics.AppendFieldCircuitBreakerErrorCounter().Inc()
 		return cacheErrors.ErrCircuitBreakerOpen
 	}
-
-	start := time.Now()
 
 	// Build the keys
 	dataKey := c.buildDataKey(key)
@@ -1470,11 +1225,8 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 		pipe.PExpire(ctx, metaKey, ttl)
 		_, err := pipe.Exec(ctx)
 
-		duration := time.Since(start)
-
 		if err != nil {
 			c.handleError("append_field", err)
-			c.precomputedMetrics.AppendFieldRedisErrorCounter().Inc()
 			return fmt.Errorf("append field operation failed: %w", err)
 		}
 
@@ -1488,14 +1240,11 @@ func (c *RedisCache[T]) AppendToField(ctx context.Context, key, fieldPath, value
 			)
 		}
 
-		c.precomputedMetrics.AppendFieldTimer().Record(duration)
-		c.precomputedMetrics.AppendFieldSuccessCounter().Inc()
 		return nil
 	}
 
 	// For complex field paths, this would require JSON manipulation
 	// For now, return an error indicating this feature needs implementation
-	c.precomputedMetrics.AppendFieldUnsupportedOperationErrorCounter().Inc()
 	return fmt.Errorf("complex field path operations not yet implemented: %s", fieldPath)
 }
 

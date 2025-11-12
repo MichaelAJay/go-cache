@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/MichaelAJay/go-cache/observability"
-	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -57,7 +56,6 @@ func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
 		MaxEntries:        0, // No limit by default
 		CleanupInterval:   5 * time.Minute,
 		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
-		GlobalMetricsTags: make(metric.Tags),
 
 		// Memory tracking defaults (disabled by default for safety)
 		MemoryTrackingEnabled:          false,
