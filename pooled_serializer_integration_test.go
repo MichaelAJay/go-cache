@@ -36,11 +36,11 @@ func TestSetManySafePooledIntegration(t *testing.T) {
 	// Create cache with msgpack serializer (which has pooled APIs)
 	config := testintegration.DefaultCacheConfig()
 	config.SerializerFormat = "msgpack"
-	
+
 	// Create metrics registry required for pre-computed metrics
 	registry := metric.NewDefaultRegistry()
 	tags := metric.Tags{"environment": "test"}
-	
+
 	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor, 0,
 		cache.WithTTL[TestStruct](time.Minute),
 		cache.WithSerializer[TestStruct](config.SerializerFormat),
@@ -48,7 +48,7 @@ func TestSetManySafePooledIntegration(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer cacheInstance.Close()
-	
+
 	// Test data
 	testValues := []TestStruct{
 		{ID: 1, Name: "alice"},
@@ -122,7 +122,7 @@ func TestSerializerFallback(t *testing.T) {
 	// Create cache with JSON serializer (which does NOT have pooled APIs)
 	registry := metric.NewDefaultRegistry()
 	tags := metric.Tags{"environment": "test"}
-	
+
 	cacheInstance, err := cache.NewCache(ctx, setup.RedisClient, false, testExtractor, 0,
 		cache.WithTTL[TestStruct](time.Minute),
 		cache.WithSerializer[TestStruct]("json"), // JSON doesn't have pooled APIs
@@ -149,4 +149,3 @@ func TestSerializerFallback(t *testing.T) {
 	assert.True(t, found)
 	assert.Equal(t, testValues[0], value)
 }
-

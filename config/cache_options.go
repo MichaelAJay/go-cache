@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/MichaelAJay/go-cache/observability"
 	"github.com/MichaelAJay/go-metrics/metric"
 	"github.com/redis/go-redis/v9"
 )
@@ -14,24 +15,23 @@ type CacheOptions struct {
 	RedisClient redis.Cmdable // Injected Redis client
 
 	// Cache behavior
-	DefaultTTL      time.Duration // Default TTL for entries (0 = no expiration)
-	MaxEntries      int           // Maximum number of entries (0 = no limit)
-	CleanupInterval time.Duration // How often to clean expired entries
+	DefaultTTL       time.Duration // Default TTL for entries (0 = no expiration)
+	MaxEntries       int           // Maximum number of entries (0 = no limit)
+	CleanupInterval  time.Duration // How often to clean expired entries
+	SerializerFormat string        // "json", "gob", "msgpack"
 
-	// Serialization
-	SerializerFormat string // "json", "gob", "msgpack"
+	// Observability
+	Observability observability.Options
 
 	// Enterprise features
-	GoMetricsRegistry metric.Registry              // go-metrics registry for built-in metrics
-	GlobalMetricsTags metric.Tags                  // Tags applied to all metrics
-	Hooks             *CacheHooks                  // Lifecycle hooks for custom behavior
+	Hooks *CacheHooks // Lifecycle hooks for custom behavior
 
 	// Memory tracking configuration
-	MemoryTrackingEnabled            bool          // Enable memory usage tracking and metrics collection (default: false for performance)
-	MemoryUsageSamplingRate          int           // Operations between Redis MEMORY USAGE samples for accuracy correction (default: 100)
-	MemoryUsageSamplingInterval      time.Duration // Background sampling interval using Redis MEMORY USAGE command (default: 60s)
-	MemoryPressureThresholdBytes     int64         // Absolute memory threshold in bytes for pressure alerts (0 = disabled)
-	MemoryPressureThresholdPercent   float64       // Memory usage percentage threshold for pressure alerts (default: 80.0%)
+	MemoryTrackingEnabled          bool          // Enable memory usage tracking and metrics collection (default: false for performance)
+	MemoryUsageSamplingRate        int           // Operations between Redis MEMORY USAGE samples for accuracy correction (default: 100)
+	MemoryUsageSamplingInterval    time.Duration // Background sampling interval using Redis MEMORY USAGE command (default: 60s)
+	MemoryPressureThresholdBytes   int64         // Absolute memory threshold in bytes for pressure alerts (0 = disabled)
+	MemoryPressureThresholdPercent float64       // Memory usage percentage threshold for pressure alerts (default: 80.0%)
 
 	WarmLuaScripts bool
 }
@@ -63,7 +63,7 @@ func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
 		MemoryTrackingEnabled:          false,
 		MemoryUsageSamplingRate:        100,
 		MemoryUsageSamplingInterval:    60 * time.Second,
-		MemoryPressureThresholdBytes:   0,     // Disabled
+		MemoryPressureThresholdBytes:   0, // Disabled
 		MemoryPressureThresholdPercent: 80.0,
 	}
 }
@@ -71,17 +71,16 @@ func NewCacheOptions(redisClient redis.Cmdable) *CacheOptions {
 // DefaultOptions returns sensible defaults for cache options
 func DefaultOptions() *CacheOptions {
 	return &CacheOptions{
-		DefaultTTL:        0, // No expiration by default
-		MaxEntries:        0, // No limit by default
-		CleanupInterval:   5 * time.Minute,
-		SerializerFormat:  "msgpack", // Optimal for Redis - compact, cross-language
-		GlobalMetricsTags: make(metric.Tags),
+		DefaultTTL:       0, // No expiration by default
+		MaxEntries:       0, // No limit by default
+		CleanupInterval:  5 * time.Minute,
+		SerializerFormat: "msgpack", // Optimal for Redis - compact, cross-language
 
 		// Memory tracking defaults (disabled by default for safety)
 		MemoryTrackingEnabled:          false,
 		MemoryUsageSamplingRate:        100,
 		MemoryUsageSamplingInterval:    60 * time.Second,
-		MemoryPressureThresholdBytes:   0,     // Disabled
+		MemoryPressureThresholdBytes:   0, // Disabled
 		MemoryPressureThresholdPercent: 80.0,
 	}
 }
@@ -101,14 +100,6 @@ func (o *CacheOptions) WithMaxEntries(max int) *CacheOptions {
 // WithCleanupInterval sets how often expired entries are cleaned
 func (o *CacheOptions) WithCleanupInterval(interval time.Duration) *CacheOptions {
 	o.CleanupInterval = interval
-	return o
-}
-
-
-// WithGoMetrics sets go-metrics registry for built-in metrics
-func (o *CacheOptions) WithGoMetrics(registry metric.Registry, tags metric.Tags) *CacheOptions {
-	o.GoMetricsRegistry = registry
-	o.GlobalMetricsTags = tags
 	return o
 }
 
